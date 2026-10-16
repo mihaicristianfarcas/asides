@@ -26,7 +26,9 @@ pub fn outcome(
     let inspections = session.inspections();
     let image = |screen: usize, text: Option<String>, items: &mut Vec<Item>| -> anyhow::Result<()> {
         let crop = export::crop(session, screen, spec.padding.max(0.0), whole);
-        let png = exporter.render(session, screen, crop).context("could not draw the screen")?;
+        let png = exporter
+            .render_within(session, screen, crop, export::ASIDE_MAX_SIDE)
+            .context("could not draw the screen")?;
         let name = format!("screen-{}.png", screen + 1);
         std::fs::write(dir.join(&name), png)?;
         items.push(Item { time: 0.0, image: Some(name), text });

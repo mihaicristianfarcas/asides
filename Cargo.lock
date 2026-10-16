@@ -321,6 +321,7 @@ version = "0.4.1"
 dependencies = [
  "anyhow",
  "asides-core",
+ "block2",
  "gpui",
  "image",
  "objc2",

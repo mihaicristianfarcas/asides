@@ -31,6 +31,9 @@ fn native_window(window: &Window) -> Option<Retained<NSWindow>> {
 pub fn make_overlay(window: &Window, frame: PtRect) -> (isize, usize) {
     let view = view_pointer(window);
     let Some(ns) = native_window(window) else { return (0, view) };
+    // Changing the style mask rebuilds the window's frame and resets its first responder to the
+    // window: typed letters (which go only to the first responder, unlike Esc or ⌘ shortcuts)
+    // would never reach GPUI. Give it back to GPUI's view below.
     ns.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
     ns.setLevel(NSScreenSaverWindowLevel);
     ns.setHasShadow(false);
@@ -42,6 +45,10 @@ pub fn make_overlay(window: &Window, frame: PtRect) -> (isize, usize) {
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
     ns.setFrame_display(NSRect::new(NSPoint::new(frame.x, frame.y), NSSize::new(frame.width, frame.height)), true);
+    if view != 0 {
+        let gpui_view: &NSView = unsafe { &*(view as *const NSView) };
+        ns.makeFirstResponder(Some(gpui_view));
+    }
     (ns.windowNumber(), view)
 }
 
@@ -49,6 +56,74 @@ fn view_pointer(window: &Window) -> usize {
     match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
         Ok(RawWindowHandle::AppKit(h)) => h.ns_view.as_ptr() as usize,
         _ => 0,
+    }
+}
+
+/// Development: with `asides-overlay-debug` in the temporary directory, notes what the overlay
+/// gets (keys, focus) in `asides-overlay-debug.log` there, for when it runs under the app.
+pub fn debug(message: &str) {
+    use std::io::Write;
+    let dir = std::env::temp_dir();
+    if !dir.join("asides-overlay-debug").exists() {
+        return;
+    }
+    let state = MainThreadMarker::new().map(|mtm| {
+        let app = NSApplication::sharedApplication(mtm);
+        let key = app.keyWindow().map(|w| w.windowNumber());
+        format!("active={} key_window={key:?}", app.isActive())
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asides-overlay-debug.log"))
+    {
+        let _ = writeln!(f, "{message} [{}]", state.unwrap_or_default());
+    }
+}
+
+/// Development: logs every key event AppKit hands the app (see `debug`), and who the key
+/// window's first responder is.
+pub fn monitor_keys() {
+    if !std::env::temp_dir().join("asides-overlay-debug").exists() {
+        return;
+    }
+    use objc2_app_kit::NSEventMask;
+    let block = block2::RcBlock::new(|event: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        let e = unsafe { event.as_ref() };
+        let chars = e.characters().map(|c| c.to_string()).unwrap_or_default();
+        let responder = MainThreadMarker::new()
+            .and_then(|mtm| NSApplication::sharedApplication(mtm).keyWindow())
+            .and_then(|w| w.firstResponder())
+            .map(|r| r.class().name().to_string_lossy().into_owned())
+            .unwrap_or_else(|| "none".into());
+        debug(&format!("appkit {:?} {chars:?} code {} responder {responder}", e.r#type(), e.keyCode()));
+        event.as_ptr()
+    });
+    let monitor = unsafe {
+        NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown | NSEventMask::KeyUp, &block)
+    };
+    std::mem::forget(monitor);
+}
+
+/// Development: logs when the app's activation, key window or the frontmost app change.
+pub fn debug_focus() {
+    use std::sync::Mutex;
+    static LAST: Mutex<String> = Mutex::new(String::new());
+    if !std::env::temp_dir().join("asides-overlay-debug").exists() {
+        return;
+    }
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let app = NSApplication::sharedApplication(mtm);
+    let front = objc2_app_kit::NSWorkspace::sharedWorkspace()
+        .frontmostApplication()
+        .map(|a| a.localizedName().map(|n| n.to_string()).unwrap_or_default());
+    let now = format!(
+        "active={} key={:?} front={front:?} me={}",
+        app.isActive(),
+        app.keyWindow().map(|w| w.windowNumber()),
+        std::process::id()
+    );
+    let mut last = LAST.lock().unwrap();
+    if *last != now {
+        debug(&format!("focus {now}"));
+        *last = now;
     }
 }
 

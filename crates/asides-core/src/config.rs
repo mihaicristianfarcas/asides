@@ -15,12 +15,14 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # agent_delivery: "each" hands every recording to agents listening through `asides mcp` as soon as
 # it's transcribed; "batch" holds them until you choose Send to Agent.
 # wispr_flow_apps: app names or bundle IDs whose Wispr Flow dictations are added; [] means any app.
+# auto_new_note: start a new note when you've switched git branch, or after 8 hours without asides.
 # annotation_detail: how much Measure & Annotate puts in an aside: "compact", "standard", "detailed"
 # or "forensic".
 # [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
 # identify_elements: name what's under each mark (needs the Accessibility permission);
 # padding: points of screen kept around what you measured in the screenshot;
-# record: start recording when Measure & Annotate opens, so you can talk while you mark.
+# record: start recording when Measure & Annotate opens, so you can talk while you mark;
+# toolbar: show its toolbar (shift+tab hides and shows it; every action also has a key).
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
@@ -45,6 +47,8 @@ pub struct Config {
     pub languages: Vec<String>,
     /// When coding agents listening through `asides mcp` receive new entries.
     pub agent_delivery: AgentDelivery,
+    /// Start a new note when you've switched git branch, or after a break (`notes::moved_on`).
+    pub auto_new_note: bool,
     /// Dictations made with Wispr Flow are added to the note, like recordings.
     pub wispr_flow: bool,
     /// Only Wispr Flow dictations made in these apps (names or bundle IDs, matched ignoring case);
@@ -72,6 +76,8 @@ pub struct Measure {
     pub padding: f64,
     /// Start recording when the overlay opens, to talk while marking.
     pub record: bool,
+    /// Show the overlay's toolbar (its key hides and shows it; every action has a key).
+    pub toolbar: bool,
     pub keys: OverlayKeys,
 }
 
@@ -84,6 +90,7 @@ impl Default for Measure {
             identify_elements: false,
             padding: 48.0,
             record: false,
+            toolbar: true,
             keys: OverlayKeys::default(),
         }
     }
@@ -112,6 +119,8 @@ pub struct OverlayKeys {
     pub undo: String,
     pub clear: String,
     pub hide: String,
+    /// Hide or show the toolbar.
+    pub toolbar: String,
     pub restore: String,
     /// Hold to talk (a tap toggles), like the record shortcut.
     pub talk: String,
@@ -147,6 +156,7 @@ impl Default for OverlayKeys {
             undo: k("backspace, cmd+z"),
             clear: k("x"),
             hide: k("tab"),
+            toolbar: k("shift+tab"),
             restore: k("r"),
             talk: k("space"),
             help: k("shift+/, f1"),
@@ -192,6 +202,7 @@ impl Default for Config {
             input_device: String::new(),
             languages: Vec::new(),
             agent_delivery: AgentDelivery::default(),
+            auto_new_note: true,
             wispr_flow: false,
             wispr_flow_apps: Vec::new(),
             annotation_detail: Detail::default(),

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result};
 use asides_core::frontmatter::{self, Metadata};
@@ -46,6 +46,8 @@ pub struct RecordingJob {
     pub keep_audio: bool,
     pub model: String,
     pub languages: Vec<String>,
+    /// Start a new note when the work moved on (`notes::moved_on`).
+    pub auto_new_note: bool,
 }
 
 pub struct ImageJob {
@@ -54,6 +56,7 @@ pub struct ImageJob {
     pub new_note: Option<Option<String>>,
     pub environment: Environment,
     pub model: String,
+    pub auto_new_note: bool,
 }
 
 /// Text another app transcribed (a Wispr Flow dictation), added as an entry of its own.
@@ -64,6 +67,7 @@ pub struct DictationJob {
     pub source: &'static str,
     pub new_note: Option<Option<String>>,
     pub environment: Environment,
+    pub auto_new_note: bool,
 }
 
 /// A Measure & Annotate session outside a recording: an entry of screenshots and text, in the
@@ -76,6 +80,7 @@ pub struct ScreenJob {
     pub new_note: Option<Option<String>>,
     pub environment: Environment,
     pub model: String,
+    pub auto_new_note: bool,
 }
 
 pub enum Job {
@@ -147,7 +152,8 @@ fn process_recording(
         return Ok(Outcome::NothingHeard);
     }
 
-    let note = target_note(&job.dir, &job.new_note, job.started, &job.environment, &whisper(&job.model))?;
+    let note =
+        target_note(&job.dir, &job.new_note, job.auto_new_note, job.started, &job.environment, &whisper(&job.model))?;
     let number = note.next_entry_number();
     let mut attachments = Vec::new();
     for image in &job.images {
@@ -171,7 +177,8 @@ fn process_recording(
 }
 
 fn process_image(job: ImageJob) -> Result<Outcome> {
-    let note = target_note(&job.dir, &job.new_note, job.image.at, &job.environment, &whisper(&job.model))?;
+    let note =
+        target_note(&job.dir, &job.new_note, job.auto_new_note, job.image.at, &job.environment, &whisper(&job.model))?;
     let number = note.next_entry_number().saturating_sub(1);
     let attachment = save_image(&note, number, &job.image)?;
     note.append(&attachment.markdown()).context("could not write the note")?;
@@ -180,7 +187,7 @@ fn process_image(job: ImageJob) -> Result<Outcome> {
 
 fn process_dictation(job: DictationJob) -> Result<Outcome> {
     let transcription = format!("asides {} · {}", env!("CARGO_PKG_VERSION"), job.source);
-    let note = target_note(&job.dir, &job.new_note, job.at, &job.environment, &transcription)?;
+    let note = target_note(&job.dir, &job.new_note, job.auto_new_note, job.at, &job.environment, &transcription)?;
     let number = note.next_entry_number();
     let time = job.at.format("%H:%M").to_string();
     note.append(&markdown::compose_dictation_entry(number, &time, job.source, &job.text))
@@ -189,7 +196,7 @@ fn process_dictation(job: DictationJob) -> Result<Outcome> {
 }
 
 fn process_screen(job: ScreenJob) -> Result<Outcome> {
-    let note = target_note(&job.dir, &job.new_note, job.at, &job.environment, &whisper(&job.model))?;
+    let note = target_note(&job.dir, &job.new_note, job.auto_new_note, job.at, &job.environment, &whisper(&job.model))?;
     let number = note.next_entry_number();
     let mut attachments = Vec::new();
     for image in &job.images {
@@ -216,17 +223,20 @@ fn whisper(model: &str) -> String {
     format!("asides {} · whisper {model} (local)", env!("CARGO_PKG_VERSION"))
 }
 
-/// The latest note, or a newly created one (with front matter) when asked for or when none exists.
+/// The latest note, or a newly created one (with front matter) when asked for, when none exists,
+/// or (with `auto`) when the work moved on: another branch, or a break (`notes::moved_on`).
 /// A new note is titled as asked, or [`notes::DEFAULT_TITLE`]; never after what was said.
 fn target_note(
     dir: &Path,
     new_note: &Option<Option<String>>,
+    auto: bool,
     created: DateTime<Local>,
     environment: &Environment,
     transcription: &str,
 ) -> Result<Note> {
     if new_note.is_none()
         && let Some(note) = notes::latest_note(dir)
+        && !(auto && notes::moved_on(&note, project::current_branch(dir).as_deref(), SystemTime::now()).is_some())
     {
         return Ok(note);
     }
@@ -309,6 +319,7 @@ mod tests {
             source: "Wispr Flow",
             new_note,
             environment: Environment::default(),
+            auto_new_note: true,
         };
         match process_dictation(job).unwrap() {
             Outcome::Appended { note, .. } => note,
@@ -349,6 +360,7 @@ mod tests {
             new_note: None,
             environment: Environment::default(),
             model: "m".into(),
+            auto_new_note: true,
         };
         assert!(matches!(process_screen(job).unwrap(), Outcome::Appended { number: 1, .. }));
         let note = notes::latest_note(tmp.path()).unwrap();

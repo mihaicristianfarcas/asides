@@ -193,8 +193,16 @@ fn bind(dir: &Path, new_note: bool, title: Option<String>) -> Result<()> {
             None => format!("next recording starts a new note \"{}\"", notes::DEFAULT_TITLE),
         }
     } else {
+        let branch = project::current_branch(dir);
         match notes::latest_note(dir) {
-            Some(note) => format!("appending to \"{}\" ({})", note.title, entries(note.entry_count())),
+            Some(note) => match config
+                .auto_new_note
+                .then(|| notes::moved_on(&note, branch.as_deref(), std::time::SystemTime::now()))
+                .flatten()
+            {
+                Some(why) => format!("next recording starts a new note ({why})"),
+                None => format!("appending to \"{}\" ({})", note.title, entries(note.entry_count())),
+            },
             None => "first recording creates a note".into(),
         }
     };

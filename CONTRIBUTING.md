@@ -115,7 +115,12 @@ raw RGBA, plus `"windowed": {"x": …, "y": …, "width": …, "height": …}` f
 of the whole screen, and `"replay": [...]` with steps like `{"move": [200, 140]}`,
 `{"down": [50, 160]}`, `{"drag": [175, 205]}`, `{"up": [175, 205]}`, `{"key": "shift+h"}`,
 `{"type": "Too tight"}`, `{"answer": {element}}` (as the app would answer a lookup),
-`{"recording": 14}` (as if recording) and `{"capture": "card.png"}` (see `replay.rs`). The steps reach GPUI as AppKit events, so they take the
+`{"recording": 14}` (as if recording) and `{"capture": "card.png"}` (see `replay.rs`).
+Replays send events to GPUI's view directly; to check what the real input path delivers (focus,
+the first responder), run the overlay through the app (`launchctl setenv ASIDES_OVERLAY <binary>`,
+then restart Asides) and create `asides-overlay-debug` in the temporary directory
+(`getconf DARWIN_USER_TEMP_DIR`): the overlay logs the keys it gets and focus changes to
+`asides-overlay-debug.log` there. The steps reach GPUI as AppKit events, so they take the
 path real ones do, and the captures (`screencapture -l`, which needs Screen Recording for your
 terminal) show what the user would see. Look at them.
 
@@ -174,12 +179,17 @@ in your pull request what you tried.
   - right-click: the menu; on a held object, its screenshot; its camera on hover
   - `⌫` undoes, `X` clears, `Tab` hides everything, `R` restores the last session's guides
 - [ ] **Measure & Annotate, marking and drawing:**
-  - `A`, then click a button in Safari or Chrome: marker 1, the card takes typing (with diacritics,
-    an input method, and ⌘V), Return saves it, the chips toggle, Delete removes the mark
+  - `A`, then click a button in Safari or Chrome: marker 1, the card takes typing right away (with
+    diacritics, an input method, and ⌘V), Return saves it, the dots and `⌘1`–`⌘4` pick a kind, its
+    microphone starts and stops recording, `⌫` over a marker removes it
   - with Identify UI Elements on (and Accessibility allowed), hovering outlines elements and the
     entry names the button, the page's URL and a selector with the DOM's classes
   - `P`: a circle around a heading names it; a ⇧-drag arrow names both ends
   - `⌘S`: a dragged screenshot is on the clipboard, and in the aside after Done
+- [ ] **Measure & Annotate, toolbar and keys:** icons only, names on hover; hovering `?` shows the
+  keys; `⇧Tab` hides the toolbar (a timer stays while recording) and it stays hidden next time.
+- [ ] **No repo:** with Asides unbound (or bound to a deleted folder), the menu bar shows "No repo";
+  the overlay says so at the top, and Space, the microphone and Done say why they don't act.
 - [ ] **Measure & Annotate, talking:**
   - hold Space and speak, mark two things, let go: the toolbar showed the time; Done writes one
     entry with the transcript, the screenshot, and each mark where you were speaking about it

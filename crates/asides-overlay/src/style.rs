@@ -22,10 +22,25 @@ pub const UI_LIGHT: u32 = 0xd1dff6;
 pub const UI_DEEP: u32 = 0x92b6f0;
 /// Text and icons on the UI color.
 pub const UI_INK: u32 = 0x16213a;
+/// What a mark asks for, as the card's dots show it.
+pub const INTENT_FIX: u32 = 0xff6b6b;
+pub const INTENT_CHANGE: u32 = 0xf5b14c;
+pub const INTENT_QUESTION: u32 = UI_DEEP;
+pub const INTENT_APPROVE: u32 = 0x4cd28b;
 /// The toolbar, cards and menus.
 pub const PANEL: u32 = 0x1c1c1e;
 pub const PANEL_ALPHA: f32 = 0.98;
 pub const RECORDING: u32 = 0xff3b30;
+
+pub fn intent_color(intent: asides_core::inspect::Intent) -> u32 {
+    use asides_core::inspect::Intent;
+    match intent {
+        Intent::Fix => INTENT_FIX,
+        Intent::Change => INTENT_CHANGE,
+        Intent::Question => INTENT_QUESTION,
+        Intent::Approve => INTENT_APPROVE,
+    }
+}
 
 /// `#RRGGBB` as 0..1 channels; the default accent when it doesn't parse.
 pub fn parse_color(hex: &str) -> (f64, f64, f64) {

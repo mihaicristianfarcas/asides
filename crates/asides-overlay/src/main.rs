@@ -75,7 +75,7 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
     let mut shots = Vec::new();
     for action in &script.actions {
         if let Placed::Shot { screen, rect } = session.apply(action)
-            && let Some(png) = exporter.render(&session, screen, rect)
+            && let Some(png) = exporter.render_within(&session, screen, rect, export::ASIDE_MAX_SIDE)
         {
             let name = format!("shot-{}.png", shots.len() + 1);
             std::fs::write(dir.join(&name), png)?;
@@ -178,6 +178,8 @@ fn gui(dir: PathBuf, spec: Spec, frames: Vec<Frame>) {
                 o.session.cursor = cursor;
             }
         });
+        native::debug("ready");
+        native::monitor_keys();
         io::emit(&Event::Ready);
         ui::run_clock(&overlay, cx);
         if let Some(steps) = spec.replay.clone() {

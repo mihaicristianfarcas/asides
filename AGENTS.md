@@ -196,6 +196,17 @@ The user may record a request and ask you to "implement the note". Find it with
 - GPUI reads keys through the current keyboard layout from the key code; synthetic key events need
   the US key codes (`native::synthetic`), and shifted symbols arrive as the symbol (`?`, not `⇧/`).
 - `Window::dispatch_event` returns a private type, so it can't be called from outside GPUI.
+- Changing an `NSWindow`'s style mask (`native::make_overlay` makes GPUI's panel borderless) rebuilds
+  its frame and resets its first responder to the window. Keys still reach GPUI, but typed text goes
+  through the first responder's input context, so the card took no text. Make GPUI's view the first
+  responder again after the change. Replays sent events straight to the view and didn't show it.
+- Posting key events to check this: a `CGEvent` made without a private source inherits the Fn flag
+  from an earlier function key, and Fn+A is macOS's "focus the Dock". Use
+  `CGEventSource(stateID: .privateState)` and set the flags. With `asides-overlay-debug` in the
+  temporary directory, the overlay logs the keys AppKit and GPUI get, and focus changes, to
+  `asides-overlay-debug.log` there (`native::debug`).
+- The overlay covers the menu bar, so an error shown there while it's open goes unseen: `App::fail`
+  also sends it to the overlay (`notice`).
 - A light gray card on white (#F3F4F6) differs by 12 of 255: the default tolerance (2%) must stay
   below that.
 - A release in `/Applications/Asides.app` has the same bundle ID as the build `make install` puts in

@@ -159,12 +159,16 @@ any app, and talk about it while you do. It brings [PixelSnap 2](https://pixelsn
 and [Agentation](https://www.agentation.com)'s marking to the whole screen, and everything you do
 goes into one aside, in the order you did it.
 
-The first time, it shows its keys; `?` shows them again.
+The toolbar is icons only (hover one for its name): the four tools, the tolerance, points or
+pixels, the microphone, undo, copy, `?`, Done and close. Hover `?` for every key; the first time,
+the keys show by themselves. `⇧Tab` hides the toolbar for good (`measure.toolbar`): everything also
+has a key, and a small timer stays while you record.
 
 **Talk** whenever you like: hold `Space` (or your record shortcut, `⌃⌥Space`) while you speak, or
-tap it to start and stop, or press the microphone in the toolbar. Each mark, measurement and
-screenshot lands in the transcript at the moment you made it, next to what you were saying about
-it. While you talk, marks don't ask for typed feedback.
+tap it to start and stop, or press the microphone. Each mark, measurement and screenshot lands in
+the transcript at the moment you made it, next to what you were saying about it. While you talk,
+marks don't ask for typed feedback. Asides must be bound to a repo to record and to keep what you
+mark: if it isn't, the overlay says so at the top when it opens, and the menu bar shows "No repo".
 
 **Measure** (`D`):
 
@@ -175,17 +179,17 @@ it. While you talk, marks don't ask for typed feedback.
 | Drag | The size of what's inside: the area snaps to the object's bounds. Right-drag (or ⌘ held) keeps it as drawn, `⌥`-drag holds each object inside separately, `⇧` makes it square, and `Space` while dragging moves it. |
 | `⇧H` / `⇧V` | A horizontal or vertical guide at the cursor, snapped to a held object's edge or middle, or to the nearest edge. Distances stop at guides and at held objects, and the gaps between guides are shown at the screen's edge. Arrow keys nudge the last guide (⇧: 10 pt). |
 | `⇧` held | A crosshair across the whole screen, to check alignment. |
-| `-` / `=` | Lower or raise the tolerance: how different a color must be to count as an edge. `T` switches to a high one that looks through shadows and gradients; the toolbar cycles Low, Medium, High. |
+| `-` / `=` | Lower or raise the tolerance: how different a color must be to count as an edge. `T` switches to a high one that looks through shadows and gradients; the toolbar cycles Low, Med, High. |
 | `U` | Points or pixels. |
 | `⌘C` / `C` / `⌘⇧C` | Copy the size (`120 × 32`), the screenshot with everything on it, or everything as Markdown. |
 | `R` | Put back the last session's guides and held measurements. |
 
-**Mark** (`A`): click an element to put a numbered marker on it, or drag over an area. A card asks
-what should change, with an optional intent (fix, change, question, approve) and severity
-(blocking, important, suggestion). Type, or just say it. Click a marker to edit it, right-click it
-to remove it. To point out a typo, select the text before pressing `⌃⌥M`, then click it: the mark
-quotes the selection. With **Identify UI Elements** on (it needs the Accessibility permission),
-hovering outlines the element under the cursor, and the mark names it: its role and label
+**Mark** (`A`): click an element to put a numbered marker on it, or drag over an area. A small card
+asks what should change: type it, or press its microphone and say it. Its four dots say what kind of
+request it is (fix, change, question, approve; `⌘1`–`⌘4`), and `⏎` saves it. Click a marker to edit
+it. To point out a typo, select the text before pressing `⌃⌥M`, then click it: the mark quotes the
+selection. With **Identify UI Elements** on (it needs the Accessibility permission), hovering
+outlines the element under the cursor, and the mark names it: its role and label
 (`button "Save"`), the app and window, and in browsers the page's URL and a CSS-like location
 (`form.settings > button#save.btn`). Without it, marks name the app and window.
 
@@ -199,34 +203,34 @@ click its camera for a screenshot of just that object.
 
 Right-click anywhere for guides, holds, a screenshot and copying. Then `⏎` (**Done**) adds it all to
 the aside (`⌥⏎` keeps the whole screen in the screenshot), and `Esc` closes without adding anything.
-When agents get asides in batches, `⌘⏎` (**Send**) also sends it to your agent. `⌫` undoes the last
-thing, `X` clears everything, `Tab` hides it all to look at the frozen screen. A recording you
-started in the overlay ends with it. Every key can be changed in `[measure.keys]` (see
-[Settings](#settings)).
+When agents get asides in batches, `⌘⏎` (**Send**) also sends it to your agent. `⌫` removes the
+mark or measurement under the pointer (anywhere else, the last thing added), `X` clears everything,
+`Tab` hides it all to look at the frozen screen. A recording you started in the overlay ends with
+it. Every key can be changed in `[measure.keys]` (see [Settings](#settings)).
 
 ```markdown
 ## 4 · 14:52 · Screen
 
 ![14:52:10](images/04-145210.png)
 
+**In:** Safari · "Settings — Shop" · http://localhost:3000/settings
 **Measured** in pt (screen: Built-in Retina Display, 1512 × 982 pt, @2x):
 - Distance from (412, 230): 24 across (x 400 to x 424), 16 down (y 222 to y 238)
 - Area 120 × 32 (15:4) at (380, 200), snapped to the object inside
 - Guides: x 380 · x 700 (320 apart)
 
 ### 1. button "Save"
-**App:** Safari · "Settings — Shop"
-**Page:** http://localhost:3000/settings
 **Location:** form.settings > div.actions > button#save.btn.btn-primary
-**Intent:** fix · **Severity:** important
+**Intent:** fix
 **Feedback:** Line it up with the fields above.
 
 ### 2. Arrow from button "Save" to heading "Profile"
-**App:** Safari · "Settings — Shop"
-**From:** button "Save", at (440, 216)
-**To:** heading "Profile", at (440, 96)
-**Moved by:** 0 across, -120 down
+**From → to:** (440, 216) → (440, 96)
 ```
+
+Where the marks are (`**In:** Safari · "Settings — Shop" · http://localhost:3000/settings`) is said
+once, with the screenshot, when they're all in the same app and page. Images added to an aside are at
+most 1568 pixels on their long side: agents scale larger ones down anyway.
 
 That's an entry made without talking (`· Screen`). While you talk, the same blocks sit inside the
 transcript, each where you made it.
@@ -279,6 +283,10 @@ And on mobile the button text wraps.
 ```
 
 - **Metadata** is written once, when the note is created.
+- **A new note starts** when you ask for one (`asides new`, `⌃⌥N`), and on its own when you've
+  switched git branch or come back after 8 hours (`auto_new_note`): each note stays about one piece
+  of work, easy to share and cheap for an agent to read. `asides` and the menu say so beforehand
+  ("next recording starts a new note").
 - **Entries** are numbered, so people can refer to "#3".
 - **Writes** only ever append, so an editor or agent that has the note open simply reloads it.
 - **Sharing:** let your coding agent listen (below), pass it the note's path, or give colleagues the
@@ -396,6 +404,7 @@ model = "large-v3-turbo"     # or "large-v3" (more accurate, slower) or "small" 
 input_device = ""            # microphone name; empty means the system default
 languages = []               # e.g. ["en", "ro"] to choose only between these; [] means any
 agent_delivery = "each"      # or "batch": agents get asides when you choose Send to Agent
+auto_new_note = true         # a new note after switching git branch, or after 8 hours away
 wispr_flow = false           # add Wispr Flow dictations to the note
 wispr_flow_apps = []         # e.g. ["Safari"] to add only dictations made there; [] means any app
 annotation_detail = "standard"  # "compact", "standard", "detailed" or "forensic"
@@ -407,6 +416,7 @@ tolerance = 2                # % a color must differ by to count as an edge
 identify_elements = false    # name what's under each mark (needs Accessibility)
 padding = 48.0               # points of screen kept around what you measured, in the screenshot
 record = false               # start recording when Measure & Annotate opens
+toolbar = true               # show its toolbar (⇧Tab hides and shows it)
 
 [measure.keys]               # the overlay's keys; several separated by commas, "" for none
 measure = "d"
@@ -427,6 +437,7 @@ copy_markdown = "cmd+shift+c"
 undo = "backspace, cmd+z"
 clear = "x"
 hide = "tab"
+toolbar = "shift+tab"
 restore = "r"
 talk = "space"               # hold to talk, tap to toggle
 help = "shift+/, f1"
@@ -503,6 +514,8 @@ more reliable; a single entry skips detection altogether.
   them may only name the window.
 - **A key does something else in the overlay.** Your keyboard layout may put it elsewhere; change it
   in `[measure.keys]`.
+- **The menu bar says "No repo".** Asides isn't bound to a directory (or it was deleted): run `asides`
+  in your project, or pick one under Directory. Until then it won't record.
 
 ## How it works
 

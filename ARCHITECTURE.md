@@ -171,7 +171,9 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    - resamples to 16 kHz and checks for silence
    - waits for and loads the model (cached; unloaded after 15 idle minutes)
    - transcribes: language detection limited to `config.languages`, then one beam-search pass
-   - picks the target note: the latest one, or a new one with metadata
+   - picks the target note: the latest one, or a new one with metadata when asked for, or (with
+     `auto_new_note`) when the latest was started on another git branch or not written to for 8
+     hours (`notes::moved_on`); the CLI and the menu say so before the next recording
    - saves images and optional audio, composes the entry and appends it
 5. **Outcome:** the main thread flashes `✓ #N`, re-reads the latest note and publishes the state.
 
@@ -194,7 +196,9 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    the window list, and with `identify_elements` and the Accessibility permission, the element from
    the app's accessibility tree, hit-testing that app so the overlay isn't hit). The talk key and the
    microphone send `talk` down and up; the app treats them like the record shortcut and tells the
-   overlay when it records (`recording`), for its toolbar.
+   overlay when it records (`recording`), for its toolbar. Without a bound directory the spec says
+   so (`bound: None`): the overlay shows it from the start and won't record or finish. Errors the
+   app raises while the overlay covers the menu bar are also sent to it (`notice`).
 4. **Finish** (Return, the toolbar, or the shortcut again, which the app forwards as `finish`): for
    each screen with something on it the overlay renders the screenshot cropped around what's there
    (`export.rs`, sRGB, the screen's resolution) and `inspect` writes the measurements and marks as

@@ -30,11 +30,17 @@ impl Exporter {
         Exporter { reps: frames.iter().map(|f| bitmap(f)).collect(), accent }
     }
 
-    /// `screen` with what's on it, cut to `crop` (points), as a PNG.
+    /// `screen` with what's on it, cut to `crop` (points), as a PNG at the screen's resolution.
     pub fn render(&self, session: &Session, screen: usize, crop: PtRect) -> Option<Vec<u8>> {
+        self.render_within(session, screen, crop, u32::MAX)
+    }
+
+    /// Like `render`, no larger than `max_side` pixels on its long side.
+    pub fn render_within(&self, session: &Session, screen: usize, crop: PtRect, max_side: u32) -> Option<Vec<u8>> {
         let state = session.screens.get(screen)?;
         let source = self.reps.get(screen)?.as_ref()?;
-        let scale = state.screen.scale;
+        let long = crop.width.max(crop.height).max(1.0);
+        let scale = state.screen.scale.min(max_side as f64 / long);
         let (w, h) = ((crop.width * scale).round().max(1.0) as isize, (crop.height * scale).round().max(1.0) as isize);
         let rep = new_rep(w, h)?;
         rep.setSize(NSSize::new(crop.width, crop.height));
@@ -65,6 +71,10 @@ impl Exporter {
         Some(png.to_vec())
     }
 }
+
+/// The longest side of an image added to an aside. Claude scales larger ones down to this before
+/// reading them, so more pixels would only cost space, not detail the agent sees.
+pub const ASIDE_MAX_SIDE: u32 = 1568;
 
 /// The part of `screen` an image keeps: around what's on it (with `padding`), or all of it.
 pub fn crop(session: &Session, screen: usize, padding: f64, whole: bool) -> PtRect {
@@ -414,6 +424,10 @@ mod tests {
         let (w, h) = (rep.pixelsWide(), rep.pixelsHigh());
         assert!(w > 500 && h > 300 && w <= 800 && h <= 480, "{w}×{h}");
         assert_eq!(exporter.render(&session, 0, crop(&session, 0, 0.0, true)).map(|p| p.len() > 1000), Some(true));
+        // For the aside, no larger than what the agent reads.
+        let small = exporter.render_within(&session, 0, crop(&session, 0, 0.0, true), 400).expect("a PNG");
+        let rep = NSBitmapImageRep::imageRepWithData(&NSData::with_bytes(&small)).expect("a PNG");
+        assert_eq!((rep.pixelsWide(), rep.pixelsHigh()), (400, 240));
         // ASIDES_OVERLAY_DUMP=<dir> writes it for a look.
         if let Some(dir) = std::env::var_os("ASIDES_OVERLAY_DUMP") {
             std::fs::create_dir_all(&dir).unwrap();

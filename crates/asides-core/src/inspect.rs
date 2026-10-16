@@ -598,15 +598,37 @@ impl Inspection {
 
     /// One annotation, as its own block: `### N. what it's on` and what the agent needs to find
     /// and fix it, at the chosen detail.
+    /// Where every mark is, when they're all in the same app, window and page: said once (in
+    /// [`Inspection::context_markdown`]) instead of under each mark.
+    pub fn shared_context(&self) -> Option<(String, Option<String>, Option<String>)> {
+        let mut places = self.annotations.iter().map(|a| {
+            let e = a.element.as_ref()?;
+            Some((e.app.clone()?, e.window.clone().filter(|w| !w.is_empty()), e.url.clone()))
+        });
+        let first = places.next()??;
+        places.all(|p| p.as_ref() == Some(&first)).then_some(first)
+    }
+
+    /// `**In:** Safari · "Settings" · http://localhost:3000/settings`, when all marks share it.
+    pub fn context_markdown(&self) -> Option<String> {
+        let (app, window, url) = self.shared_context()?;
+        let mut parts = vec![app];
+        parts.extend(window.map(|w| quote(&w)));
+        parts.extend(url);
+        Some(format!("**In:** {}", parts.join(" · ")))
+    }
+
     pub fn annotation_markdown(&self, annotation: &Annotation, detail: Detail) -> String {
         let (scale, units) = (self.screen.scale, self.units);
         let n = |v: f64| num(v, scale, units);
         let title = annotation.title(scale, units);
         let element = annotation.element.clone().unwrap_or_default();
         let comment = annotation.comment.trim();
+        // Said once for all of them.
+        let shared = self.shared_context().is_some();
         if detail == Detail::Compact {
             let mut line = format!("{}. **{}**", annotation.number, title);
-            if let Some(app) = &element.app {
+            if let Some(app) = element.app.as_ref().filter(|_| !shared) {
                 line.push_str(&format!(" ({app})"));
             }
             if !comment.is_empty() {
@@ -617,29 +639,27 @@ impl Inspection {
         let mut lines = vec![format!("### {}. {title}", annotation.number)];
         let mut field = |label: &str, value: String| lines.push(format!("**{label}:** {value}"));
         match (&element.app, &element.window) {
+            _ if shared => {}
             (Some(app), Some(window)) if !window.is_empty() => field("App", format!("{app} · {}", quote(window))),
             (Some(app), _) => field("App", app.clone()),
             _ => {}
         }
-        if let Some(url) = &element.url {
+        if let Some(url) = element.url.as_ref().filter(|_| !shared) {
             field("Page", url.clone());
         }
         if let Some(location) = element.selector.clone().or(element.path.clone()) {
             field("Location", location);
         }
+        // The title names both ends; this says where they are (and the target's app, if another).
         if let Some(Shape::Arrow { from, to }) = &annotation.shape {
-            let target = annotation.target.clone().unwrap_or_default();
-            let end = |e: &Element, (x, y): (f64, f64)| {
-                let at = format!("({}, {})", n(x), n(y));
-                match (&e.name, e.app.as_ref().filter(|a| Some(*a) != element.app.as_ref())) {
-                    (Some(name), Some(app)) => format!("{name} in {app}, at {at}"),
-                    (Some(name), None) => format!("{name}, at {at}"),
-                    (None, _) => at,
-                }
-            };
-            field("From", end(&element, *from));
-            field("To", end(&target, *to));
-            field("Moved by", format!("{} across, {} down", n(to.0 - from.0), n(to.1 - from.1)));
+            let other_app = annotation
+                .target
+                .as_ref()
+                .and_then(|t| t.app.clone())
+                .filter(|app| Some(app) != element.app.as_ref())
+                .map(|app| format!(" in {app}"))
+                .unwrap_or_default();
+            field("From → to", format!("({}, {}) → ({}, {}){other_app}", n(from.0), n(from.1), n(to.0), n(to.1)));
         }
         if let Some(selected) = &element.selected_text {
             field("Selected text", quote(selected.trim()));
@@ -885,18 +905,34 @@ mod tests {
     fn writes_annotations_at_each_detail_level() {
         let i = inspection();
         let a = &i.annotations[0];
+        // Every mark is in the same app, window and page: that's said once, not under each.
+        assert_eq!(
+            i.context_markdown().as_deref(),
+            Some("**In:** Safari · \"Settings — Shop\" · http://localhost:3000/settings")
+        );
         assert_eq!(
             i.annotation_markdown(a, Detail::Compact),
-            "1. **button \"Save changes\"** (Safari): Line it up with the fields."
+            "1. **button \"Save changes\"**: Line it up with the fields."
         );
         assert_eq!(
             i.annotation_markdown(a, Detail::Standard),
             "### 1. button \"Save changes\"\n\
-             **App:** Safari · \"Settings — Shop\"\n\
-             **Page:** http://localhost:3000/settings\n\
              **Location:** form.settings > div.actions > button#save.btn.btn-primary\n\
              **Intent:** fix · **Severity:** important\n\
              **Feedback:** Line it up with the fields."
+        );
+        // Marks in different apps each say where they are.
+        let mut finder = a.clone();
+        finder.number = 2;
+        finder.element = Some(Element { app: Some("Finder".into()), name: Some("row".into()), ..Element::default() });
+        let mixed = Inspection { annotations: vec![a.clone(), finder.clone()], ..inspection() };
+        assert_eq!(mixed.context_markdown(), None);
+        assert!(
+            mixed.annotation_markdown(a, Detail::Standard).contains("**App:** Safari · \"Settings — Shop\"\n**Page:**")
+        );
+        assert_eq!(
+            mixed.annotation_markdown(&finder, Detail::Compact),
+            "2. **row** (Finder): Line it up with the fields."
         );
         let forensic = i.annotation_markdown(a, Detail::Forensic);
         assert!(

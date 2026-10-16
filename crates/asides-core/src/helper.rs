@@ -39,6 +39,10 @@ pub struct Spec {
     /// Agents get asides in batches (Send to Agent), so the toolbar offers Send; otherwise each
     /// aside reaches them when it's written, and Done is enough.
     pub batch: bool,
+    /// The bound directory's name; `None` when there's nowhere to add the aside (or record).
+    pub bound: Option<String>,
+    /// Show the toolbar (the user can hide it; every action has a key).
+    pub toolbar: bool,
     /// The last session's guides and held measurements, for R.
     pub saved: Saved,
     /// Show the keys at the start (the first time).
@@ -81,6 +85,8 @@ pub enum Event {
     Identify { id: u64, x: f64, y: f64 },
     /// The talk key or the microphone button went down or up (hold to talk, tap to toggle).
     Talk { down: bool },
+    /// The user showed or hid the toolbar (remembered for next time).
+    Toolbar { shown: bool },
     /// Something was put on the clipboard (not a screenshot to attach).
     Copied,
     /// Done: `result.json` is written.
@@ -105,6 +111,10 @@ pub enum Command {
     Finish,
     /// Close without adding anything.
     Close,
+    /// Something the user should know while the overlay covers the menu bar (an error).
+    Notice {
+        text: String,
+    },
 }
 
 /// What the session adds to the aside (`result.json`).

@@ -22,6 +22,11 @@ pub struct GitInfo {
     pub uncommitted_files: usize,
 }
 
+/// The branch checked out in `dir`, if it's a git work tree on a branch.
+pub fn current_branch(dir: &Path) -> Option<String> {
+    git(dir, &["branch", "--show-current"]).filter(|b| !b.is_empty())
+}
+
 /// `None` when `dir` is not inside a git work tree.
 pub fn git_info(dir: &Path) -> Option<GitInfo> {
     if git(dir, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true") {

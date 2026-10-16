@@ -116,6 +116,8 @@ struct LatestNote {
     file: PathBuf,
     /// Entries agents haven't resolved or dismissed, once agents have acted on some.
     open: Option<usize>,
+    /// Why the next aside starts a new note instead (`auto_new_note`).
+    moved_on: Option<&'static str>,
 }
 
 struct App {
@@ -603,7 +605,13 @@ impl App {
         }
         match macos::mic_status() {
             Mic::Granted => self.mic = Mic::Granted,
-            Mic::Undetermined => return self.request_mic(),
+            Mic::Undetermined => {
+                if let Some(overlay) = &mut self.overlay {
+                    let text = "Asides needs the microphone: close this (Esc) to answer macOS's prompt.".into();
+                    overlay.send(&OverlayCommand::Notice { text });
+                }
+                return self.request_mic();
+            }
             Mic::Denied => {
                 self.mic = Mic::Denied;
                 return self.fail("Microphone access is denied. Preferences → Microphone Permission…".into());
@@ -675,6 +683,7 @@ impl App {
             keep_audio: self.config.keep_audio,
             model: self.config.model.clone(),
             languages: self.config.languages.clone(),
+            auto_new_note: self.config.auto_new_note,
         })));
     }
 
@@ -728,6 +737,7 @@ impl App {
             new_note,
             environment: environment::capture(self.mtm),
             model: self.config.model.clone(),
+            auto_new_note: self.config.auto_new_note,
         })));
     }
 
@@ -751,6 +761,7 @@ impl App {
             source: "Wispr Flow",
             new_note,
             environment: environment::capture(self.mtm),
+            auto_new_note: self.config.auto_new_note,
         })));
     }
 
@@ -846,6 +857,13 @@ impl App {
             record_shortcut: asides_core::config::pretty_shortcut(&self.config.shortcuts.record),
             recording: self.recording.as_ref().map(|r| r.started_at.elapsed().as_secs_f32()),
             batch: self.config.agent_delivery == AgentDelivery::Batch,
+            bound: self
+                .bound
+                .as_ref()
+                .filter(|d| d.is_dir())
+                .and_then(|d| d.file_name())
+                .map(|n| n.to_string_lossy().into_owned()),
+            toolbar: m.toolbar,
             saved: self.last_measure.clone(),
             ..Spec::default()
         }
@@ -889,6 +907,7 @@ impl App {
                 overlay.send(&OverlayCommand::Element { id, element: element.map(Box::new) });
             }
             OverlayMessage::Event(OverlayEvent::Talk { down }) => self.talk(down),
+            OverlayMessage::Event(OverlayEvent::Toolbar { shown }) => self.update_config(|c| c.measure.toolbar = shown),
             OverlayMessage::Event(OverlayEvent::Copied) => {
                 // Not a screenshot to attach: it's already part of the session.
                 if let Some(recording) = &mut self.recording {
@@ -995,6 +1014,7 @@ impl App {
             new_note,
             environment: environment::capture(self.mtm),
             model: self.config.model.clone(),
+            auto_new_note: self.config.auto_new_note,
         })));
     }
 
@@ -1191,7 +1211,9 @@ impl App {
     fn refresh(&mut self) {
         let Some(icons) = &self.icons else { return };
         let now = Instant::now();
-        let dir_name = self.bound.as_ref().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned());
+        // A directory deleted since it was bound can't be recorded into either.
+        let usable = self.bound.as_ref().filter(|d| d.is_dir());
+        let dir_name = usable.and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned());
         let downloading = match &self.model_state {
             Some(ModelState::Downloading { progress }) => Some((progress * 100.0).floor() as u32),
             _ => None,
@@ -1238,7 +1260,12 @@ impl App {
             };
             ("idle", &icons.idle, None, status)
         } else {
-            ("unbound", &icons.unbound, None, "Not bound · run `asides` in a repo".into())
+            // Said up front, in the menu bar itself, not once a recording fails.
+            let status = match &self.bound {
+                Some(gone) => format!("{} no longer exists · run `asides` in a repo", tilde(gone)),
+                None => "Not bound · run `asides` in a repo, or choose a Directory below".into(),
+            };
+            ("unbound", &icons.unbound, Some("No repo".into()), status)
         };
 
         let note_info = match (&dir_name, &self.pending_new, &self.latest) {
@@ -1247,6 +1274,9 @@ impl App {
                 Some(title) => format!("{dir} › next recording starts \"{title}\""),
                 None => format!("{dir} › next recording starts a new note"),
             },
+            (Some(dir), None, Some(latest)) if latest.moved_on.is_some() => {
+                format!("{dir} › next recording starts a new note ({})", latest.moved_on.unwrap_or_default())
+            }
             (Some(dir), None, Some(latest)) => match latest.open {
                 Some(open) => format!("{dir} › {} · {} · {open} open", latest.title, entries(latest.entries)),
                 None => format!("{dir} › {} · {}", latest.title, entries(latest.entries)),
@@ -1275,12 +1305,20 @@ impl App {
     }
 
     fn refresh_latest(&mut self) {
-        self.latest = self.bound.as_deref().and_then(notes::latest_note).map(|note| {
+        let auto = self.config.auto_new_note;
+        let bound = self.bound.clone();
+        self.latest = bound.as_deref().and_then(notes::latest_note).map(|note| {
             let open = note.dir.join(threads::THREADS_FILE).is_file().then(|| {
                 let content = std::fs::read_to_string(note.file()).unwrap_or_default();
                 threads::open_count(&note.dir, &notes::parse_entries(&content))
             });
-            LatestNote { entries: note.entry_count(), file: note.file(), title: note.title, open }
+            let moved_on = auto
+                .then(|| {
+                    let branch = bound.as_deref().and_then(project::current_branch);
+                    notes::moved_on(&note, branch.as_deref(), SystemTime::now())
+                })
+                .flatten();
+            LatestNote { entries: note.entry_count(), file: note.file(), title: note.title, open, moved_on }
         });
     }
 
@@ -1325,6 +1363,10 @@ impl App {
     }
 
     fn fail(&mut self, message: String) {
+        // The overlay covers the menu bar: say it there too.
+        if let Some(overlay) = &mut self.overlay {
+            overlay.send(&OverlayCommand::Notice { text: message.clone() });
+        }
         self.error = Some((Instant::now(), message));
         self.sound("Basso");
         self.refresh();
@@ -1475,6 +1517,7 @@ impl App {
             keep_audio: self.config.keep_audio,
             model: self.config.model.clone(),
             languages: self.config.languages.clone(),
+            auto_new_note: self.config.auto_new_note,
         })));
         Ok(())
     }

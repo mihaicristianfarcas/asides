@@ -1041,12 +1041,14 @@ fn px_rect_to_pt(r: Rect, scale: f64) -> PtRect {
     PtRect::new(r.x as f64 / scale, r.y as f64 / scale, r.width as f64 / scale, r.height as f64 / scale)
 }
 
-/// The Markdown for one screen's inspection: the measurements, then each mark, as
+/// The Markdown for one screen's inspection: where the marks are (when they share an app and a
+/// page) and the measurements, to go with its screenshot; then each mark, as
 /// `(seconds into the session, text)` so the app can place marks by when they were made.
 pub fn markdown(inspection: &Inspection, detail: Detail) -> (Option<String>, Vec<(f32, String)>) {
-    let measured = inspection.measurements_markdown(detail);
+    let header: Vec<String> =
+        [inspection.context_markdown(), inspection.measurements_markdown(detail)].into_iter().flatten().collect();
     let notes = inspection.annotations.iter().map(|a| (a.time, inspection.annotation_markdown(a, detail))).collect();
-    (measured, notes)
+    ((!header.is_empty()).then(|| header.join("\n")), notes)
 }
 
 #[cfg(test)]
@@ -1261,14 +1263,16 @@ mod tests {
             intent: None,
             severity: None,
         });
-        let (_, notes) = markdown(&s.inspections()[0].1, Detail::Standard);
+        let (header, notes) = markdown(&s.inspections()[0].1, Detail::Standard);
+        // All in Mail: said once, with the screenshot.
+        assert_eq!(header.as_deref(), Some("**In:** Mail"));
         assert_eq!(
             notes[0].1,
-            "### 1. Arrow from button \"Save\" to toolbar\n**App:** Mail\n**From:** button \"Save\", at (25, 20)\n\
-             **To:** toolbar, at (80, 40)\n**Moved by:** 55 across, 20 down\n**Intent:** change\n**Feedback:** Move it here"
+            "### 1. Arrow from button \"Save\" to toolbar\n**From → to:** (25, 20) → (80, 40)\n**Intent:** change\n\
+             **Feedback:** Move it here"
         );
-        assert_eq!(notes[1].1, "### 2. Drawn on button \"Save\"\n**App:** Mail");
-        assert_eq!(notes[2].1, "### 3. Drawn around 98 × 48 at (1, 1)\n**App:** Mail");
+        assert_eq!(notes[1].1, "### 2. Drawn on button \"Save\"");
+        assert_eq!(notes[2].1, "### 3. Drawn around 98 × 48 at (1, 1)");
         // A click with the Draw tool on a marker edits it; elsewhere it does nothing.
         s.set_tool(Tool::Draw);
         assert_eq!(s.apply(&Action::Click { screen: 0, at: (25.0, 20.0) }), Placed::Edit { screen: 0, index: 0 });

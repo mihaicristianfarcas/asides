@@ -3,6 +3,7 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Local};
 
@@ -90,6 +91,26 @@ pub fn list_notes(base: &Path) -> Vec<Note> {
 /// The note new recordings append to: the most recently created one.
 pub fn latest_note(base: &Path) -> Option<Note> {
     list_notes(base).pop()
+}
+
+/// How long a note can go unwritten before new asides start another: a new working session.
+pub const SESSION_GAP: Duration = Duration::from_secs(8 * 60 * 60);
+
+/// Why new asides should start a new note instead of joining `note` (with `auto_new_note`):
+/// it was started on another git branch than `branch`, or not written to for [`SESSION_GAP`].
+/// Short, focused notes are easier for the user to share and cheaper for an agent to read.
+pub fn moved_on(note: &Note, branch: Option<&str>, now: SystemTime) -> Option<&'static str> {
+    let content = fs::read_to_string(note.file()).ok()?;
+    let noted = front_matter(&content)
+        .and_then(|meta| meta.lines().find_map(|line| line.strip_prefix("  branch: ")))
+        .map(|b| b.trim().trim_matches('"').replace("\\\"", "\""));
+    if let (Some(noted), Some(branch)) = (noted, branch)
+        && noted != branch
+    {
+        return Some("you're on another branch");
+    }
+    let written = fs::metadata(note.file()).and_then(|m| m.modified()).ok()?;
+    now.duration_since(written).is_ok_and(|idle| idle > SESSION_GAP).then_some("it's been a while")
 }
 
 /// Creates the note folder and writes `header` (the YAML front matter) to its `notes.md`.
@@ -211,6 +232,27 @@ pub fn parse_entries(content: &str) -> Vec<Entry> {
     entries
 }
 
+/// What an agent needs from a note's front matter in a line: `branch feat/checkout at 1a2b3c4 ·
+/// Safari 18.2`. The full front matter stays in the note (and in `get_asides`).
+pub fn context_line(content: &str) -> Option<String> {
+    let meta = front_matter(content)?;
+    let value = |key: &str| {
+        meta.lines()
+            .find_map(|line| line.trim_start().strip_prefix(key)?.strip_prefix(": "))
+            .map(|v| v.trim().trim_matches('"').to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let mut parts = Vec::new();
+    match (value("branch"), value("commit")) {
+        (Some(branch), Some(commit)) => parts.push(format!("branch {branch} at {commit}")),
+        (Some(branch), None) => parts.push(format!("branch {branch}")),
+        (None, Some(commit)) => parts.push(format!("commit {commit}")),
+        (None, None) => {}
+    }
+    parts.extend(value("browser"));
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 /// The YAML front matter between the opening `---` and the closing one, without the markers.
 pub fn front_matter(content: &str) -> Option<&str> {
     let rest = content.strip_prefix("---\n")?;
@@ -225,6 +267,29 @@ mod tests {
 
     fn at(h: u32, m: u32) -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 10, 15, h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn starts_a_new_note_on_another_branch_or_after_a_break() {
+        let tmp = tempfile::tempdir().unwrap();
+        let header = "---\ntitle: Checkout\ngit:\n  branch: feat/checkout\n  commit: abc1234\n---\n";
+        let note = create_note(tmp.path(), at(9, 0), "Checkout", header).unwrap();
+        let now = SystemTime::now();
+        assert_eq!(moved_on(&note, Some("feat/checkout"), now), None);
+        assert_eq!(moved_on(&note, None, now), None);
+        assert_eq!(moved_on(&note, Some("main"), now), Some("you're on another branch"));
+        let tomorrow = now + SESSION_GAP + Duration::from_secs(60);
+        assert_eq!(moved_on(&note, Some("feat/checkout"), tomorrow), Some("it's been a while"));
+        let plain = create_note(tmp.path(), at(9, 5), "Plain", "---\ntitle: Plain\n---\n").unwrap();
+        assert_eq!(moved_on(&plain, Some("main"), now), None);
+    }
+
+    #[test]
+    fn sums_up_the_front_matter_for_agents() {
+        let note = "---\ntitle: Checkout\ngit:\n  branch: feat/checkout\n  commit: 1a2b3c4\nenvironment:\n  \
+                    browser: \"Safari 18.2\"\n---\n\n## 1 · 14:00\n";
+        assert_eq!(context_line(note).as_deref(), Some("branch feat/checkout at 1a2b3c4 · Safari 18.2"));
+        assert_eq!(context_line("---\ntitle: x\n---\n"), None);
     }
 
     #[test]

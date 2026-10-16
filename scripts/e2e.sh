@@ -15,11 +15,15 @@ CONFIG="$SUPPORT/config.toml"
 WISPR_DB="$SUPPORT/test-wispr-flow.sqlite"
 WORK=$(mktemp -d)
 mkdir -p "$SUPPORT"
-# The agent test switches to batch delivery; the user's settings are put back afterwards.
+# The agent test switches to batch delivery; the user's settings are put back afterwards, and so
+# is the app's state (its binding: left on the test's deleted repo, the app couldn't record).
+STATE="$SUPPORT/state.json"
 cp "$CONFIG" "$WORK/config.toml.saved" 2>/dev/null || true
+cp "$STATE" "$WORK/state.json.saved" 2>/dev/null || true
 cleanup() {
     "$CLI" quit >/dev/null 2>&1 || true
     if [ -f "$WORK/config.toml.saved" ]; then cp "$WORK/config.toml.saved" "$CONFIG"; else rm -f "$CONFIG"; fi
+    if [ -f "$WORK/state.json.saved" ]; then cp "$WORK/state.json.saved" "$STATE"; fi
     rm -f "$WISPR_DB" "$WISPR_DB-wal" "$WISPR_DB-shm"
     rm -rf "$WORK"
 }
@@ -174,7 +178,7 @@ check "an annotation on an element, with its location" contains "$NOTE2" "**Loca
 check "its feedback, intent and severity" contains "$NOTE2" "**Intent:** fix · **Severity:** important"
 check "an area mark" contains "$NOTE2" "### 2. Area 110 × 50 at (250, 40)"
 check "an arrow, from one element to another" contains "$NOTE2" "### 3. Arrow from button \"Save\" to heading \"Profile\""
-check "with where it goes" contains "$NOTE2" "**Moved by:** 190 across, -72 down"
+check "with where it goes" contains "$NOTE2" "**From → to:** (110, 182) → (300, 110)"
 check "the screenshot and the Shot tool's, in the order they were made" \
     test "$(sed -n 's/^!\[.*\](\(images\/04-.*\.png\))$/\1/p' "$NOTE2" | wc -l | tr -d ' ')" = 2
 SCREEN_PNG="$(dirname "$NOTE2")/$(sed -n 's/^!\[.*\](\(images\/04-.*\.png\))$/\1/p' "$NOTE2" | head -1)"

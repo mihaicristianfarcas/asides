@@ -507,7 +507,10 @@ pub(crate) fn asides_text(items: &[Item]) -> (String, Vec<PathBuf>) {
             Item::Addition { note, number, text } => (note, format!("{number} (added since)"), text.as_str()),
         };
         if current.is_none_or(|c| c.dir != note.dir) {
-            text.push_str(&format!("\n\nNote \"{}\" ({}):", note.title, note.file().display()));
+            // Once per note: what the user was testing (branch, commit, browser), in a line.
+            let context = fs::read_to_string(note.file()).ok().and_then(|c| notes::context_line(&c));
+            let context = context.map(|c| format!(", {c}")).unwrap_or_default();
+            text.push_str(&format!("\n\nNote \"{}\" ({}{context}):", note.title, note.file().display()));
             current = Some(note);
         }
         let heading = agents::absolute_links(&note.dir, &heading);
