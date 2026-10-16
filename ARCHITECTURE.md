@@ -115,7 +115,8 @@ packaging/site/       the Cloudflare Worker that serves the website, docs/ (stat
 scripts/              e2e.sh (+ e2e-mcp.py, a scripted agent), make-fixtures.sh, signing-identity.sh,
                       make-signing-cert.sh, release.sh, make-dmg.sh, publish-dmg.sh, make-og.py,
                       make-icon.swift
-docs/                 the website (asides.mihaicristian.dev): index.html, wallpaper.webp, favicon.svg, og.png
+docs/                 the website (asides.mihaicristian.dev): index.html, wallpaper.webp, favicon.svg, og.png,
+                      annotate.webp (the overlay, captured with a replay on the demo's own checkout)
 Casks/asides.rb       the Homebrew cask; the repository doubles as a tap
 ```
 
