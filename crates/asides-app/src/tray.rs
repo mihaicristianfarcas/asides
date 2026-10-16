@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
+use asides_core::inspect::{Detail, Units};
 use asides_core::models::MODELS;
 use asides_core::paths::tilde;
 use tray_icon::menu::accelerator::Accelerator;
@@ -17,8 +18,11 @@ pub enum MenuAction {
     Record,
     RecordNewNote,
     AttachImage,
+    Measure,
     Cancel,
     SendToAgent,
+    /// An agent's reply in the Agent Replies menu: opens the note.
+    OpenReplies,
     SwitchDirectory(PathBuf),
     ChooseDirectory,
     OpenNote,
@@ -29,6 +33,12 @@ pub enum MenuAction {
     ToggleSounds,
     ToggleKeepAudio,
     ToggleWisprFlow,
+    ToggleIdentifyElements,
+    ToggleMeasurePixels,
+    ToggleMeasureRecord,
+    AnnotationDetail(Detail),
+    ScreenRecordingSettings,
+    AccessibilitySettings,
     AgentDelivery(AgentDelivery),
     Model(String),
     InputDevice(String),
@@ -44,8 +54,12 @@ pub struct Tray {
     record: MenuItem,
     record_new: MenuItem,
     attach: MenuItem,
+    measure: MenuItem,
     cancel: MenuItem,
     send: MenuItem,
+    replies_menu: Submenu,
+    replies: Vec<MenuItem>,
+    shown_replies: Vec<String>,
     directory_menu: Submenu,
     /// Recent directories at the top of the Directory submenu, then a separator.
     directories: Vec<(PathBuf, CheckMenuItem)>,
@@ -60,6 +74,12 @@ pub struct Tray {
     sounds: CheckMenuItem,
     keep_audio: CheckMenuItem,
     wispr_flow: CheckMenuItem,
+    identify: CheckMenuItem,
+    pixels: CheckMenuItem,
+    measure_record: CheckMenuItem,
+    details: Vec<(Detail, CheckMenuItem)>,
+    screen_recording: MenuItem,
+    accessibility: MenuItem,
     deliveries: Vec<(AgentDelivery, CheckMenuItem)>,
     models: Vec<(String, CheckMenuItem)>,
     devices: Vec<(String, CheckMenuItem)>,
@@ -81,6 +101,8 @@ pub struct View<'a> {
     /// "Send to Claude Code", or "Send to Agent" when no single agent is listening.
     pub send_label: String,
     pub send_enabled: bool,
+    /// What agents said about the latest note's asides, newest first.
+    pub replies: &'a [String],
 }
 
 impl Tray {
@@ -89,6 +111,9 @@ impl Tray {
         let record = MenuItem::new("Start Recording", false, accelerator(&config.shortcuts.record));
         let record_new = MenuItem::new("Start in New Note", false, accelerator(&config.shortcuts.record_new_note));
         let attach = MenuItem::new("Attach Clipboard Image", false, accelerator(&config.shortcuts.attach_image));
+        let measure =
+            MenuItem::new(menu_text("Measure & Annotate Screen"), true, accelerator(&config.shortcuts.measure));
+        let replies_menu = Submenu::new("Agent Replies", false);
         let cancel = MenuItem::new(cancel_label(config), false, None);
         let send = MenuItem::new("Send to Agent", false, accelerator(&config.shortcuts.send_to_agent));
         let choose_directory = MenuItem::new("Choose Directory…", true, None);
@@ -105,6 +130,39 @@ impl Tray {
         let sounds = CheckMenuItem::new("Sounds", true, config.sounds, None);
         let keep_audio = CheckMenuItem::new("Keep Audio Clips", true, config.keep_audio, None);
         let wispr_flow = CheckMenuItem::new("Add Wispr Flow Dictations", true, config.wispr_flow, None);
+        let identify = CheckMenuItem::new(
+            "Identify UI Elements (needs Accessibility)",
+            true,
+            config.measure.identify_elements,
+            None,
+        );
+        let pixels = CheckMenuItem::new("Measure in Pixels, Not Points", true, config.measure.units == Units::Px, None);
+        let measure_record = CheckMenuItem::new("Start Recording When It Opens", true, config.measure.record, None);
+        let details: Vec<(Detail, CheckMenuItem)> = [
+            (Detail::Compact, "Compact"),
+            (Detail::Standard, "Standard"),
+            (Detail::Detailed, "Detailed"),
+            (Detail::Forensic, "Forensic (Colors, Padding, Accessibility)"),
+        ]
+        .into_iter()
+        .map(|(detail, label)| (detail, CheckMenuItem::new(label, true, detail == config.annotation_detail, None)))
+        .collect();
+        let detail_menu = Submenu::new("Annotation Detail", true);
+        for (_, item) in &details {
+            detail_menu.append(item)?;
+        }
+        let screen_recording = MenuItem::new("Screen Recording Permission…", true, None);
+        let accessibility = MenuItem::new("Accessibility Permission…", true, None);
+        let measure_menu = Submenu::new(menu_text("Measure & Annotate"), true);
+        measure_menu.append_items(&[
+            &measure_record,
+            &identify,
+            &pixels,
+            &detail_menu,
+            &PredefinedMenuItem::separator(),
+            &screen_recording,
+            &accessibility,
+        ])?;
         let deliveries: Vec<(AgentDelivery, CheckMenuItem)> = [
             (AgentDelivery::Each, "Each Aside as It's Transcribed"),
             (AgentDelivery::Batch, "In Batches, with Send to Agent"),
@@ -142,6 +200,7 @@ impl Tray {
             &sounds,
             &keep_audio,
             &wispr_flow,
+            &measure_menu,
             &PredefinedMenuItem::separator(),
             &model_menu,
             &device_menu,
@@ -158,8 +217,10 @@ impl Tray {
             &record,
             &record_new,
             &attach,
+            &measure,
             &cancel,
             &send,
+            &replies_menu,
             &PredefinedMenuItem::separator(),
             &directory_menu,
             &note_info,
@@ -188,8 +249,12 @@ impl Tray {
             record,
             record_new,
             attach,
+            measure,
             cancel,
             send,
+            replies_menu,
+            replies: Vec::new(),
+            shown_replies: Vec::new(),
             directory_menu,
             directories: Vec::new(),
             directories_separator: None,
@@ -203,6 +268,12 @@ impl Tray {
             sounds,
             keep_audio,
             wispr_flow,
+            identify,
+            pixels,
+            measure_record,
+            details,
+            screen_recording,
+            accessibility,
             deliveries,
             models,
             devices: devices_items,
@@ -217,6 +288,9 @@ impl Tray {
             (&self.record, MenuAction::Record),
             (&self.record_new, MenuAction::RecordNewNote),
             (&self.attach, MenuAction::AttachImage),
+            (&self.measure, MenuAction::Measure),
+            (&self.screen_recording, MenuAction::ScreenRecordingSettings),
+            (&self.accessibility, MenuAction::AccessibilitySettings),
             (&self.cancel, MenuAction::Cancel),
             (&self.send, MenuAction::SendToAgent),
             (&self.choose_directory, MenuAction::ChooseDirectory),
@@ -236,9 +310,18 @@ impl Tray {
             (&self.sounds, MenuAction::ToggleSounds),
             (&self.keep_audio, MenuAction::ToggleKeepAudio),
             (&self.wispr_flow, MenuAction::ToggleWisprFlow),
+            (&self.identify, MenuAction::ToggleIdentifyElements),
+            (&self.pixels, MenuAction::ToggleMeasurePixels),
+            (&self.measure_record, MenuAction::ToggleMeasureRecord),
         ];
         if let Some((_, action)) = checks.into_iter().find(|(item, _)| item.id() == id) {
             return Some(action);
+        }
+        if self.replies.iter().any(|item| item.id() == id) {
+            return Some(MenuAction::OpenReplies);
+        }
+        if let Some((detail, _)) = self.details.iter().find(|(_, item)| item.id() == id) {
+            return Some(MenuAction::AnnotationDetail(*detail));
         }
         if let Some((mode, _)) = self.deliveries.iter().find(|(_, item)| item.id() == id) {
             return Some(MenuAction::AgentDelivery(*mode));
@@ -280,6 +363,28 @@ impl Tray {
         for item in [&self.open, &self.reveal, &self.copy_path] {
             item.set_enabled(view.has_note);
         }
+        self.set_replies(view.replies);
+    }
+
+    /// Rebuilds the Agent Replies submenu when what agents said changes.
+    fn set_replies(&mut self, replies: &[String]) {
+        if self.shown_replies == replies {
+            return;
+        }
+        for item in self.replies.drain(..) {
+            let _ = self.replies_menu.remove(&item);
+        }
+        for text in replies {
+            let item = MenuItem::new(menu_text(text), true, None);
+            let _ = self.replies_menu.append(&item);
+            self.replies.push(item);
+        }
+        self.replies_menu.set_enabled(!replies.is_empty());
+        self.replies_menu.set_text(match replies.len() {
+            0 => "Agent Replies".to_string(),
+            n => format!("Agent Replies ({n})"),
+        });
+        self.shown_replies = replies.to_vec();
     }
 
     /// Reflects a (re)loaded config in check marks and shortcut hints.
@@ -289,6 +394,12 @@ impl Tray {
         self.sounds.set_checked(config.sounds);
         self.keep_audio.set_checked(config.keep_audio);
         self.wispr_flow.set_checked(config.wispr_flow);
+        self.identify.set_checked(config.measure.identify_elements);
+        self.pixels.set_checked(config.measure.units == Units::Px);
+        self.measure_record.set_checked(config.measure.record);
+        for (detail, item) in &self.details {
+            item.set_checked(*detail == config.annotation_detail);
+        }
         for (mode, item) in &self.deliveries {
             item.set_checked(*mode == config.agent_delivery);
         }
@@ -302,6 +413,7 @@ impl Tray {
         let _ = self.record_new.set_accelerator(accelerator(&config.shortcuts.record_new_note));
         let _ = self.attach.set_accelerator(accelerator(&config.shortcuts.attach_image));
         let _ = self.send.set_accelerator(accelerator(&config.shortcuts.send_to_agent));
+        let _ = self.measure.set_accelerator(accelerator(&config.shortcuts.measure));
         self.cancel.set_text(cancel_label(config));
     }
 
@@ -339,6 +451,9 @@ impl Tray {
             MenuAction::ToggleSounds => self.sounds.is_checked(),
             MenuAction::ToggleKeepAudio => self.keep_audio.is_checked(),
             MenuAction::ToggleWisprFlow => self.wispr_flow.is_checked(),
+            MenuAction::ToggleIdentifyElements => self.identify.is_checked(),
+            MenuAction::ToggleMeasurePixels => self.pixels.is_checked(),
+            MenuAction::ToggleMeasureRecord => self.measure_record.is_checked(),
             _ => false,
         }
     }

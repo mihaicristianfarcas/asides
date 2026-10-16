@@ -1,0 +1,30 @@
+[package]
+name = "asides-overlay"
+description = "Asides' Measure & Annotate overlay: measure, mark, draw and talk over a frozen screen (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "asides-overlay"
+path = "src/main.rs"
+
+[dependencies]
+asides-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Shaders compiled at launch (Metal caches them): building needs no Metal toolchain (full Xcode).
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+image = { version = "0.25", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-foundation = "0.3"
+objc2-core-graphics = "0.3"
+raw-window-handle = "0.6"
+unicode-segmentation = "1"
+
+[dev-dependencies]
+tempfile.workspace = true

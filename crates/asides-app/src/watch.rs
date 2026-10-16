@@ -1,17 +1,21 @@
-//! Background polling: Wispr Flow's dictation history and the agents listening through `asides mcp`.
-//! Like the config watcher, these threads only report back; the main thread acts.
+//! Background polling: Wispr Flow's dictation history, the agents listening through `asides mcp`,
+//! and what agents say about the user's asides (`threads.jsonl`). Like the config watcher, these
+//! threads only report back; the main thread acts.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use asides_core::agents::Listener;
+use asides_core::notes;
+use asides_core::threads::{self, Event, THREADS_FILE};
 use asides_core::wispr::{Dictation, History};
 use chrono::Utc;
 
 const WISPR_POLL: Duration = Duration::from_millis(700);
 const LISTENERS_POLL: Duration = Duration::from_secs(2);
+const THREADS_POLL: Duration = Duration::from_secs(1);
 
 /// Reports Wispr Flow dictations finished from now on, until the returned flag is set. Each
 /// distinct error is reported once.
@@ -74,6 +78,32 @@ pub fn listeners(dir: PathBuf, report: impl Fn(Vec<Listener>) -> bool + Send + '
             }
         })
         .expect("spawn listeners thread");
+}
+
+/// Reports the events of the latest note in the directory `bound` holds whenever they change (an
+/// agent resolved or replied to an aside), and once for each note it starts watching.
+pub fn threads(bound: Arc<Mutex<Option<PathBuf>>>, report: impl Fn(PathBuf, Vec<Event>) -> bool + Send + 'static) {
+    std::thread::Builder::new()
+        .name("asides-threads".into())
+        .spawn(move || {
+            let mut last: Option<(PathBuf, Option<(u64, std::time::SystemTime)>)> = None;
+            loop {
+                std::thread::sleep(THREADS_POLL);
+                let dir = bound.lock().unwrap().clone();
+                let Some(note) = dir.as_deref().and_then(notes::latest_note) else { continue };
+                let stamp = std::fs::metadata(note.dir.join(THREADS_FILE))
+                    .ok()
+                    .and_then(|m| Some((m.len(), m.modified().ok()?)));
+                let now = (note.dir.clone(), stamp);
+                if last.as_ref() != Some(&now) {
+                    last = Some(now);
+                    if !report(note.dir.clone(), threads::read(&note.dir)) {
+                        return;
+                    }
+                }
+            }
+        })
+        .expect("spawn threads watcher");
 }
 
 fn is_running(pid: u32) -> bool {

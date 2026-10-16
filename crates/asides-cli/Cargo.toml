@@ -16,6 +16,7 @@ asides-core.workspace = true
 anyhow.workspace = true
 clap = { version = "4.6", features = ["derive"] }
 libc = "0.2"
+png = "0.18"
 serde_json.workspace = true
 
 [dev-dependencies]

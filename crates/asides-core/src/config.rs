@@ -6,6 +6,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::inspect::{Detail, Units};
+
 const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # Shortcut syntax: modifiers (ctrl, alt/option, shift, cmd) + a key (Space, Escape, KeyN, Digit1, F5, …),
 # joined with '+'. Avoid option-only combinations: macOS refuses them.
@@ -13,6 +15,14 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # agent_delivery: "each" hands every recording to agents listening through `asides mcp` as soon as
 # it's transcribed; "batch" holds them until you choose Send to Agent.
 # wispr_flow_apps: app names or bundle IDs whose Wispr Flow dictations are added; [] means any app.
+# annotation_detail: how much Measure & Annotate puts in an aside: "compact", "standard", "detailed"
+# or "forensic".
+# [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
+# identify_elements: name what's under each mark (needs the Accessibility permission);
+# padding: points of screen kept around what you measured in the screenshot;
+# record: start recording when Measure & Annotate opens, so you can talk while you mark.
+# [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
+# tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
 "#;
 
@@ -40,7 +50,112 @@ pub struct Config {
     /// Only Wispr Flow dictations made in these apps (names or bundle IDs, matched ignoring case);
     /// empty means any app.
     pub wispr_flow_apps: Vec<String>,
+    /// How much Measure & Annotate puts in an aside.
+    pub annotation_detail: Detail,
+    pub measure: Measure,
     pub shortcuts: Shortcuts,
+}
+
+/// Measure & Annotate (the screen overlay).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Measure {
+    /// Lines, labels and guides, as `#RRGGBB`.
+    pub color: String,
+    pub units: Units,
+    /// Edge detection tolerance in percent; `-`/`=` change it while measuring.
+    pub tolerance: u8,
+    /// Name the element under each annotation marker from the accessibility tree. Needs the
+    /// Accessibility permission, asked for when this is turned on.
+    pub identify_elements: bool,
+    /// Points of screen kept around what was measured in the screenshot added to the aside.
+    pub padding: f64,
+    /// Start recording when the overlay opens, to talk while marking.
+    pub record: bool,
+    pub keys: OverlayKeys,
+}
+
+impl Default for Measure {
+    fn default() -> Self {
+        Self {
+            color: "#FF2D55".into(),
+            units: Units::Pt,
+            tolerance: crate::measure::Tolerance::DEFAULT.0,
+            identify_elements: false,
+            padding: 48.0,
+            record: false,
+            keys: OverlayKeys::default(),
+        }
+    }
+}
+
+/// The overlay's keys (PixelSnap's, mostly), each a comma-separated list of chords like
+/// `cmd+shift+c` (see `keys::Chord`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OverlayKeys {
+    pub measure: String,
+    pub mark: String,
+    pub draw: String,
+    pub shot: String,
+    pub hold_horizontal: String,
+    pub hold_vertical: String,
+    pub guide_horizontal: String,
+    pub guide_vertical: String,
+    pub tolerance_up: String,
+    pub tolerance_down: String,
+    pub tolerance_high: String,
+    pub units: String,
+    pub copy_dimensions: String,
+    pub copy_image: String,
+    pub copy_markdown: String,
+    pub undo: String,
+    pub clear: String,
+    pub hide: String,
+    pub restore: String,
+    /// Hold to talk (a tap toggles), like the record shortcut.
+    pub talk: String,
+    pub help: String,
+    /// Add to the aside.
+    pub done: String,
+    /// Add to the aside with the whole screen, not just around what's marked.
+    pub done_whole_screen: String,
+    /// Add to the aside and send it to the agent.
+    pub send: String,
+    pub close: String,
+}
+
+impl Default for OverlayKeys {
+    fn default() -> Self {
+        let k = |s: &str| s.to_string();
+        Self {
+            measure: k("d"),
+            mark: k("a"),
+            draw: k("p"),
+            shot: k("cmd+s, s"),
+            hold_horizontal: k("h"),
+            hold_vertical: k("v"),
+            guide_horizontal: k("shift+h"),
+            guide_vertical: k("shift+v"),
+            tolerance_up: k("=, shift+="),
+            tolerance_down: k("-"),
+            tolerance_high: k("t"),
+            units: k("u"),
+            copy_dimensions: k("cmd+c"),
+            copy_image: k("c"),
+            copy_markdown: k("cmd+shift+c"),
+            undo: k("backspace, cmd+z"),
+            clear: k("x"),
+            hide: k("tab"),
+            restore: k("r"),
+            talk: k("space"),
+            help: k("shift+/, f1"),
+            done: k("enter"),
+            done_whole_screen: k("alt+enter"),
+            send: k("cmd+enter"),
+            close: k("escape"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +177,8 @@ pub struct Shortcuts {
     pub cancel: String,
     /// Only registered while `agent_delivery` is `batch`.
     pub send_to_agent: String,
+    /// Measure & Annotate: freezes the screen to measure and annotate it.
+    pub measure: String,
 }
 
 impl Default for Config {
@@ -77,6 +194,8 @@ impl Default for Config {
             agent_delivery: AgentDelivery::default(),
             wispr_flow: false,
             wispr_flow_apps: Vec::new(),
+            annotation_detail: Detail::default(),
+            measure: Measure::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -90,6 +209,7 @@ impl Default for Shortcuts {
             attach_image: "ctrl+alt+KeyV".into(),
             cancel: "Escape".into(),
             send_to_agent: "ctrl+alt+Enter".into(),
+            measure: "ctrl+alt+KeyM".into(),
         }
     }
 }
@@ -181,5 +301,21 @@ mod tests {
         let agents = Config::load(&path).unwrap();
         assert_eq!(agents.agent_delivery, AgentDelivery::Batch);
         assert_eq!((agents.wispr_flow, agents.wispr_flow_apps), (true, vec!["Safari".to_string()]));
+
+        // Older files have no Measure & Annotate settings.
+        assert_eq!((agents.measure.clone(), agents.annotation_detail), (Measure::default(), Detail::Standard));
+        assert_eq!(agents.shortcuts.measure, "ctrl+alt+KeyM");
+        fs::write(
+            &path,
+            "annotation_detail = \"forensic\"\n[measure]\nunits = \"px\"\ntolerance = 20\n[measure.keys]\nmark = \"m\"\n",
+        )
+        .unwrap();
+        let measure = Config::load(&path).unwrap();
+        assert_eq!(
+            (measure.annotation_detail, measure.measure.units, measure.measure.tolerance),
+            (Detail::Forensic, Units::Px, 20)
+        );
+        assert_eq!(measure.measure.color, "#FF2D55");
+        assert_eq!((measure.measure.keys.mark.as_str(), measure.measure.keys.draw.as_str()), ("m", "p"));
     }
 }

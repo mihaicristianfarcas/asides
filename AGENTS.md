@@ -11,13 +11,23 @@ asides is a macOS menu-bar app plus a CLI.
 - whisper.cpp transcribes it locally, verbatim.
 - The transcript is appended to `<repo>/.asides/<YYYY-MM-DD-HHMM Title>/notes.md`.
 - Coding agents can listen through `asides mcp`, an MCP server in the CLI, and get each new
-  entry (or a batch, on Send to Agent) as a prompt.
+  entry (or a batch, on Send to Agent) as a prompt. They acknowledge, resolve, dismiss or reply to
+  asides and their marks (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
+- Measure & Annotate (`⌃⌥M`) freezes every screen, in any app, under one toolbar: PixelSnap-style
+  measuring (distances, snapped areas, holds, guides), numbered marks on elements and areas,
+  drawings (arrows, circles), screenshots of parts, and talking (Space) while doing it. The
+  annotated screenshot and Markdown land in the aside, each mark where the user was speaking. Its
+  overlay is a separate GPUI process, `asides-overlay`. Web-only (Agentation's toolbar, React
+  names) and CleanShot-only (PixelSnap's hand-offs) features are out of scope: it works on
+  anything on screen.
 - With the Wispr Flow integration on, Wispr Flow dictations become entries too.
 
 It's a Rust workspace:
 - `crates/asides-core`: platform-independent logic.
 - `crates/asides-cli`: the `asides` binary.
 - `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `Asides.app`).
+- `crates/asides-overlay`: the Measure & Annotate overlay (binary `asides-overlay`, GPUI), bundled
+  beside the app's binary. Any new UI for it is GPUI.
 
 ## Commands
 
@@ -27,6 +37,8 @@ It's a Rust workspace:
 | Lint (must be clean) | `cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings` |
 | Unit tests | `make test` (= `cargo test --workspace`) |
 | End-to-end | `make e2e` (needs fixtures and the model; see below) |
+| Overlay image | `ASIDES_OVERLAY_DUMP=<dir> cargo test -p asides-overlay renders_marks` (writes `session.png`) |
+| Overlay windows | `target/debug/asides-overlay <session dir>` with `windowed` and `replay` (see CONTRIBUTING.md) |
 | Speech tests | `make test-speech` (needs the model; also downloads 190 MB) |
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
@@ -67,8 +79,9 @@ changes.
   It also rebinds the app to a temporary repo.
 - **Keep binary names unique ignoring case** (case-insensitive APFS). Don't name a binary
   `Asides`.
-- **Don't add permissions** (Accessibility, Input Monitoring, Screen Recording) without the
-  maintainer's agreement.
+- **Don't add permissions** without the maintainer's agreement. Measure & Annotate uses Screen
+  Recording (asked on first use) and Accessibility (only with `identify_elements`); recording
+  itself must keep working without either. Input Monitoring is not used.
 - **Keep the docs in sync.** Update the README (user-facing), ARCHITECTURE.md (structure,
   invariants) and CONTRIBUTING.md (workflow) when your change affects them. The website
   (`docs/index.html`) repeats the shortcuts, requirements and install steps.
@@ -78,6 +91,13 @@ changes.
 **You can:**
 - run all the automated tests
 - drive the installed app through the CLI with `asides simulate <wav> [--new] [--image FILE --at SECONDS]` (dev-hooks builds only; `make e2e` sets this up)
+- run Measure & Annotate sessions on an image with `asides simulate-measure <png> <script.json>`
+  (dev-hooks builds), and look at the image it adds with `ASIDES_OVERLAY_DUMP`
+- run the real overlay windows on a screenshot in a small window, play mouse and key steps in them
+  (`replay`: AppKit events into GPUI's view), and capture them to PNGs to look at
+  (`screencapture -l`, when your terminal has Screen Recording). Keep the window small and the run
+  short: it's on the user's screen
+- measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
 - read `~/Library/Application Support/Asides/state.json`
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md), and run Claude Code, Codex or
@@ -88,8 +108,9 @@ changes.
 **You can't:**
 - press global shortcuts
 - click the status item or menus
+- use the overlay with a real mouse and keyboard, or check that it takes the keyboard without a click
 - speak into the microphone
-- grant permissions
+- grant permissions (Microphone, Screen Recording, Accessibility)
 
 When a change touches those, finish by listing the exact manual checks for the user to run. The
 manual QA checklist in CONTRIBUTING.md has the full list.
@@ -150,6 +171,37 @@ The user may record a request and ask you to "implement the note". Find it with
   padding on phones. Set only `padding-inline` there.
 - Headless Firefox takes `--screenshot` at load, mid-transition. Turn transitions off to capture a
   frame (as `scripts/make-og.py` does).
+- Drawing a label's text with `NSString::drawAtPoint_withAttributes` changes the current stroke
+  color: set it again before the next line.
+- In `define_class!`, a protocol method declared `-> bool` is turned into `Bool`: an early `return
+  false` doesn't compile. Move the body into a plain function.
+- `CGBitmapContextCreate` isn't in objc2-core-graphics; read a `CGImage`'s pixels from its data
+  provider (`capture::to_frame`, which handles every 8-bit byte order).
+- The global Esc (cancel recording) would steal Esc from the overlay: it's released while the
+  overlay is open and restored after.
+- The overlay's panels are non-activating, so the frontmost app keeps its look. Borderless panels
+  need `canBecomeKeyWindow` to take the keyboard, and mouse moves come from an `ActiveAlways`
+  tracking area.
+- An accessibility hit test on the system-wide element finds the overlay itself. Hit-test the app
+  that owns the window under the point (from the window list taken before the overlay opened).
+- GPUI owns its `NSApplication` and event loop, like tao: the two can't share a process, hence
+  `asides-overlay`. GPUI also makes its app a regular one (a Dock icon); `native::accessory` turns
+  that back right away.
+- GPUI handles an input event by updating its window, so an event sent while that window is being
+  updated (from inside `handle.update`, or a listener) is dropped with a logged error. The replay
+  sends its AppKit events from its task, between updates. Likewise, focus the card's field with the
+  `window` in hand, not through the window handle.
+- AppKit events made with `NSEvent::mouseEventWithType…` have no button number, so GPUI reads every
+  one as the left button: the replay sends a right-click as a control-click.
+- GPUI reads keys through the current keyboard layout from the key code; synthetic key events need
+  the US key codes (`native::synthetic`), and shifted symbols arrive as the symbol (`?`, not `⇧/`).
+- `Window::dispatch_event` returns a private type, so it can't be called from outside GPUI.
+- A light gray card on white (#F3F4F6) differs by 12 of 255: the default tolerance (2%) must stay
+  below that.
+- A release in `/Applications/Asides.app` has the same bundle ID as the build `make install` puts in
+  `~/Applications`, and Launch Services may open it for the CLI's links instead (both may end up
+  running). Set `ASIDES_APP=~/Applications/Asides.app` to make the CLI send its links to that copy
+  (`open -a`); `make e2e` does.
 
 ## Commits
 

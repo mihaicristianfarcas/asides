@@ -2,8 +2,10 @@ APP_NAME   := Asides
 BUNDLE_ID  := io.github.mihaicristianfarcas.asides
 VERSION    := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP        := dist/$(APP_NAME).app
-# The CLI ships inside the app, so one signed (and notarized) bundle carries both.
+# The CLI ships inside the app, so one signed (and notarized) bundle carries both. So does the
+# Measure & Annotate overlay (GPUI, its own process), beside the app's binary.
 CLI_IN_APP := Contents/Helpers/asides
+OVERLAY_IN_APP := Contents/MacOS/asides-overlay
 APPS_DIR   ?= $(HOME)/Applications
 BIN_DIR    ?= $(HOME)/.local/bin
 # A stable signing identity keeps the microphone permission across rebuilds. Picked automatically:
@@ -37,9 +39,11 @@ bundle: build
 	sed 's/__VERSION__/$(VERSION)/g' packaging/Info.plist > $(APP)/Contents/Info.plist
 	cp target/release/asides-app $(APP)/Contents/MacOS/$(APP_NAME)
 	cp target/release/asides $(APP)/$(CLI_IN_APP)
+	cp target/release/asides-overlay $(APP)/$(OVERLAY_IN_APP)
 	cp packaging/Asides.icns $(APP)/Contents/Resources/
-	# Sign inside-out: the nested CLI first, then the app.
+	# Sign inside-out: the nested CLI and overlay first, then the app.
 	$(CODESIGN) --identifier $(BUNDLE_ID).cli $(APP)/$(CLI_IN_APP)
+	$(CODESIGN) --identifier $(BUNDLE_ID).overlay $(APP)/$(OVERLAY_IN_APP)
 	$(CODESIGN) --entitlements packaging/Asides.entitlements $(APP)
 	@echo "Bundled $(APP) (signed: $(SIGN_ID))"
 

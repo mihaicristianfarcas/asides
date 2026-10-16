@@ -11,19 +11,25 @@ pub struct Segment {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Something added to a recording at a moment: a screenshot, text (a Measure & Annotate block),
+/// or a screenshot followed by text.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Attachment {
-    /// Seconds from the start of the recording at which the image was attached.
+    /// Seconds from the start of the recording at which it was attached.
     pub offset: f32,
-    /// Path relative to the note folder, e.g. `images/03-143851.png`.
+    /// Path relative to the note folder, e.g. `images/03-143851.png`; empty for text alone.
     pub rel_path: String,
     /// Alt text, e.g. the wall-clock time `14:38:51`.
     pub label: String,
+    /// Markdown shown after the image.
+    pub text: Option<String>,
 }
 
 impl Attachment {
     pub fn markdown(&self) -> String {
-        format!("![{}]({})", self.label, self.rel_path)
+        let image = (!self.rel_path.is_empty()).then(|| format!("![{}]({})", self.label, self.rel_path));
+        let text = self.text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+        image.into_iter().chain(text).collect::<Vec<_>>().join("\n\n")
     }
 }
 
@@ -70,6 +76,14 @@ pub fn compose_entry(
     blocks.join("\n\n")
 }
 
+/// `## 7 · 14:41 · Screen` followed by screenshots and text, in order: an entry made without
+/// speaking, such as a Measure & Annotate session outside a recording.
+pub fn compose_attachments_entry(number: u32, time_label: &str, source: &str, attachments: &[Attachment]) -> String {
+    let mut blocks = vec![format!("## {number} · {time_label} · {source}")];
+    blocks.extend(attachments.iter().map(Attachment::markdown).filter(|m| !m.is_empty()));
+    blocks.join("\n\n")
+}
+
 /// `## 6 · 14:40 · Wispr Flow` followed by text another app transcribed, exactly as it came.
 pub fn compose_dictation_entry(number: u32, time_label: &str, source: &str, text: &str) -> String {
     format!("## {number} · {time_label} · {source}\n\n{}", text.trim())
@@ -95,7 +109,7 @@ mod tests {
     }
 
     fn img(offset: f32, n: u32) -> Attachment {
-        Attachment { offset, rel_path: format!("images/0{n}.png"), label: format!("img{n}") }
+        Attachment { offset, rel_path: format!("images/0{n}.png"), label: format!("img{n}"), text: None }
     }
 
     #[test]
@@ -119,6 +133,28 @@ mod tests {
         assert_eq!(
             compose_entry(2, "10:00", None, &[seg(0.0, 1.0, "  ")], &[img(1.0, 1)]),
             "## 2 · 10:00\n\n![img1](images/01.png)"
+        );
+    }
+
+    #[test]
+    fn text_attachments_follow_speech_by_time() {
+        let segments = [seg(0.0, 2.0, "This one."), seg(5.0, 7.0, "Too much padding.")];
+        let screen = Attachment {
+            offset: 1.0,
+            rel_path: "images/01.png".into(),
+            label: "14:00:01".into(),
+            text: Some("**Measured** in pt:\n- Area 10 × 10 at (0, 0)".into()),
+        };
+        let note = Attachment { offset: 3.0, text: Some("### 1. button \"Save\"".into()), ..Attachment::default() };
+        assert_eq!(
+            compose_entry(1, "14:00", None, &segments, &[note.clone(), screen.clone()]),
+            "## 1 · 14:00\n\nThis one.\n\n![14:00:01](images/01.png)\n\n**Measured** in pt:\n- Area 10 × 10 at (0, 0)\n\n\
+             ### 1. button \"Save\"\n\nToo much padding."
+        );
+        assert_eq!(
+            compose_attachments_entry(2, "14:01", "Screen", &[screen, note, Attachment::default()]),
+            "## 2 · 14:01 · Screen\n\n![14:00:01](images/01.png)\n\n**Measured** in pt:\n- Area 10 × 10 at (0, 0)\n\n\
+             ### 1. button \"Save\""
         );
     }
 

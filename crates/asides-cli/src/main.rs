@@ -1,5 +1,6 @@
 mod listen;
 mod mcp;
+mod measure;
 
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
@@ -69,6 +70,21 @@ enum Command {
         #[arg(long, value_name = "TOKEN")]
         after: Option<String>,
     },
+    /// Freeze the screen to measure and annotate it (Measure & Annotate), as the shortcut does.
+    Annotate,
+    /// Measure a screenshot (PNG): distances from a point to the nearest edges, or the bounds of the
+    /// object inside an area, in the image's pixels.
+    Measure {
+        image: PathBuf,
+        /// X,Y for the distances from a point, or X,Y,WIDTH,HEIGHT for the object inside an area.
+        target: String,
+        /// How different (in %) a color must be to count as an edge.
+        #[arg(long, default_value_t = asides_core::measure::Tolerance::DEFAULT.0)]
+        tolerance: u8,
+        /// Pixels per point, to also show points (2 for Retina screenshots).
+        #[arg(long, default_value_t = 1.0)]
+        scale: f64,
+    },
     /// Development: process a WAV file as if it had just been recorded.
     #[command(hide = true)]
     Simulate {
@@ -80,6 +96,9 @@ enum Command {
         #[arg(long, default_value_t = 0.0)]
         at: f32,
     },
+    /// Development: run a Measure & Annotate session on an image, driven by a JSON script.
+    #[command(hide = true)]
+    SimulateMeasure { image: PathBuf, script: PathBuf },
 }
 
 fn main() {
@@ -124,6 +143,29 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Send) => send_batch(),
         Some(Command::Mcp { timeout }) => mcp::run(dir()?, timeout),
         Some(Command::Listen { timeout, after }) => listen::run(dir()?, timeout, after),
+        Some(Command::Annotate) => {
+            if running_state().is_none() {
+                bail!("Asides is not running. Run `asides` in a repo to start it.");
+            }
+            send(&Link::Measure { request: None })
+        }
+        Some(Command::Measure { image, target, tolerance, scale }) => {
+            let frame = measure::load(&image)?;
+            let target = measure::parse_target(&target)?;
+            let name = image.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let tolerance = asides_core::measure::Tolerance(tolerance.min(100));
+            println!("{}", measure::describe(&frame, &name, target, tolerance, scale)?);
+            Ok(())
+        }
+        Some(Command::SimulateMeasure { image, script }) => {
+            let request = request_id();
+            let image = image.canonicalize().context("image not found")?;
+            let script = script.canonicalize().context("script not found")?;
+            send(&Link::SimulateMeasure { image, script, request: Some(request.clone()) })?;
+            wait_for_ack(&request)?;
+            println!("queued");
+            Ok(())
+        }
         Some(Command::Simulate { wav, new, image, at }) => {
             let request = request_id();
             let wav = wav.canonicalize().context("WAV file not found")?;
@@ -165,6 +207,9 @@ fn bind(dir: &Path, new_note: bool, title: Option<String>) -> Result<()> {
         pretty_shortcut(&config.shortcuts.attach_image),
         pretty_shortcut(&config.shortcuts.cancel),
     );
+    if !config.shortcuts.measure.trim().is_empty() {
+        println!("  {} measure & annotate the screen", pretty_shortcut(&config.shortcuts.measure));
+    }
     if state.microphone == "denied" {
         println!("  ! Microphone access is denied: System Settings → Privacy & Security → Microphone → Asides.");
     }
@@ -243,8 +288,16 @@ fn latest(dir: &Path) -> Result<Note> {
 }
 
 /// Hands the link to the app via Launch Services (launching it if needed, without stealing focus).
+/// `ASIDES_APP` names the copy to use, when several are installed: Launch Services picks one by
+/// bundle ID otherwise (the end-to-end test points it at the build under test).
 fn send(link: &Link) -> Result<()> {
-    let out = Process::new("open").args(["-g", "-b", BUNDLE_ID]).arg(link.to_url()).output()?;
+    let mut open = Process::new("open");
+    open.arg("-g");
+    match std::env::var_os("ASIDES_APP") {
+        Some(app) => open.arg("-a").arg(app),
+        None => open.args(["-b", BUNDLE_ID]),
+    };
+    let out = open.arg(link.to_url()).output()?;
     if !out.status.success() {
         bail!(
             "could not reach Asides.app ({}). Is it installed? Run `make install` in the asides repo.",

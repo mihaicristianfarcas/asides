@@ -5,9 +5,15 @@
 //! Agents that can watch a command in the background (Claude Code's Monitor tool) are told to run
 //! `asides listen` instead, so they stay free between asides.
 //!
-//! The server only reads notes and the app's published state, so both tools are read-only (agents
-//! such as Codex run those without asking). Its one effect on the app is `bind_asides`, which binds
-//! it to this repo like running `asides` here.
+//! It lets the agent close the loop on each aside, as Agentation's MCP server does: acknowledge it,
+//! resolve it with a summary, dismiss it with a reason, or reply with a question (`threads.jsonl`
+//! beside the note; the user sees it in the menu).
+//! `get_pending_asides` lists what's still open, and `measure_image` measures a screenshot the way
+//! Measure & Annotate measures the screen.
+//!
+//! Reading tools only read notes and the app's published state, so they're marked read-only
+//! (agents such as Codex run those without asking). The others append to the aside's thread, or
+//! (`bind_asides`) bind the app to this repo like running `asides` here.
 
 use std::collections::HashMap;
 use std::fs;
@@ -21,10 +27,12 @@ use anyhow::Result;
 use asides_core::agents::{self, Cursor, Item, Listener, Listening};
 use asides_core::config::{AgentDelivery, Config};
 use asides_core::link::Link;
+use asides_core::measure::{Rect, Tolerance};
 use asides_core::notes::{self, Note};
 use asides_core::paths::{self, tilde};
 use asides_core::project;
 use asides_core::state::AppState;
+use asides_core::threads::{self, AsideId, Event, Role, Status};
 use serde_json::{Value, json};
 
 /// Protocol revisions this server speaks, oldest first; a client asking for another gets the newest.
@@ -49,8 +57,18 @@ Otherwise call wait_for_asides, act on what you get, then call it again; the use
 so first list the asides you got, one short line each. Keep listening until they tell you to stop. If \
 Asides is bound to \
 another directory or isn't running, call bind_asides so recordings come to this repo. When they ask you \
-to work through their notes, call get_asides. Transcripts are verbatim speech-to-text: expect misheard \
-words, especially names of projects, files and libraries.";
+to work through their notes, call get_asides (or get_pending_asides for what's still open). Transcripts \
+are verbatim speech-to-text: expect misheard words, especially names of projects, files and libraries. \
+Measure & Annotate shows up in entries as an annotated screenshot with what the user measured (sizes \
+and distances in points, guides) and numbered marks (### 1., ### 2.): an element, an area, or a drawing \
+(an arrow from one thing to another, a circled or underlined part), with the app and window, the \
+element's location (for web pages the URL and a CSS-like selector) and any typed feedback. In a recorded \
+entry, each mark sits where the user was speaking when they made it, so what they said around it is \
+about it; entries marked `Screen` were made without speaking. An aside is #N (entry N of the note) or \
+#N.M (mark M of entry N). When you've handled one, call resolve_aside with a short summary; \
+dismiss_aside with a reason if you won't act on it; reply_to_aside to ask the user something. The user \
+sees these in the Asides menu. measure_image measures a screenshot (distances between edges, the \
+bounds of an object).";
 
 /// How long one `asides listen` runs when an agent starts it, just under the Monitor tool's 30 min.
 const LISTEN_SECS: u64 = 29 * 60;
@@ -58,6 +76,7 @@ const LISTEN_SECS: u64 = 29 * 60;
 /// Where the server stands: what this agent has been given so far.
 struct Session {
     dir: PathBuf,
+    /// The client's name, as the agent introduced itself.
     client: String,
     /// Wait in seconds when a call doesn't say; `None` picks one for the client.
     timeout: Option<u64>,
@@ -181,6 +200,14 @@ impl Server {
                      verbatim, so expect misheard words. Treat each entry as a request from me.\n\n{text}"
                 )
             }
+            "open" => {
+                let dir = self.session.lock().unwrap().dir.clone();
+                let text = pending_text(&dir, None, false).map_err(|e| (-32602, e))?;
+                format!(
+                    "Work through my open asides below, one at a time: fix each, then call resolve_aside with a short \
+                     summary (or dismiss_aside with a reason, or reply_to_aside if you need to ask me something).\n\n{text}"
+                )
+            }
             _ => return Err((-32602, format!("unknown prompt: {name}"))),
         };
         Ok(json!({ "messages": [{ "role": "user", "content": { "type": "text", "text": text } }] }))
@@ -192,10 +219,16 @@ impl Server {
         match name.as_str() {
             "get_asides" => {
                 let after = args.get("after_entry").and_then(Value::as_u64).map(|n| n as u32);
+                let note = args.get("note").and_then(Value::as_str).map(str::to_string);
                 let mut session = self.session.lock().unwrap();
                 let dir = session.dir.clone();
                 let mut scratch = Cursor::default();
-                let result = match read_note(&dir, after, session.read_cursor(&mut scratch)) {
+                let found = match note.as_deref() {
+                    Some(name) => find_note(&dir, Some(name)).map(Some),
+                    None => Ok(None),
+                };
+                let read = found.and_then(|note| read_note_at(&dir, note, after, session.read_cursor(&mut scratch)));
+                let result = match read {
                     Ok(text) => tool_text(text, false),
                     Err(err) => tool_text(err, true),
                 };
@@ -238,6 +271,39 @@ impl Server {
                         server.reply(&id, Ok(result));
                     }
                 });
+            }
+            "get_pending_asides" => {
+                let dir = self.session.lock().unwrap().dir.clone();
+                let note = args.get("note").and_then(Value::as_str);
+                let all = args.get("all_notes").and_then(Value::as_bool).unwrap_or(false);
+                let result = match pending_text(&dir, note, all) {
+                    Ok(text) => tool_text(text, false),
+                    Err(err) => tool_text(err, true),
+                };
+                self.reply(&id, Ok(result));
+            }
+            "list_asides_notes" => {
+                let dir = self.session.lock().unwrap().dir.clone();
+                self.reply(&id, Ok(tool_text(notes_text(&dir), false)));
+            }
+            "acknowledge_aside" | "resolve_aside" | "dismiss_aside" | "reply_to_aside" => {
+                let (dir, client) = {
+                    let session = self.session.lock().unwrap();
+                    (session.dir.clone(), agents::client_label(&session.client))
+                };
+                let result = match record(&dir, &client, &name, &args) {
+                    Ok(text) => tool_text(text, false),
+                    Err(err) => tool_text(err, true),
+                };
+                self.reply(&id, Ok(result));
+            }
+            "measure_image" => {
+                let dir = self.session.lock().unwrap().dir.clone();
+                let result = match measure_image(&dir, &args) {
+                    Ok(text) => tool_text(text, false),
+                    Err(err) => tool_text(format!("{err:#}"), true),
+                };
+                self.reply(&id, Ok(result));
             }
             _ => self.reply(&id, Ok(tool_text(format!("Unknown tool: {name}"), true))),
         }
@@ -354,7 +420,11 @@ fn listen_prompt(client: &str, dir: &Path) -> String {
     } else {
         text.push_str(&format!("\n\nTo listen, {wait}"));
     }
-    text.push_str("\n\nKeep listening until I tell you to stop.");
+    text.push_str(
+        "\n\nWhen you've handled an aside, call resolve_aside with its number and a short summary of what you \
+         did (dismiss_aside with a reason if you won't act on it, reply_to_aside to ask me something); I see \
+         those in the Asides menu.\n\nKeep listening until I tell you to stop.",
+    );
     text
 }
 
@@ -408,7 +478,8 @@ fn delivery(items: &[Item]) -> Value {
     let (mut text, images) = asides_text(items);
     text.push_str(
         "\n\nThe user can't see this result: first list these asides for them, one short line each (#N and a few \
-         words), then act on them. When you've handled them, call wait_for_asides again to keep listening.",
+         words), then act on them, and resolve each with resolve_aside (or reply_to_aside to ask). When you've \
+         handled them, call wait_for_asides again to keep listening.",
     );
     let mut content = vec![json!({ "type": "text", "text": text })];
     content.extend(images.iter().filter_map(|path| inline_image(path)).take(MAX_INLINE_IMAGES));
@@ -448,11 +519,19 @@ pub(crate) fn asides_text(items: &[Item]) -> (String, Vec<PathBuf>) {
 
 /// The latest note with absolute links, or only its entries after `after`; moves `cursor` past them.
 fn read_note(dir: &Path, after: Option<u32>, cursor: &mut Cursor) -> Result<String, String> {
-    let note = notes::latest_note(dir).ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)))?;
+    read_note_at(dir, None, after, cursor)
+}
+
+/// Like [`read_note`], for `note` (`None`: the latest note). Each entry is followed by what
+/// happened to it since (its thread: status changes and replies).
+fn read_note_at(dir: &Path, note: Option<Note>, after: Option<u32>, cursor: &mut Cursor) -> Result<String, String> {
+    let latest = notes::latest_note(dir);
+    let note = note.or(latest.clone()).ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)))?;
     let content =
         fs::read_to_string(note.file()).map_err(|e| format!("Could not read {}: {e}", note.file().display()))?;
     let entries: Vec<_> =
         notes::parse_entries(&content).into_iter().filter(|e| after.is_none_or(|after| e.number > after)).collect();
+    let threads = threads::fold(&threads::read(&note.dir));
     let mut text = format!("Note \"{}\" ({})", note.title, note.file().display());
     if let Some(meta) = notes::front_matter(&content) {
         text.push_str(&format!("\n\n---\n{meta}\n---"));
@@ -463,18 +542,174 @@ fn read_note(dir: &Path, after: Option<u32>, cursor: &mut Cursor) -> Result<Stri
     for entry in &entries {
         let heading = agents::absolute_links(&note.dir, &entry.heading);
         text.push_str(&format!("\n\n## {heading}\n\n{}", agents::absolute_links(&note.dir, &entry.body)));
+        text.push_str(&thread_text(&threads, entry));
     }
     if content.contains("](images/") {
         text.push_str("\n\nScreenshots are linked by absolute path; open them to see what the user saw.");
     }
-    // Don't hand these to a listening agent again.
-    if let Some(last) = entries.last() {
+    // Don't hand these to a listening agent again (only the latest note's entries are delivered).
+    if let Some(last) = entries.last().filter(|_| latest.as_ref() == Some(&note)) {
         let later_note = cursor.note.as_ref().is_none_or(|c| c.file_name() < note.dir.file_name());
         if later_note || (cursor.note.as_ref() == Some(&note.dir) && last.number >= cursor.entry) {
             *cursor = Cursor { note: Some(note.dir.clone()), entry: last.number, len: last.body.len() };
         }
     }
     Ok(text)
+}
+
+/// What happened to an entry and its annotations since it was written, quoted below it.
+fn thread_text(threads: &std::collections::BTreeMap<AsideId, threads::Thread>, entry: &notes::Entry) -> String {
+    let mut text = String::new();
+    let mut ids = vec![AsideId::entry(entry.number)];
+    ids.extend(threads::parts(&entry.body).into_iter().map(|p| AsideId { entry: entry.number, part: Some(p) }));
+    for id in ids {
+        if let Some(thread) = threads.get(&id) {
+            text.push_str(&format!("\n\n> #{id}\n{}", threads::render(thread)));
+        }
+    }
+    text
+}
+
+/// The note named `name` (its folder name or its title; the newest of that title), or the latest.
+fn find_note(dir: &Path, name: Option<&str>) -> Result<Note, String> {
+    let all = notes::list_notes(dir);
+    let Some(name) = name.map(str::trim).filter(|n| !n.is_empty() && *n != "latest") else {
+        return all.last().cloned().ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)));
+    };
+    all.iter()
+        .rev()
+        .find(|n| n.dir.file_name().is_some_and(|f| f.to_string_lossy() == name) || n.title == name)
+        .cloned()
+        .ok_or_else(|| format!("There's no note \"{name}\" in {}; list_asides_notes lists them.", tilde(dir)))
+}
+
+/// The asides nobody has resolved or dismissed yet, in the latest note (or `note`, or all notes).
+fn pending_text(dir: &Path, note: Option<&str>, all: bool) -> Result<String, String> {
+    let notes = if all { notes::list_notes(dir) } else { vec![find_note(dir, note)?] };
+    if notes.is_empty() {
+        return Err(format!("There are no asides in {} yet.", tilde(dir)));
+    }
+    let mut text = String::new();
+    let mut count = 0;
+    for note in &notes {
+        let Ok(content) = fs::read_to_string(note.file()) else { continue };
+        let threads = threads::fold(&threads::read(&note.dir));
+        let mut section = String::new();
+        for entry in notes::parse_entries(&content) {
+            let status = threads::entry_status(&threads, &entry);
+            if !status.is_open() {
+                continue;
+            }
+            count += 1;
+            let heading = agents::absolute_links(&note.dir, &entry.heading);
+            section.push_str(&format!(
+                "\n\n## {heading} ({})\n\n{}",
+                status.as_str(),
+                agents::absolute_links(&note.dir, &entry.body)
+            ));
+            let parts = threads::parts(&entry.body);
+            if !parts.is_empty() {
+                let states: Vec<String> = parts
+                    .iter()
+                    .map(|&p| {
+                        let id = AsideId { entry: entry.number, part: Some(p) };
+                        format!("#{id} {}", threads::status_of(&threads, id).as_str())
+                    })
+                    .collect();
+                section.push_str(&format!("\n\nAnnotations: {}", states.join(", ")));
+            }
+            section.push_str(&thread_text(&threads, &entry));
+        }
+        if !section.is_empty() {
+            text.push_str(&format!("\n\nNote \"{}\" ({}):{section}", note.title, note.file().display()));
+        }
+    }
+    let scope = if all { "in this repo's notes".to_string() } else { format!("in note \"{}\"", notes[0].title) };
+    Ok(match count {
+        0 => format!("No open asides {scope}: every one is resolved or dismissed."),
+        n => format!(
+            "{n} open aside{} {scope} (pending or acknowledged). Resolve each with resolve_aside once it's handled.{text}",
+            if n == 1 { "" } else { "s" }
+        ),
+    })
+}
+
+/// This repo's notes, oldest first, with how many of their asides are still open.
+fn notes_text(dir: &Path) -> String {
+    let all = notes::list_notes(dir);
+    if all.is_empty() {
+        return format!("There are no asides in {} yet.", tilde(dir));
+    }
+    let mut text = format!("Notes in {} (oldest first; the last one is where new asides go):", tilde(dir));
+    for note in &all {
+        let content = fs::read_to_string(note.file()).unwrap_or_default();
+        let threads = threads::fold(&threads::read(&note.dir));
+        let entries = notes::parse_entries(&content);
+        let open = entries.iter().filter(|e| threads::entry_status(&threads, e).is_open()).count();
+        let name = note.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        text.push_str(&format!("\n- \"{name}\": {} entries, {open} open", entries.len()));
+    }
+    text
+}
+
+/// Acknowledges, resolves, dismisses or replies to an aside, as `tool` says.
+fn record(dir: &Path, client: &str, tool: &str, args: &Value) -> Result<String, String> {
+    let id: AsideId =
+        args.get("aside").and_then(Value::as_str).ok_or("aside is required, e.g. \"3\" or \"3.2\"")?.parse()?;
+    let note = find_note(dir, args.get("note").and_then(Value::as_str))?;
+    let content =
+        fs::read_to_string(note.file()).map_err(|e| format!("Could not read {}: {e}", note.file().display()))?;
+    let entries = notes::parse_entries(&content);
+    let entry = entries
+        .iter()
+        .find(|e| e.number == id.entry)
+        .ok_or_else(|| format!("Note \"{}\" has no aside #{}.", note.title, id.entry))?;
+    if let Some(part) = id.part
+        && !threads::parts(&entry.body).contains(&part)
+    {
+        return Err(format!("Aside #{} has no annotation {part}.", id.entry));
+    }
+    let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
+    let (status, message, done) = match tool {
+        "acknowledge_aside" => (Some(Status::Acknowledged), None, "Acknowledged"),
+        "resolve_aside" => (Some(Status::Resolved), text("summary"), "Resolved"),
+        "dismiss_aside" => (Some(Status::Dismissed), Some(text("reason").ok_or("reason is required")?), "Dismissed"),
+        _ => (None, Some(text("message").ok_or("message is required")?), "Replied to"),
+    };
+    let event = Event {
+        aside: id,
+        at_ms: crate::now_ms(),
+        by: Role::Agent,
+        author: Some(client.to_string()).filter(|c| !c.is_empty()),
+        status,
+        message: message.map(Into::into),
+    };
+    threads::append(&note.dir, &event).map_err(|e| format!("Could not record it: {e}"))?;
+    Ok(format!("{done} #{id} in note \"{}\". The user sees it in the Asides menu.", note.title))
+}
+
+fn measure_image(dir: &Path, args: &Value) -> Result<String> {
+    use anyhow::Context;
+    let path = args.get("path").and_then(Value::as_str).context("path is required")?;
+    let path = dir.join(path);
+    let frame = crate::measure::load(&path)?;
+    let n = |v: &Value, key: &str| v.get(key).and_then(Value::as_f64).map(|v| v.max(0.0).round() as u32);
+    let target = match (args.get("area"), n(args, "x"), n(args, "y")) {
+        (Some(area), ..) => {
+            let (Some(x), Some(y), Some(w), Some(h)) =
+                (n(area, "x"), n(area, "y"), n(area, "width"), n(area, "height"))
+            else {
+                anyhow::bail!("area needs x, y, width and height");
+            };
+            crate::measure::Target::Area(Rect::new(x, y, w.max(1), h.max(1)))
+        }
+        (None, Some(x), Some(y)) => crate::measure::Target::Point(x, y),
+        _ => anyhow::bail!("give a point (x and y) or an area"),
+    };
+    let tolerance = Tolerance(n(args, "tolerance").unwrap_or(Tolerance::DEFAULT.0 as u32).min(100) as u8);
+    let scale = args.get("scale").and_then(Value::as_f64).filter(|s| *s > 0.0).unwrap_or(1.0);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    crate::measure::describe(&frame, &name, target, tolerance, scale)
 }
 
 fn inline_image(path: &Path) -> Option<Value> {
@@ -533,10 +768,98 @@ fn tools() -> Value {
                         "type": "integer",
                         "minimum": 0,
                         "description": "Only return entries numbered higher than this."
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Another note than the latest: its folder name or title (see list_asides_notes)."
                     }
                 }
             },
             "annotations": { "title": "Read the latest asides note", "readOnlyHint": true, "openWorldHint": false }
+        },
+        {
+            "name": "get_pending_asides",
+            "title": "Get open asides",
+            "description": "The user's asides nobody has resolved or dismissed yet (pending or acknowledged), in \
+                the latest note, with their text, screenshots (absolute paths), annotations and replies so far. Use \
+                it to work through what's left; resolve each one with resolve_aside when it's handled.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "note": { "type": "string", "description": "Another note than the latest: its folder name or title." },
+                    "all_notes": { "type": "boolean", "description": "Look through every note in this repo." }
+                }
+            },
+            "annotations": { "title": "Get open asides", "readOnlyHint": true, "openWorldHint": false }
+        },
+        {
+            "name": "list_asides_notes",
+            "title": "List asides notes",
+            "description": "The asides notes in this repo, oldest first, with how many entries each has and how \
+                many are still open. New asides go to the last one.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": { "title": "List asides notes", "readOnlyHint": true, "openWorldHint": false }
+        },
+        lifecycle_tool(
+            "acknowledge_aside",
+            "Acknowledge an aside",
+            "Tell the user you've seen an aside and are working on it (it shows as acknowledged in the Asides \
+             menu).",
+            None
+        ),
+        lifecycle_tool(
+            "resolve_aside",
+            "Resolve an aside",
+            "Mark an aside as handled once you've done what it asked, with a short summary of what you did. Only \
+             for what you actually addressed; if the user rejected your change, leave it open.",
+            Some(("summary", "What you did, in a sentence.", false))
+        ),
+        lifecycle_tool(
+            "dismiss_aside",
+            "Dismiss an aside",
+            "Decline to act on an aside (not a request, out of scope, already the case), with the reason.",
+            Some(("reason", "Why you won't act on it.", true))
+        ),
+        lifecycle_tool(
+            "reply_to_aside",
+            "Reply to an aside",
+            "Add a message to an aside's thread: a clarifying question, or an update. The user sees it in the \
+             Asides menu and answers by recording another aside.",
+            Some(("message", "Your message to the user.", true))
+        ),
+        {
+            "name": "measure_image",
+            "title": "Measure a screenshot",
+            "description": "Measure a screenshot (PNG) like PixelSnap: from a point, the distances to the nearest \
+                edges across and down; or, for an area, the bounds of the object inside it and the space around it \
+                (padding), with its colors. Coordinates are the image's pixels; screenshots of Retina screens have \
+                2 pixels per point (pass scale 2 to get points too). Use it to check spacing, alignment and sizes \
+                in the user's screenshots or your own.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "The PNG, absolute or relative to the repo." },
+                    "x": { "type": "number", "description": "A point to measure from, in pixels." },
+                    "y": { "type": "number" },
+                    "area": {
+                        "type": "object",
+                        "description": "An area around an object, in pixels, to find the object's bounds.",
+                        "properties": {
+                            "x": { "type": "number" }, "y": { "type": "number" },
+                            "width": { "type": "number" }, "height": { "type": "number" }
+                        },
+                        "required": ["x", "y", "width", "height"]
+                    },
+                    "tolerance": {
+                        "type": "integer", "minimum": 0, "maximum": 100,
+                        "description": "How different (in %) a color must be to count as an edge; raise it to look \
+                            through shadows and gradients. Default 2."
+                    },
+                    "scale": { "type": "number", "description": "Pixels per point, to also report points." }
+                },
+                "required": ["path"]
+            },
+            "annotations": { "title": "Measure a screenshot", "readOnlyHint": true, "openWorldHint": false }
         },
         {
             "name": "bind_asides",
@@ -556,6 +879,34 @@ fn tools() -> Value {
     ])
 }
 
+/// A tool that adds to an aside's thread: `extra` is its text argument (name, description, required).
+fn lifecycle_tool(name: &str, title: &str, description: &str, extra: Option<(&str, &str, bool)>) -> Value {
+    let mut properties = json!({
+        "aside": { "type": "string", "description": "The aside: \"3\" for entry 3, \"3.2\" for annotation 2 of it." },
+        "note": { "type": "string", "description": "Its note, if not the latest: folder name or title." }
+    });
+    let mut required = vec!["aside"];
+    if let Some((key, text, needed)) = extra {
+        properties[key] = json!({ "type": "string", "description": text });
+        if needed {
+            required.push(key);
+        }
+    }
+    json!({
+        "name": name,
+        "title": title,
+        "description": description,
+        "inputSchema": { "type": "object", "properties": properties, "required": required },
+        "annotations": {
+            "title": title,
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": name != "reply_to_aside",
+            "openWorldHint": false
+        }
+    })
+}
+
 fn prompts() -> Value {
     json!([
         {
@@ -567,6 +918,11 @@ fn prompts() -> Value {
             "name": "asides",
             "title": "Work through my asides",
             "description": "Work through the latest asides note in this repo."
+        },
+        {
+            "name": "open",
+            "title": "Work through my open asides",
+            "description": "Fix the asides nobody has resolved yet, resolving each as it's done."
         }
     ])
 }
@@ -641,5 +997,50 @@ mod tests {
         assert!(!text.contains("One."));
         assert_eq!(cursor, Cursor { note: Some(note.dir.clone()), entry: 2, len: 4 });
         assert!(agents::collect(tmp.path(), &cursor, None).is_empty());
+    }
+
+    #[test]
+    fn agents_resolve_dismiss_and_reply_to_asides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let at = Local.with_ymd_and_hms(2026, 10, 15, 14, 32, 0).unwrap();
+        let note = notes::create_note(tmp.path(), at, "Checkout", "---\ntitle: Checkout\n---").unwrap();
+        note.append("## 1 · 14:32\n\nThe card needs padding.").unwrap();
+        note.append(
+            "## 2 · 14:33 · Screen\n\n### 1. button \"Pay\"\n**Feedback:** Bigger\n\n### 2. Area 10 × 10 at (0, 0)",
+        )
+        .unwrap();
+        let call = |tool: &str, args: Value| record(tmp.path(), "Claude Code", tool, &args);
+
+        assert!(pending_text(tmp.path(), None, false).unwrap().starts_with("2 open asides in note \"Checkout\""));
+        assert_eq!(
+            call("resolve_aside", json!({ "aside": "1", "summary": "Added 16px padding" })).unwrap(),
+            "Resolved #1 in note \"Checkout\". The user sees it in the Asides menu."
+        );
+        assert!(call("dismiss_aside", json!({ "aside": "2.2" })).unwrap_err().contains("reason is required"));
+        call("dismiss_aside", json!({ "aside": "#2.2", "reason": "Not a request" })).unwrap();
+        call("reply_to_aside", json!({ "aside": "2.1", "message": "How much bigger?" })).unwrap();
+        assert!(call("acknowledge_aside", json!({ "aside": "2.3" })).unwrap_err().contains("no annotation 3"));
+        assert!(call("acknowledge_aside", json!({ "aside": "9" })).unwrap_err().contains("no aside #9"));
+        assert!(call("acknowledge_aside", json!({ "aside": "2", "note": "Other" })).unwrap_err().contains("no note"));
+
+        let pending = pending_text(tmp.path(), None, false).unwrap();
+        assert!(pending.starts_with("1 open aside in note \"Checkout\""), "{pending}");
+        assert!(pending.contains("## 2 · 14:33 · Screen (pending)"), "{pending}");
+        assert!(pending.contains("Annotations: #2.1 pending, #2.2 dismissed"), "{pending}");
+        assert!(pending.contains("> #2.1\n> **Claude Code**: How much bigger?\n> Status: pending"), "{pending}");
+        assert!(!pending.contains("The card needs padding"), "{pending}");
+
+        let read = read_note(tmp.path(), None, &mut Cursor::default()).unwrap();
+        assert!(
+            read.contains("The card needs padding.\n\n> #1\n> **Claude Code** (resolved): Added 16px padding"),
+            "{read}"
+        );
+        assert!(notes_text(tmp.path()).contains("\": 2 entries, 1 open"));
+
+        call("resolve_aside", json!({ "aside": "2.1" })).unwrap();
+        assert_eq!(
+            pending_text(tmp.path(), Some("Checkout"), false).unwrap(),
+            "No open asides in note \"Checkout\": every one is resolved or dismissed."
+        );
     }
 }

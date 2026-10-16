@@ -6,7 +6,10 @@ use std::process::Command;
 use block2::RcBlock;
 use objc2::MainThreadMarker;
 use objc2::runtime::Bool;
-use objc2_app_kit::{NSApplication, NSModalResponse, NSOpenPanel, NSSound};
+use objc2_app_kit::{
+    NSApplication, NSApplicationActivationOptions, NSModalResponse, NSOpenPanel, NSRunningApplication, NSSound,
+    NSWorkspace,
+};
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use objc2_foundation::{NSString, NSURL};
 
@@ -125,4 +128,16 @@ pub fn link_command(cli: &Path) -> CommandLink {
 pub fn open_microphone_settings() {
     let _ =
         Command::new("open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone").spawn();
+}
+
+/// The app in front (its process id), to give the focus back to it later.
+pub fn frontmost_app() -> Option<i32> {
+    NSWorkspace::sharedWorkspace().frontmostApplication().map(|app| app.processIdentifier())
+}
+
+/// Brings the app with this process id to the front again.
+pub fn activate_app(pid: i32) {
+    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+        app.activateWithOptions(NSApplicationActivationOptions::empty());
+    }
 }

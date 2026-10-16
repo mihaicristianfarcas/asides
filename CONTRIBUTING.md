@@ -74,10 +74,11 @@ deleted.
 
 | Layer | Command | Covers |
 |---|---|---|
-| Unit | `make test` | notes, metadata, Markdown, git info, links, state, config, resampling, language choice, icon rendering |
+| Unit | `make test` | notes, metadata, Markdown, git info, links, state, config, resampling, language choice, icon rendering, measuring (edges, snapping, guides, colors), the Measure & Annotate session (measuring, holds, guides, marks, drawings, screenshots, restore) and its Markdown, the overlay's keys and protocol, rendering a session's screenshot offscreen, threads, the MCP feedback-loop tools, `asides measure` |
 | Speech | `make test-speech` | transcription of the fixtures (needs the model) and a real model download with checksum check (190 MB) |
-| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (each and batch delivery, Send to Agent, cancelling, `asides listen`, sending with no agent listening). It restores your `config.toml` afterwards |
-| Manual | checklist below | everything a script can't do: the microphone, shortcuts, menus and permissions |
+| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a scripted Measure & Annotate session on a drawn screen instead of the real one (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (each and batch delivery, Send to Agent, cancelling, `asides listen`, sending with no agent listening, resolving, dismissing and replying to marks, `measure_image`). It restores your `config.toml` afterwards |
+| Overlay replay | below | the real overlay windows, driven by AppKit mouse and key events, captured to PNGs you look at |
+| Manual | checklist below | everything a script can't do: the microphone, shortcuts, menus, your own hand on the overlay, and permissions |
 
 To look at the menu-bar icons without installing, render them to files:
 
@@ -86,6 +87,37 @@ ASIDES_ICON_DUMP=/tmp/icons cargo test -p asides-app icons
 ```
 
 This writes raw RGBA data (`<symbol>-<width>x<height>.rgba`) for each icon.
+
+If a release is also installed (say `/Applications/Asides.app`), it has the same bundle ID, and
+Launch Services may open it instead of your build when the CLI sends a link. Set
+`ASIDES_APP=~/Applications/Asides.app` to send the CLI's links to your build; `make e2e` does.
+
+To look at the image an aside gets from Measure & Annotate (a scripted session on a drawn screen,
+rendered offscreen by the overlay's exporter):
+
+```bash
+ASIDES_OVERLAY_DUMP=/tmp/overlay cargo test -p asides-overlay renders_marks
+```
+
+It writes `session.png`. To try a session of your own on any screenshot, with an installed
+dev-hooks build (`make install FEATURES=dev-hooks`):
+
+```bash
+asides simulate-measure shot.png script.json   # {"scale": 2, "actions": [{"drag": {"from": [10, 10], "to": [200, 90]}}]}
+```
+
+The actions are `click`, `drag`, `objects`, `hold`, `guide`, `annotate`, `draw`, `shot`, `tool`,
+`tolerance` and `units`; see `overlay::Action`.
+
+To see and drive the overlay itself, run `target/debug/asides-overlay <dir>` on a session
+directory of your own: `session.json` (`helper::Spec`) with a screen whose `pixels` file holds
+raw RGBA, plus `"windowed": {"x": …, "y": …, "width": …, "height": …}` for a small window instead
+of the whole screen, and `"replay": [...]` with steps like `{"move": [200, 140]}`,
+`{"down": [50, 160]}`, `{"drag": [175, 205]}`, `{"up": [175, 205]}`, `{"key": "shift+h"}`,
+`{"type": "Too tight"}`, `{"answer": {element}}` (as the app would answer a lookup),
+`{"recording": 14}` (as if recording) and `{"capture": "card.png"}` (see `replay.rs`). The steps reach GPUI as AppKit events, so they take the
+path real ones do, and the captures (`screencapture -l`, which needs Screen Recording for your
+terminal) show what the user would see. Look at them.
 
 ### Manual QA checklist
 
@@ -124,6 +156,39 @@ in your pull request what you tried.
   isn't asked again. The app icon shows in Spotlight and Finder.
 - [ ] **Wispr Flow:** with Add Wispr Flow Dictations on, a dictation lands in the note marked
   `· Wispr Flow`; with it off, nothing does.
+- [ ] **Measure & Annotate, first use after `tccutil reset ScreenCapture io.github.mihaicristianfarcas.asides`:**
+  `⌃⌥M` asks for Screen Recording (naming Asides), and says what to do; after allowing it (and
+  reopening Asides), `⌃⌥M` freezes every screen.
+- [ ] **Measure & Annotate, opening** (with a browser in front, on a laptop and a second display,
+  and over a full-screen app): every screen freezes within a second, the toolbar is on the screen
+  with the mouse, no Dock icon appears, keys work without clicking first, and closing gives the
+  focus back to the browser. The keys sheet shows the first time only.
+- [ ] **Measure & Annotate, measuring:**
+  - moving shows the distances across and down in one pill, matching what the page's CSS says
+  - click holds them; `H`/`V` hold one; a drag around a button snaps to it; right-drag and ⌘-drag
+    don't snap; ⌥-drag holds each object; Space moves the area while dragging; Shift shows the
+    crosshair and squares the area
+  - `⇧H`/`⇧V` add guides that snap to held objects and edges; arrows nudge them; gaps are labelled
+  - the toolbar's tolerance cycles Low/Medium/High; `-`/`=`/`T`; `U` switches pt and px
+  - `⌘C` puts `W × H` on the clipboard; `C` the image (and it isn't attached twice while recording)
+  - right-click: the menu; on a held object, its screenshot; its camera on hover
+  - `⌫` undoes, `X` clears, `Tab` hides everything, `R` restores the last session's guides
+- [ ] **Measure & Annotate, marking and drawing:**
+  - `A`, then click a button in Safari or Chrome: marker 1, the card takes typing (with diacritics,
+    an input method, and ⌘V), Return saves it, the chips toggle, Delete removes the mark
+  - with Identify UI Elements on (and Accessibility allowed), hovering outlines elements and the
+    entry names the button, the page's URL and a selector with the DOM's classes
+  - `P`: a circle around a heading names it; a ⇧-drag arrow names both ends
+  - `⌘S`: a dragged screenshot is on the clipboard, and in the aside after Done
+- [ ] **Measure & Annotate, talking:**
+  - hold Space and speak, mark two things, let go: the toolbar showed the time; Done writes one
+    entry with the transcript, the screenshot, and each mark where you were speaking about it
+  - tap the microphone to start, mark, tap to stop, keep marking, Done
+  - `⌘⏎` (Send) in batch mode: the entry is written and sent to the listening agent
+  - Esc closes without adding, cancels a recording started in it, and Esc works in other apps after
+  - `⌃⌥M` while it's open adds what's there, like Done
+- [ ] **Agent replies:** an agent's `resolve_aside` flashes `✓ #N` in the menu bar and shows under
+  Agent Replies; the note line counts the open asides.
 
 ## Common changes
 
@@ -145,7 +210,8 @@ in your pull request what you tried.
   - Replies go through `state.json`: add a field to `AppState` with a serde default.
 - **An MCP tool or prompt:** add it to `tools()` or `prompts()` in `asides-cli/src/mcp.rs` and handle
   it in `call_tool` or `prompt`. Keep tools read-only (and annotated `readOnlyHint`) unless they
-  must change something, like `bind_asides`, and stdout for JSON-RPC only. Cover it in
+  must change something, like `bind_asides` or the feedback-loop tools (which only append to
+  `threads.jsonl`), and stdout for JSON-RPC only. Cover it in
   `scripts/e2e-mcp.py`, and try it in Claude Code and one other agent: clients differ in timeouts
   and in what content they accept.
 - **A model:** add it to `MODELS` in `models.rs` with the exact size and SHA-256 from the Hugging
@@ -155,6 +221,16 @@ in your pull request what you tried.
 - **The note format:** change `markdown.rs` or `frontmatter.rs` along with their tests, then the
   e2e expectations and the README example. Keep the format append-only (see the invariants in
   ARCHITECTURE.md).
+- **A Measure & Annotate tool or key:** put its logic in `asides-core/src/overlay.rs` (with a test,
+  and an `Action` if a script should drive it). Give a key a default in `OverlayKeys`
+  (`config.rs`), then route it in `asides-overlay/src/ui.rs` (`Keys`, `Overlay::command`, or the
+  mouse methods) and draw it in `ScreenView::render` (and in `export.rs` if it belongs in the
+  image). Add it to the toolbar's hints, the keys sheet, the context menu if it fits, and the
+  README. Check it with a replay and look at the captures.
+- **What a mark records:** `inspect.rs` (`Element`, `Annotation`, `Shape`, and the Markdown at each
+  detail level).
+- **Something the overlay asks the app:** a variant of `helper::Event` (and `Command` for the
+  answer), handled in `App::on_overlay`. The overlay never needs a permission itself.
 
 ## Style
 

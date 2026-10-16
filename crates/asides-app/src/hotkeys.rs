@@ -1,4 +1,5 @@
 //! Global shortcuts (Carbon hot keys via `global-hotkey`; no Accessibility permission needed).
+//! They keep working while Measure & Annotate is open, so the user can record while measuring.
 
 use std::str::FromStr;
 
@@ -13,6 +14,8 @@ pub enum Action {
     AttachImage,
     Cancel,
     SendToAgent,
+    /// Measure & Annotate.
+    Measure,
 }
 
 pub struct Hotkeys {
@@ -51,6 +54,7 @@ impl Hotkeys {
             (&shortcuts.record, Action::Record),
             (&shortcuts.record_new_note, Action::RecordNewNote),
             (&shortcuts.attach_image, Action::AttachImage),
+            (&shortcuts.measure, Action::Measure),
         ]
         .into_iter()
         .chain(send)

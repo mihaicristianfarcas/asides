@@ -28,6 +28,8 @@ pub struct CapturedImage {
     pub at: DateTime<Local>,
     pub bytes: Vec<u8>,
     pub extension: String,
+    /// Markdown shown after the image (what was measured on it).
+    pub details: Option<String>,
 }
 
 pub struct RecordingJob {
@@ -38,6 +40,8 @@ pub struct RecordingJob {
     /// `Some` starts a new note (with an optional title); `None` appends to the latest note.
     pub new_note: Option<Option<String>>,
     pub images: Vec<CapturedImage>,
+    /// Text added at a moment of the recording (an annotation), as (seconds, Markdown).
+    pub texts: Vec<(f32, String)>,
     pub environment: Environment,
     pub keep_audio: bool,
     pub model: String,
@@ -62,10 +66,23 @@ pub struct DictationJob {
     pub environment: Environment,
 }
 
+/// A Measure & Annotate session outside a recording: an entry of screenshots and text, in the
+/// order they were made (images by `offset`, texts by their seconds).
+pub struct ScreenJob {
+    pub dir: PathBuf,
+    pub at: DateTime<Local>,
+    pub images: Vec<CapturedImage>,
+    pub texts: Vec<(f32, String)>,
+    pub new_note: Option<Option<String>>,
+    pub environment: Environment,
+    pub model: String,
+}
+
 pub enum Job {
     Recording(Box<RecordingJob>),
     Image(Box<ImageJob>),
     Dictation(Box<DictationJob>),
+    Screen(Box<ScreenJob>),
 }
 
 pub enum Outcome {
@@ -94,6 +111,7 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
                     Job::Recording(job) => process_recording(*job, &models, &mut transcriber),
                     Job::Image(job) => process_image(*job),
                     Job::Dictation(job) => process_dictation(*job),
+                    Job::Screen(job) => process_screen(*job),
                 };
                 done(outcome.unwrap_or_else(|err| Outcome::Failed(format!("{err:#}"))));
             }
@@ -109,7 +127,7 @@ fn process_recording(
 ) -> Result<Outcome> {
     let pcm = resample(&job.samples, job.sample_rate, WHISPER_RATE);
     let segments = if stt::is_silent(&pcm) {
-        if job.images.is_empty() && pcm.iter().all(|s| *s == 0.0) && !pcm.is_empty() {
+        if job.images.is_empty() && job.texts.is_empty() && pcm.iter().all(|s| *s == 0.0) && !pcm.is_empty() {
             return Ok(Outcome::Failed(
                 "The microphone delivered only silence. Check System Settings → Privacy & Security → Microphone."
                     .into(),
@@ -125,7 +143,7 @@ fn process_recording(
         transcriber.as_ref().unwrap().transcribe(&pcm, &job.languages)?
     };
     let text = markdown::plain_text(&segments);
-    if text.is_empty() && job.images.is_empty() {
+    if text.is_empty() && job.images.is_empty() && job.texts.is_empty() {
         return Ok(Outcome::NothingHeard);
     }
 
@@ -135,6 +153,11 @@ fn process_recording(
     for image in &job.images {
         attachments.push(save_image(&note, number, image)?);
     }
+    attachments.extend(job.texts.iter().map(|(offset, text)| Attachment {
+        offset: *offset,
+        text: Some(text.clone()),
+        ..Attachment::default()
+    }));
     let audio = if job.keep_audio { save_audio(&note, number, job.started, &pcm).ok() } else { None };
     let entry = markdown::compose_entry(
         number,
@@ -164,6 +187,29 @@ fn process_dictation(job: DictationJob) -> Result<Outcome> {
         .context("could not write the note")?;
     Ok(Outcome::Appended { note: note.title, number })
 }
+
+fn process_screen(job: ScreenJob) -> Result<Outcome> {
+    let note = target_note(&job.dir, &job.new_note, job.at, &job.environment, &whisper(&job.model))?;
+    let number = note.next_entry_number();
+    let mut attachments = Vec::new();
+    for image in &job.images {
+        attachments.push(save_image(&note, number, image)?);
+    }
+    attachments.extend(job.texts.iter().map(|(offset, text)| Attachment {
+        offset: *offset,
+        text: Some(text.clone()),
+        ..Attachment::default()
+    }));
+    // Stable: what was made at the same moment keeps its order.
+    attachments.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+    let time = job.at.format("%H:%M").to_string();
+    note.append(&markdown::compose_attachments_entry(number, &time, SCREEN_SOURCE, &attachments))
+        .context("could not write the note")?;
+    Ok(Outcome::Appended { note: note.title, number })
+}
+
+/// How entries made with Measure & Annotate (outside a recording) are marked.
+pub const SCREEN_SOURCE: &str = "Screen";
 
 /// The front matter's `transcription` for notes started by a recording.
 fn whisper(model: &str) -> String {
@@ -213,6 +259,7 @@ fn save_image(note: &Note, number: u32, image: &CapturedImage) -> Result<Attachm
         offset: image.offset,
         rel_path: format!("images/{name}"),
         label: image.at.format("%H:%M:%S").to_string(),
+        text: image.details.clone(),
     })
 }
 
@@ -281,5 +328,37 @@ mod tests {
         assert_eq!(titles, ["Untitled", "Untitled 2", "Checkout"]);
         let content = fs::read_to_string(notes[0].file()).unwrap();
         assert!(content.starts_with("---\ntitle: Untitled\n"), "{content}");
+    }
+
+    #[test]
+    fn screen_entries_hold_screenshots_and_annotations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let at = Local.with_ymd_and_hms(2026, 10, 15, 14, 40, 5).unwrap();
+        let image = |offset: f32, details: Option<&str>| CapturedImage {
+            offset,
+            at,
+            bytes: vec![0x89, b'P', b'N', b'G'],
+            extension: "png".into(),
+            details: details.map(Into::into),
+        };
+        let job = ScreenJob {
+            dir: tmp.path().to_path_buf(),
+            at,
+            images: vec![image(0.0, Some("**Measured** in pt:\n- Area 10 × 10 at (0, 0)")), image(4.0, None)],
+            texts: vec![(2.5, "### 1. button \"Pay\"\n**Feedback:** Bigger".into())],
+            new_note: None,
+            environment: Environment::default(),
+            model: "m".into(),
+        };
+        assert!(matches!(process_screen(job).unwrap(), Outcome::Appended { number: 1, .. }));
+        let note = notes::latest_note(tmp.path()).unwrap();
+        let content = fs::read_to_string(note.file()).unwrap();
+        assert!(
+            content.ends_with(
+                "## 1 · 14:40 · Screen\n\n![14:40:05](images/01-144005.png)\n\n**Measured** in pt:\n- Area 10 × 10 at \
+                 (0, 0)\n\n### 1. button \"Pay\"\n**Feedback:** Bigger\n\n![14:40:05](images/01-144005-2.png)\n"
+            ),
+            "{content}"
+        );
     }
 }

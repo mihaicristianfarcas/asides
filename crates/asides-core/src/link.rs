@@ -28,6 +28,17 @@ pub enum Link {
         image_at: f32,
         request: Option<String>,
     },
+    /// Opens Measure & Annotate, as the shortcut does.
+    Measure {
+        request: Option<String>,
+    },
+    /// Development hook: runs a Measure & Annotate session on `image` (instead of the screen),
+    /// driven by `script` (a JSON file of actions), and adds the result like the user would.
+    SimulateMeasure {
+        image: PathBuf,
+        script: PathBuf,
+        request: Option<String>,
+    },
 }
 
 impl Link {
@@ -67,6 +78,18 @@ impl Link {
                         q.append_pair("req", request);
                     }
                 }
+                Link::Measure { request } => {
+                    if let Some(request) = request {
+                        q.append_pair("req", request);
+                    }
+                }
+                Link::SimulateMeasure { image, script, request } => {
+                    q.append_pair("image", &image.to_string_lossy());
+                    q.append_pair("script", &script.to_string_lossy());
+                    if let Some(request) = request {
+                        q.append_pair("req", request);
+                    }
+                }
             }
         }
         url.to_string().trim_end_matches('?').to_string()
@@ -94,6 +117,12 @@ impl Link {
                 image_at: get("at").and_then(|v| v.parse().ok()).unwrap_or(0.0),
                 request: get("req"),
             }),
+            "measure" => Some(Link::Measure { request: get("req") }),
+            "simulate-measure" => Some(Link::SimulateMeasure {
+                image: get("image")?.into(),
+                script: get("script")?.into(),
+                request: get("req"),
+            }),
             _ => None,
         }
     }
@@ -104,6 +133,8 @@ impl Link {
             Link::Quit => "quit",
             Link::Send { .. } => "send",
             Link::Simulate { .. } => "simulate",
+            Link::Measure { .. } => "measure",
+            Link::SimulateMeasure { .. } => "simulate-measure",
         }
     }
 }
@@ -134,6 +165,12 @@ mod tests {
             new_note: false,
             image: Some("/tmp/i.png".into()),
             image_at: 2.5,
+            request: None,
+        });
+        round_trip(Link::Measure { request: Some("r3".into()) });
+        round_trip(Link::SimulateMeasure {
+            image: "/tmp/shot 1.png".into(),
+            script: "/tmp/script.json".into(),
             request: None,
         });
         assert_eq!(Link::Quit.to_url(), "asides://quit");

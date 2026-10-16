@@ -29,6 +29,8 @@ pub struct AppState {
     pub agent_sends: Vec<AgentSend>,
     /// The user declined to put the `asides` command in /usr/local/bin; don't ask again.
     pub command_link_declined: bool,
+    /// Measure & Annotate showed its keys once, the first time it opened.
+    pub overlay_tips_seen: bool,
     pub updated_ms: u64,
 }
 
