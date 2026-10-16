@@ -431,14 +431,6 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .say .w { transition: opacity 160ms ease; }
 .say .w.off { opacity: 0; }
 
-/* Measure & Annotate: a real capture of the overlay, framed like the demo. */
-.annotate { display: flex; flex-direction: column; gap: var(--gap); padding-top: 96px; }
-.annotate > p, .annotate > .code { max-width: 820px; }
-.annotate p { color: var(--body); text-wrap: pretty; }
-.annotate .display img { display: block; width: 100%; height: 100%; }
-/* Read, not copied: it wraps instead of scrolling sideways. */
-.annotate .code pre { padding-right: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
-
 /* Features */
 .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px 32px; padding-top: 96px; }
 .feature h3 { font-weight: 600; }
@@ -518,7 +510,6 @@ h2 { font-weight: 600; }
   .device { padding: 5px; border-radius: 13px; }
   .display { border-radius: 8px; }
   .features { grid-template-columns: 1fr; gap: 28px; padding-top: 64px; }
-  .annotate { padding-top: 72px; }
   .install, .usage { padding-top: 72px; }
   /* Long commands scroll sideways here, at the badges' size; copying them on a phone is rare. */
   .code pre { padding: 14px 16px; font-size: 0.88em; }
@@ -600,7 +591,6 @@ h2 { font-weight: 600; }
             <div class="item"><span>Start Recording</span><span class="key">⌃⌥Space</span></div>
             <div class="item"><span>Start in New Note</span><span class="key">⌃⌥N</span></div>
             <div class="item"><span>Attach Clipboard Image</span><span class="key">⌃⌥V</span></div>
-            <div class="item"><span>Measure &amp; Annotate Screen</span><span class="key">⌃⌥M</span></div>
             <div class="item off">Cancel Recording (Esc)</div>
             <div class="sep"></div>
             <div class="item"><span>Directory: shop</span><span class="key">›</span></div>
@@ -717,33 +707,6 @@ And the Pay button text wraps.</pre></div>
     </figure>
   </section>
 
-  <section class="wrap annotate" aria-labelledby="annotate">
-    <h2 id="annotate">Measure &amp; Annotate</h2>
-    <p>Press <kbd>⌃⌥M</kbd> and every screen freezes, in any app. Measure it like PixelSnap, mark what's wrong, circle it or point from one thing to another, and hold <kbd>Space</kbd> to say why. Done adds it all to the note: the screenshot, and each mark where you were talking about it.</p>
-    <figure class="device">
-      <div class="display"><img src="annotate.webp" width="972" height="608" loading="lazy" decoding="async" alt="The Measure &amp; Annotate overlay on a checkout page: the email field sized 351 × 31, a 26-point gap held, the total circled as mark 1, mark 2 on the Pay button with its one-line card, and the toolbar recording at 0:11."></div>
-    </figure>
-    <p>What your agent reads, between what you said:</p>
-    <div class="code"><pre>## 6 · 14:41
-
-![14:41:02](images/06-144102.png)
-
-**In:** Safari · "meadow — Checkout" · http://localhost:5173/checkout
-**Measured** in pt (screen: Built-in Retina Display, 972 × 608 pt, @2x):
-- Distance from (427, 335): 26 across (x 414 to x 440)
-- Area 351 × 31 at (63, 217), snapped to the object inside
-
-The total sits too close to the shipping line,
-
-### 1. Drawn on row "Total $72.00"
-
-and the pay button wraps on smaller screens.
-
-### 2. button "Pay now · $72.00"
-**Intent:** fix
-**Feedback:** Keep it on one line</pre></div>
-  </section>
-
   <section class="wrap features" aria-label="Features">
     <div class="feature">
       <h3>Local and free</h3>
@@ -759,7 +722,7 @@ and the pay button wraps on smaller screens.
     </div>
     <div class="feature">
       <h3>Context included</h3>
-      <p>Each note records the branch, commit and uncommitted changes, plus your browser and display. Switch branch, and the next aside starts a new note.</p>
+      <p>Each new note records the branch, commit and uncommitted changes, plus your browser and display.</p>
     </div>
     <div class="feature">
       <h3>Straight to your agent</h3>
@@ -768,18 +731,6 @@ and the pay button wraps on smaller screens.
     <div class="feature">
       <h3>Wispr Flow too</h3>
       <p>Already dictate with Wispr Flow? Turn it on, and your dictations land in the note next to your recordings.</p>
-    </div>
-    <div class="feature">
-      <h3>Measure anything</h3>
-      <p>Press <kbd>⌃⌥M</kbd> and every screen freezes, in any app. Hover for the distances between edges, drag to snap to an element's size, hold them, add guides. The numbers go in the note.</p>
-    </div>
-    <div class="feature">
-      <h3>Mark, draw, and talk</h3>
-      <p>Mark elements and areas, draw arrows and circles, take screenshots of parts, and hold <kbd>Space</kbd> to say what you mean. Each mark lands in the note where you were talking about it.</p>
-    </div>
-    <div class="feature">
-      <h3>The loop closes</h3>
-      <p>Agents resolve, dismiss or reply to each aside, or to each mark in it, and you see it in the menu.</p>
     </div>
   </section>
 
@@ -815,7 +766,6 @@ opencode mcp add --global asides -- asides mcp</code></pre><button class="copy" 
       <dt><kbd>⌃⌥V</kbd></dt><dd>Attach the image on the clipboard.</dd>
       <dt><kbd>Esc</kbd></dt><dd>Cancel. Nothing is written.</dd>
       <dt><kbd>⌃⌥Enter</kbd></dt><dd>Send the batch to your agent, when it gets asides in batches.</dd>
-      <dt><kbd>⌃⌥M</kbd></dt><dd>Measure and annotate the frozen screen: hover for distances, drag for sizes, <kbd>A</kbd> to mark elements, <kbd>P</kbd> to draw, <kbd>⌘S</kbd> for a screenshot, hold <kbd>Space</kbd> to talk, <kbd>⏎</kbd> to add it to the note. Hover <kbd>?</kbd> for every key.</dd>
     </dl>
     <p class="keys-note">You can change any shortcut in Preferences → Edit Shortcuts &amp; Settings.</p>
   </section>
