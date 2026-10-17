@@ -343,8 +343,9 @@ as Wispr Flow typed it.
      images: the text names them). A push that fails is retried, less and less often, and the
      pusher's listener record says why (`problem`), which the menu shows (`not getting asides`).
      In a terminal, the agent `exec`d is `codex resume <thread>`, and the pusher stops with
-     it; in the background, the pusher is the session's process, and Stop ends it. Without the
-     daemon, Codex waits in `wait_for_asides` like other agents.
+     it; in the background, the pusher is the session's process, and Stop ends it. A daemon that
+     isn't running is started (`codex app-server daemon start`); without one (an older Codex),
+     Codex waits in `wait_for_asides` like other agents.
    - `asides opencode` (OpenCode 2) does the same in OpenCode's background service (`opencode.rs`,
      found through the address and password it registers in `~/.local/state/opencode/service.json`,
      started with `opencode serve --service` if it isn't running): the session's MCP server for its

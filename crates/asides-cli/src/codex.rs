@@ -120,7 +120,24 @@ struct Daemon {
 }
 
 impl Daemon {
+    /// Connects to the daemon, starting it first if it isn't running (Codex starts it on demand,
+    /// but only for its own windows).
     fn connect() -> Result<Daemon> {
+        Daemon::connect_once().or_else(|_| {
+            let started = Command::new("codex")
+                .args(["app-server", "daemon", "start"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match started {
+                Ok(status) if status.success() => Daemon::connect_once(),
+                _ => bail!("Codex's app-server daemon isn't running, and didn't start"),
+            }
+        })
+    }
+
+    fn connect_once() -> Result<Daemon> {
         let mut proxy = Command::new("codex")
             .args(["app-server", "proxy"])
             .stdin(Stdio::piped())

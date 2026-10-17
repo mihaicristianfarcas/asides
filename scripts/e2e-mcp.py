@@ -353,6 +353,9 @@ def record(name, value):
         f.write(json.dumps(value) + "\\n")
 if args[:1] == ["--version"]:
     print("codex-cli 0.163.0")
+elif args[:3] == ["app-server", "daemon", "start"]:
+    record("codex-daemon-starts.jsonl", args)
+    sys.exit(1 if os.environ.get("FAKE_NO_DAEMON") else 0)
 elif args[:2] == ["app-server", "proxy"]:
     if os.environ.get("FAKE_NO_DAEMON"):
         sys.exit(1)
@@ -618,6 +621,7 @@ service.shutdown()
 codex, argv, env, cwd = start("codex", 0, "--no-worktree", FAKE_NO_DAEMON="1")
 check("without Codex's daemon, Codex waits for asides in a tool call instead",
       "To listen, call the wait_for_asides tool" in argv[-1] and any("mcp_servers.asides.args=" in a for a in argv), argv)
+check("having tried to start the daemon first", os.path.exists(os.path.join(fakes, "codex-daemon-starts.jsonl")))
 codex.wait(timeout=10)
 opencode, argv, env, cwd = start("opencode", 0)
 opencode_config = json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))

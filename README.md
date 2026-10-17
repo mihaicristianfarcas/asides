@@ -423,7 +423,8 @@ How the agent gets your asides depends on what it can do:
   you can ask it other things.
 - **Codex, started by Asides,** gets each aside as a message, like one you typed, with its
   screenshots. Asides starts the session as a thread in Codex's app server (the daemon Codex keeps
-  running), hands it each aside, and the window opens that thread (`codex resume`). Codex never
+  running; Asides starts it if it isn't), hands it each aside, and the window opens that thread
+  (`codex resume`). Codex never
   sits waiting for asides, and one that arrives while it works is queued for when it's done. If an
   aside can't reach it, the menu says so, and Asides keeps trying. Without the app server (older
   Codex), it waits like the agents below.
