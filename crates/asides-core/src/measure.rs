@@ -1,8 +1,11 @@
 //! Measuring what's on screen, the way PixelSnap does: from a point, the distance to the nearest
 //! edge in each direction; inside a dragged area, the bounds of the object it surrounds; near a
 //! guide, the edge it should snap to. Everything works on a frozen frame (a screenshot) in pixels,
-//! origin top-left. An edge is where a pixel differs from where the scan started by more than the
-//! tolerance, so raising the tolerance looks through shadows, gradients and anti-aliasing.
+//! origin top-left. An edge is where the color changes sharply: a pixel differs from the one before
+//! it, or from the one two before (an edge anti-aliasing spread over two pixels), by more than the
+//! tolerance. Slow changes aren't edges, however far they go: gradients, soft shadows, and what
+//! glass and frosted materials blur behind them (one or two levels a pixel, where an edge drawn on
+//! them jumps by tens). Raising the tolerance also looks through faint borders and hard shadows.
 
 use std::collections::HashMap;
 
@@ -68,14 +71,15 @@ impl Rect {
     }
 }
 
-/// How different two colors must be to count as an edge, in percent of the full channel range.
+/// How different two neighbouring pixels must be to count as an edge, in percent of the full
+/// channel range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Tolerance(pub u8);
 
 impl Tolerance {
     /// Low enough to see a light gray card on white (#F3F4F6 differs by 12 of 255).
     pub const DEFAULT: Tolerance = Tolerance(2);
-    /// High enough to look through drop shadows and soft gradients (PixelSnap's tolerance mode).
+    /// High enough to look through hard shadows and faint borders (PixelSnap's tolerance mode).
     pub const HIGH: Tolerance = Tolerance(30);
     pub const MAX: u8 = 100;
 
@@ -225,33 +229,37 @@ pub fn hex(rgb: Rgb) -> String {
     format!("#{:06X}", rgb & 0xff_ffff)
 }
 
+/// Whether the color changes sharply at `at`, coming from `before`: by more than `threshold` from
+/// the pixel just before, or from the one two before (`two_before`, when it's on the same run), for
+/// an edge that anti-aliasing spread over two pixels.
+fn sharp(at: Rgb, before: Rgb, two_before: Option<Rgb>, threshold: u8) -> bool {
+    difference(at, before) > threshold || two_before.is_some_and(|p| difference(at, p) > threshold)
+}
+
+/// The run through `at` on a line of `len` pixels (`pixel(i)`), up to the first sharp change on
+/// either side.
+fn run(len: u32, at: u32, threshold: u8, pixel: impl Fn(u32) -> Rgb) -> Span {
+    let mut end = at + 1;
+    while end < len && !sharp(pixel(end), pixel(end - 1), (end >= at + 2).then(|| pixel(end - 2)), threshold) {
+        end += 1;
+    }
+    let mut start = at;
+    while start > 0 && !sharp(pixel(start - 1), pixel(start), (start < at).then(|| pixel(start + 1)), threshold) {
+        start -= 1;
+    }
+    Span { start, end }
+}
+
 /// The distances from `(x, y)` to the nearest edge left, right, up and down, stopping at guides.
 pub fn distance_at(frame: &Frame, x: u32, y: u32, tolerance: Tolerance, stops: &Stops) -> Option<Distance> {
     if !frame.contains(x, y) {
         return None;
     }
     let threshold = tolerance.threshold();
-    let origin = frame.rgb(x, y);
-    let same = |px: u32, py: u32| difference(frame.rgb(px, py), origin) <= threshold;
-
-    let mut left = x;
-    while left > 0 && same(left - 1, y) {
-        left -= 1;
-    }
-    let mut right = x + 1;
-    while right < frame.width && same(right, y) {
-        right += 1;
-    }
-    let mut top = y;
-    while top > 0 && same(x, top - 1) {
-        top -= 1;
-    }
-    let mut bottom = y + 1;
-    while bottom < frame.height && same(x, bottom) {
-        bottom += 1;
-    }
-    let (left, right) = clip_to_stops(left, right, x, &stops.x);
-    let (top, bottom) = clip_to_stops(top, bottom, y, &stops.y);
+    let across = run(frame.width, x, threshold, |i| frame.rgb(i, y));
+    let down = run(frame.height, y, threshold, |i| frame.rgb(x, i));
+    let (left, right) = clip_to_stops(across.start, across.end, x, &stops.x);
+    let (top, bottom) = clip_to_stops(down.start, down.end, y, &stops.y);
     Some(Distance { x, y, horizontal: Span { start: left, end: right }, vertical: Span { start: top, end: bottom } })
 }
 
@@ -287,37 +295,129 @@ pub fn background(frame: &Frame, rect: Rect) -> Option<Rgb> {
     counts.into_iter().max_by_key(|&(rgb, n)| (n, rgb)).map(|(rgb, _)| rgb)
 }
 
-/// The bounds of whatever `rect` surrounds: the smallest rectangle holding every pixel that
-/// differs from the background (see [`background`]). `None` when the area is all background.
-pub fn snap_area(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Rect> {
-    let rect = rect.clamp_to(frame.width, frame.height);
-    let bg = background(frame, rect)?;
-    let threshold = tolerance.threshold();
-    let content = |x: u32, y: u32| difference(frame.rgb(x, y), bg) > threshold;
-    let row_has = |y: u32| (rect.x..rect.right()).any(|x| content(x, y));
-    let top = (rect.y..rect.bottom()).find(|&y| row_has(y))?;
-    let bottom = (top..rect.bottom()).rev().find(|&y| row_has(y))?;
-    let column_has = |x: u32| (top..=bottom).any(|y| content(x, y));
-    let left = (rect.x..rect.right()).find(|&x| column_has(x))?;
-    let right = (left..rect.right()).rev().find(|&x| column_has(x))?;
-    Some(Rect::from_corners((left, top), (right, bottom)))
-}
-
-/// The separate objects inside `rect`: groups of pixels that differ from the background, each as its
-/// bounds, largest first. Groups within `gap` pixels of each other are one object (the letters of a
-/// word, the parts of an icon), and specks smaller than `gap` on both sides are left out.
-pub fn objects(frame: &Frame, rect: Rect, tolerance: Tolerance, gap: u32) -> Vec<Rect> {
-    let rect = rect.clamp_to(frame.width, frame.height);
-    let Some(bg) = background(frame, rect) else { return Vec::new() };
-    let threshold = tolerance.threshold();
+/// Which pixels of `rect` (row by row) are drawn on its background: those its outline can't reach
+/// without crossing a sharp change, stepping across and down. What the background does on the way
+/// doesn't matter (a gradient, a soft shadow, what glass blurs behind it); what's drawn on it has
+/// edges. Something that crosses the outline counts as background.
+///
+/// Between two neighbours there's an edge when they differ by more than `threshold`, or when one
+/// of them and the pixel beyond the other do while that pair is alike: an edge that anti-aliasing
+/// spread over two pixels, whichever way it's crossed. The edges are found a row at a time, then
+/// the background filled a stretch of a row at a time (a scanline fill).
+fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
     let (w, h) = (rect.width as usize, rect.height as usize);
-    let mut content: Vec<bool> = Vec::with_capacity(w * h);
-    for y in rect.y..rect.bottom() {
-        for x in rect.x..rect.right() {
-            content.push(difference(frame.rgb(x, y), bg) > threshold);
+    let stride = frame.width as usize * 4;
+    let row = |y: usize| {
+        let start = (rect.y as usize + y) * stride + rect.x as usize * 4;
+        &frame.rgba[start..start + w * 4]
+    };
+    // Whether each pixel of `a` differs from the one at the same place in `b` (byte by byte first,
+    // which vectorizes).
+    let mut bytes = vec![0u8; w * 4];
+    let mut differ = |a: &[u8], b: &[u8], out: &mut [bool]| {
+        let n = a.len().min(b.len());
+        for ((d, p), q) in bytes[..n].iter_mut().zip(&a[..n]).zip(&b[..n]) {
+            *d = p.abs_diff(*q);
+        }
+        for (px, d) in bytes[..n].as_chunks::<4>().0.iter().zip(out.iter_mut()) {
+            *d = px[0].max(px[1]).max(px[2]) > threshold;
+        }
+    };
+    // Across: `edge_across[y * w + x]`, between (x - 1, y) and (x, y).
+    let mut edge_across = vec![false; w * h];
+    let (mut one, mut two) = (vec![false; w], vec![false; w]);
+    for y in 0..h {
+        let r = row(y);
+        // one[k]: pixels k and k + 1 differ; two[k]: k and k + 2.
+        differ(&r[..w.saturating_sub(1) * 4], &r[4.min(r.len())..], &mut one);
+        differ(&r[..w.saturating_sub(2) * 4], &r[8.min(r.len())..], &mut two);
+        for x in 1..w {
+            edge_across[y * w + x] =
+                one[x - 1] || (x >= 2 && two[x - 2] && !one[x - 2]) || (x + 1 < w && two[x - 1] && !one[x]);
         }
     }
-    // Flood-fill each group of touching content pixels, keeping its bounds.
+    // Down: rows that differ by one and by two, then `edge_down[y * w + x]`, between (x, y - 1)
+    // and (x, y).
+    let mut down_one = vec![false; w * h];
+    let mut down_two = vec![false; w * h];
+    for y in 1..h {
+        differ(row(y - 1), row(y), &mut down_one[y * w..(y + 1) * w]);
+        if y >= 2 {
+            differ(row(y - 2), row(y), &mut down_two[y * w..(y + 1) * w]);
+        }
+    }
+    let mut edge_down = vec![false; w * h];
+    for y in 1..h {
+        for x in 0..w {
+            let i = y * w + x;
+            edge_down[i] = down_one[i]
+                || (y >= 2 && down_two[i] && !down_one[i - w])
+                || (y + 1 < h && down_two[i + w] && !down_one[i + w]);
+        }
+    }
+    drop((down_one, down_two));
+    let mut reached = vec![false; w * h];
+    let mut stack: Vec<(usize, usize)> =
+        (0..w).flat_map(|x| [(x, 0), (x, h - 1)]).chain((0..h).flat_map(|y| [(0, y), (w - 1, y)])).collect();
+    while let Some((x, y)) = stack.pop() {
+        let row = y * w;
+        if reached[row + x] {
+            continue;
+        }
+        let (mut left, mut right) = (x, x);
+        while left > 0 && !reached[row + left - 1] && !edge_across[row + left] {
+            left -= 1;
+        }
+        while right + 1 < w && !reached[row + right + 1] && !edge_across[row + right + 1] {
+            right += 1;
+        }
+        reached[row + left..=row + right].fill(true);
+        // Seeds in the rows above and below: one per stretch that this one opens onto.
+        for (other, boundary) in [(y.checked_sub(1), y), ((y + 1 < h).then_some(y + 1), y + 1)] {
+            let Some(other) = other else { continue };
+            let mut open_before = false;
+            for cx in left..=right {
+                let open = !reached[other * w + cx] && !edge_down[boundary * w + cx];
+                if open && (!open_before || edge_across[other * w + cx]) {
+                    stack.push((cx, other));
+                }
+                open_before = open;
+            }
+        }
+    }
+    reached.into_iter().map(|r| !r).collect()
+}
+
+/// The bounds of whatever `rect` surrounds: the smallest rectangle holding everything drawn on its
+/// background (see [`content_map`]). `None` when nothing is.
+pub fn snap_area(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Rect> {
+    let rect = rect.clamp_to(frame.width, frame.height);
+    if rect.is_empty() {
+        return None;
+    }
+    let content = content_map(frame, rect, tolerance.threshold());
+    let w = rect.width as usize;
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+    for (i, _) in content.iter().enumerate().filter(|(_, c)| **c) {
+        let (x, y) = (i % w, i / w);
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+    }
+    (x0 != usize::MAX)
+        .then(|| Rect::from_corners((rect.x + x0 as u32, rect.y + y0 as u32), (rect.x + x1 as u32, rect.y + y1 as u32)))
+}
+
+/// The separate objects inside `rect`: groups of pixels drawn on the background (see
+/// [`content_map`]), each as its bounds, largest first. Groups within `gap` pixels of each other
+/// are one object (the letters of a word, the parts of an icon), and specks smaller than `gap` on
+/// both sides are left out.
+pub fn objects(frame: &Frame, rect: Rect, tolerance: Tolerance, gap: u32) -> Vec<Rect> {
+    let rect = rect.clamp_to(frame.width, frame.height);
+    if rect.is_empty() {
+        return Vec::new();
+    }
+    let (w, h) = (rect.width as usize, rect.height as usize);
+    let content = content_map(frame, rect, tolerance.threshold());
+    // Flood-fill each group of touching content pixels (diagonals too), keeping its bounds.
     let mut seen = vec![false; w * h];
     let mut groups: Vec<Rect> = Vec::new();
     let mut stack = Vec::new();
@@ -331,11 +431,16 @@ pub fn objects(frame: &Frame, rect: Rect, tolerance: Tolerance, gap: u32) -> Vec
         while let Some(i) = stack.pop() {
             let (x, y) = (i % w, i / w);
             (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+            let (left, right, up, down) = (x > 0, x + 1 < w, y > 0, y + 1 < h);
             let neighbours = [
-                (x > 0).then(|| i - 1),
-                (x + 1 < w).then(|| i + 1),
-                (y > 0).then(|| i - w),
-                (y + 1 < h).then(|| i + w),
+                left.then(|| i - 1),
+                right.then(|| i + 1),
+                up.then(|| i - w),
+                down.then(|| i + w),
+                (left && up).then(|| i - w - 1),
+                (right && up).then(|| i - w + 1),
+                (left && down).then(|| i + w - 1),
+                (right && down).then(|| i + w + 1),
             ];
             for n in neighbours.into_iter().flatten() {
                 if content[n] && !seen[n] {
@@ -430,15 +535,11 @@ pub struct Appearance {
 pub fn appearance(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Appearance> {
     let rect = rect.clamp_to(frame.width, frame.height);
     let bg = background(frame, rect)?;
-    let threshold = tolerance.threshold();
+    let content = content_map(frame, rect, tolerance.threshold());
     let mut counts: HashMap<Rgb, u32> = HashMap::new();
-    for y in rect.y..rect.bottom() {
-        for x in rect.x..rect.right() {
-            let rgb = frame.rgb(x, y);
-            if difference(rgb, bg) > threshold {
-                *counts.entry(rgb).or_default() += 1;
-            }
-        }
+    let w = rect.width as usize;
+    for (i, _) in content.iter().enumerate().filter(|(_, c)| **c) {
+        *counts.entry(frame.rgb(rect.x + (i % w) as u32, rect.y + (i / w) as u32)).or_default() += 1;
     }
     let foreground = counts.into_iter().max_by_key(|&(rgb, n)| (n, rgb)).map(|(rgb, _)| rgb);
     let content = snap_area(frame, rect, tolerance);
@@ -559,6 +660,82 @@ mod tests {
             ("Low", "Medium", "High")
         );
         assert_eq!(Tolerance::of_level("High"), Some(Tolerance::HIGH));
+    }
+
+    /// A frame whose colors drift by `slope` levels a pixel across and down: a gradient, or what glass
+    /// blurs behind it.
+    fn drifting(width: u32, height: u32, slope: f64) -> Frame {
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let level = |offset: f64| ((offset + (x as f64 + y as f64 * 0.5) * slope) % 400.0 - 200.0).abs() as u8;
+                rgba.extend_from_slice(&[level(40.0), level(90.0), level(160.0), 255]);
+            }
+        }
+        Frame::new(width, height, rgba).unwrap()
+    }
+
+    #[test]
+    fn looks_through_what_glass_blurs() {
+        // A glass panel at (20, 10), 160 × 80, with a button: inside, the blurred background behind
+        // it drifts two levels a pixel, more than the tolerance from end to end.
+        let mut frame = Frame::filled(200, 100, WHITE);
+        let blur = drifting(160, 80, 2.0);
+        for y in 0..80 {
+            for x in 0..160 {
+                let i = (((y + 10) * 200 + x + 20) * 4) as usize;
+                let j = ((y * 160 + x) * 4) as usize;
+                frame.rgba[i..i + 4].copy_from_slice(&blur.rgba[j..j + 4]);
+            }
+        }
+        frame.fill(Rect::new(40, 60, 50, 16), 0x6e6e70);
+        let d = distance_at(&frame, 120, 40, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!((d.horizontal, d.vertical), (Span { start: 20, end: 180 }, Span { start: 10, end: 90 }));
+        let d = distance_at(&frame, 60, 40, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!(d.vertical, Span { start: 10, end: 60 }, "down to the button");
+        // An area around the button snaps to it, not to the blur.
+        assert_eq!(snap_area(&frame, Rect::new(30, 50, 80, 32), Tolerance::DEFAULT), Some(Rect::new(40, 60, 50, 16)));
+        let found = objects(&frame, Rect::new(25, 15, 150, 70), Tolerance::DEFAULT, 3);
+        assert_eq!(found, [Rect::new(40, 60, 50, 16)]);
+    }
+
+    #[test]
+    fn soft_shadows_and_gradients_are_not_edges() {
+        // A white card on a page that darkens downwards, with a shadow under it that fades into
+        // the page over 24 px.
+        let page = |y: u32| 0xf6 - y / 8;
+        let gray = |level: u32| level << 16 | level << 8 | level;
+        let mut frame = Frame::filled(200, 140, WHITE);
+        for y in 0..140 {
+            frame.fill(Rect::new(0, y, 200, 1), gray(page(y)));
+        }
+        frame.fill(Rect::new(40, 20, 100, 50), WHITE);
+        for i in 0..24u32 {
+            let y = 70 + i;
+            frame.fill(Rect::new(40, y, 100, 1), gray(page(y) - 30 * (24 - i) / 24));
+        }
+        let d = distance_at(&frame, 90, 130, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!(d.vertical, Span { start: 70, end: 140 }, "through the shadow and the gradient, up to the card");
+        assert_eq!(
+            snap_area(&frame, Rect::new(30, 10, 120, 120), Tolerance::DEFAULT),
+            Some(Rect::new(40, 20, 100, 50))
+        );
+    }
+
+    #[test]
+    fn sees_faint_anti_aliased_edges() {
+        // A card 7 levels off white, its edge spread over two pixels: no step between neighbours is
+        // over the tolerance, the two together are.
+        let mut frame = Frame::filled(100, 40, WHITE);
+        frame.fill(Rect::new(30, 0, 1, 40), 0xfbfbfb);
+        frame.fill(Rect::new(31, 0, 69, 40), 0xf8f8f8);
+        let d = distance_at(&frame, 10, 20, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!(d.horizontal, Span { start: 0, end: 31 });
+        // The pixel between is as close to either side: both runs take it.
+        let d = distance_at(&frame, 60, 20, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!(d.horizontal, Span { start: 30, end: 100 });
+        assert_eq!(snap_area(&frame, Rect::new(5, 5, 90, 30), Tolerance::DEFAULT), None, "the card crosses the area");
+        assert_eq!(snap_area(&frame, Rect::new(5, 5, 40, 30), Tolerance::DEFAULT), None);
     }
 
     #[test]

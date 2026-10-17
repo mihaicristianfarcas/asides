@@ -848,8 +848,9 @@ fn tools() -> Value {
                     },
                     "tolerance": {
                         "type": "integer", "minimum": 0, "maximum": 100,
-                        "description": "How different (in %) a color must be to count as an edge; raise it to look \
-                            through shadows and gradients. Default 2."
+                        "description": "How much (in %) the color must change from one pixel to the next to count \
+                            as an edge (gradients, soft shadows and the blur behind glass never do); raise it to look \
+                            through borders and hard shadows. Default 2."
                     },
                     "scale": { "type": "number", "description": "Pixels per point, to also report points." }
                 },

@@ -48,7 +48,10 @@ pub fn describe(frame: &Frame, name: &str, target: Target, tolerance: Tolerance,
             format!("{px} px ({pt} pt at @{scale}x)")
         }
     };
-    let tolerance_note = format!("Tolerance {}% (edges are where a color differs by more than that).", tolerance.0);
+    let tolerance_note = format!(
+        "Tolerance {}% (edges are where the color changes by more than that from one pixel to the next).",
+        tolerance.0
+    );
     match target {
         Target::Point(x, y) => {
             let Some(d) = measure::distance_at(frame, x, y, tolerance, &Stops::default()) else {

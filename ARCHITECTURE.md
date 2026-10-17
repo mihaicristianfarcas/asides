@@ -468,9 +468,15 @@ Break these only on purpose, and update this document when you do.
   colors that produced them, not the display profile's. On macOS 26 the screenshots come from its
   newer API, which keeps windows' shadows (the frozen screen looks exactly like the live one), and
   are converted to sRGB.
-- **Edges by tolerance from the starting pixel.** Comparing each pixel with the run's first one
-  (not its neighbour) stops at soft gradients' ends instead of drifting through them. The default
-  (2%) is low enough to see a light gray card on white, and `T` switches to 30% for shadows.
+- **Edges are sharp changes.** An edge is where a pixel differs by more than the tolerance from the
+  one before it, or from the one two before (anti-aliasing spreads an edge over two pixels). Slow
+  changes aren't edges, however far they drift: on glass and frosted materials (macOS 26's Liquid
+  Glass, vibrancy) the blurred background changes by a level or two a pixel and drifts by a hundred
+  across a panel, while what's drawn on them jumps by tens; gradients and soft shadows are the same.
+  Comparing with the scan's first pixel instead stopped wherever the drift passed the tolerance.
+  An area's content is whatever its outline can't reach without crossing an edge (a scanline fill),
+  so no background color is needed. The default (2%) is low enough to see a light gray card on
+  white, and `T` switches to 30% to look through borders and hard shadows.
 - **GPUI, in its own process.** The overlay is the richest UI Asides has (a toolbar, cards, menus,
   live measuring at display refresh rate), and GPUI draws it on the GPU from Rust. GPUI owns its
   event loop and `NSApplication`, as tao does for the app, so the overlay is a second binary in the

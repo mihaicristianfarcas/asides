@@ -204,7 +204,7 @@ it isn't, the menu bar shows "No repo", and a frozen screen says so at the top.
 | Drag | The size of what's inside: the area snaps to the object's bounds. Right-drag (or ⌘ held) keeps it as drawn, `⌥`-drag holds each object inside separately, `⇧` makes it square, and `Space` while dragging moves it. |
 | `⇧H` / `⇧V` | A horizontal or vertical guide at the cursor, snapped to a held object's edge or middle, or to the nearest edge. Distances stop at guides and at held objects, and the gaps between guides are shown at the screen's edge. Arrow keys nudge the last guide (⇧: 10 pt). |
 | `⇧` held | A crosshair across the whole screen, to check alignment. |
-| `-` / `=` | Lower or raise the tolerance: how different a color must be to count as an edge. `T` switches to a high one that looks through shadows and gradients; the toolbar cycles Low, Med, High. |
+| `-` / `=` | Lower or raise the tolerance: how sharply the color must change to count as an edge (soft shadows, gradients and the blur behind glass never do). `T` switches to a high one that looks through borders and hard shadows; the toolbar cycles Low, Med, High. |
 | `U` | Points or pixels. |
 | `⌘C` / `C` / `⌘⇧C` | Copy the size (`120 × 32`), the screenshot with everything on it, or everything as Markdown. |
 | `R` | Put back the last session's guides and held measurements. |
@@ -524,7 +524,7 @@ opencode = []
 [measure]
 color = "#FF2D55"            # lines and labels
 units = "pt"                 # or "px"
-tolerance = 2                # % a color must differ by to count as an edge
+tolerance = 2                # % the color must change by, pixel to pixel, to count as an edge
 identify_elements = false    # name what's under each annotation (needs Accessibility)
 padding = 48.0               # points of screen kept around what you measured, in the screenshot
 record = false               # start talking when Asides opens
@@ -629,7 +629,7 @@ language (often a short one, or an accent), Asides keeps the language it was las
   Security → Screen & System Audio Recording, then quit and reopen Asides.
 - **Distances stop at the wrong place, or go through an edge.** Change the tolerance with `-` and
   `=`: lower it to see faint borders (a light card on white), raise it (or press `T`) to look through
-  shadows and gradients.
+  borders and hard shadows. Soft shadows, gradients and what glass blurs behind it never stop them.
 - **Annotations only name the app.** Turn on Identify UI Elements and allow Asides under
   Accessibility. Chrome and Electron apps build their accessibility tree on the first query, so
   the first annotation in them may only name the window.
@@ -656,9 +656,11 @@ language (often a short one, or an accent), Asides keeps the language it was las
 - **One language per recording.** Whisper detects the language once per recording. If you switch
   languages partway through, it can drop the part in the other language.
 - **Measuring.** ScreenCaptureKit takes one sRGB screenshot per screen, so colors read like the CSS
-  that drew them. Edges are where a pixel differs from where the scan started by more than the
-  tolerance. An area snaps to the bounds of whatever differs from the color most of its outline
-  has. The same Rust code measures in the overlay, in `asides measure` and in `measure_image`.
+  that drew them. Edges are where the color changes sharply, from one pixel to the next (or over two
+  anti-aliased pixels) by more than the tolerance; slow changes aren't edges, however far they go, so
+  measuring works on glass and frosted surfaces, over gradients and through soft shadows. An area
+  snaps to the bounds of what's drawn inside it: whatever its outline can't reach without crossing
+  an edge. The same Rust code measures in the overlay, in `asides measure` and in `measure_image`.
 - **Sessions.** Each agent session has a small record in `~/Library/Application Support/Asides/sessions/`.
   The app writes which session each aside went to in `routes.jsonl` beside the note, just before the
   aside itself; each agent's `asides mcp` or `asides listen` hands it only its own.
