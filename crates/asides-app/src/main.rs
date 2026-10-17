@@ -129,7 +129,7 @@ struct Recording {
     /// Started from an annotation's card in Measure & Annotate (its key): what's said is about it.
     annotation: Option<u32>,
     /// Where the user was when they started talking (`**In:** …`), once it's been looked up.
-    place: Arc<Mutex<Option<String>>>,
+    place: Place,
 }
 
 /// A recording that ended while Measure & Annotate was open. What's said in a session waits for
@@ -848,21 +848,12 @@ impl App {
         let route = self.route(&dir);
         let to_agent = self.target_session().filter(|s| s.dir == dir).map(|s| s.agent.clone());
         // Where the user is, for the aside: in the app a frozen screen stands for, or the one in
-        // front. Looked up aside, since an app can take a moment to answer accessibility.
-        let place = Arc::new(Mutex::new(None));
+        // front (what's said from an annotation's card is about that annotation).
         let frozen = self.overlay.as_ref().filter(|o| o.frozen);
-        let pid = frozen
-            .map_or_else(macos::frontmost_app, |o| o.previous_app)
-            .filter(|&pid| pid != std::process::id() as i32);
+        let pid = frozen.map_or_else(macos::frontmost_app, |o| o.previous_app).filter(|_| annotation.is_none());
+        let place = look_up_place(pid, self.config.measure.identify_elements);
         // The speech model, loaded while the user talks (it's let go after a while unused).
         let _ = self.jobs.send(Job::Warm(self.config.model.clone()));
-        if let (Some(pid), None) = (pid, annotation) {
-            let (place, deep) = (place.clone(), self.config.measure.identify_elements);
-            std::thread::spawn(move || {
-                let found = elements::place(pid, deep).map(|(place, _)| place);
-                *place.lock().unwrap() = found;
-            });
-        }
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -936,7 +927,7 @@ impl App {
         self.sound("Pop");
         self.sync_session_hotkey();
         let mut texts = recording.texts;
-        if let Some(place) = recording.place.lock().unwrap().take() {
+        if let Some((place, _)) = recording.place.lock().unwrap().take() {
             texts.insert(0, (0.0, place));
         }
         Some(Take {
@@ -1107,15 +1098,8 @@ impl App {
         if let Some(overlay) = overlay {
             overlay.previous_app = front;
         }
-        // Where the user is, for the screenshot's aside, looked up aside while the screens are taken.
-        let place = Arc::new(Mutex::new(None));
-        if let Some(pid) = front {
-            let (place, deep) = (place.clone(), self.config.measure.identify_elements);
-            std::thread::spawn(move || {
-                let found = elements::place(pid, deep);
-                *place.lock().unwrap() = found;
-            });
-        }
+        // Where the user is, for the screenshot's aside, looked up while the screens are taken.
+        let place = look_up_place(front, self.config.measure.identify_elements);
         self.capturing = Some(Capturing { at: Instant::now(), screens, windows: elements::windows(without), place });
         let proxy = Mutex::new(self.proxy.clone());
         capture::capture(displays, without, move |result| {
@@ -2285,13 +2269,26 @@ impl App {
     }
 }
 
-/// A freeze under way: when it began, the screens and windows as they were, and where the user
-/// is (being looked up: the place and its window's frame).
+/// Where the user is (`**In:** …`, and the frame of the window they're in), once it's been looked up.
+type Place = Arc<Mutex<Option<(String, PtRect)>>>;
+
+/// Looks up where the user is in app `pid` (`elements::place`) on a thread of its own: an app can
+/// take a moment to answer accessibility, and nothing waits for it.
+fn look_up_place(pid: Option<i32>, deep: bool) -> Place {
+    let place = Place::default();
+    if let Some(pid) = pid.filter(|&pid| pid != std::process::id() as i32) {
+        let found = place.clone();
+        std::thread::spawn(move || *found.lock().unwrap() = elements::place(pid, deep));
+    }
+    place
+}
+
+/// A freeze under way: when it began, the screens and windows as they were, and where the user is.
 struct Capturing {
     at: Instant,
     screens: Vec<ScreenInfo>,
     windows: Vec<WindowInfo>,
-    place: Arc<Mutex<Option<(String, PtRect)>>>,
+    place: Place,
 }
 
 /// The captured screens, as the overlay gets them, and their pixels; `place` goes with the screen
