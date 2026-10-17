@@ -1330,15 +1330,19 @@ impl App {
         self.refresh();
     }
 
-    /// Opens a background session in a terminal (`claude attach`).
+    /// Opens a background session in a terminal (`claude attach`, `codex resume`, `opencode --session`).
     fn show_session(&mut self, id: &str) {
         let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
         let command = match (&session.thread, &session.background) {
+            (Some(thread), _) if AgentKind::named(&session.agent) == Some(AgentKind::OpenCode) => {
+                format!("opencode --session {}", terminal::quote(thread))
+            }
             (Some(thread), _) => format!("codex resume {}", terminal::quote(thread)),
             (None, Some(name)) => format!("claude attach {}", terminal::quote(name)),
             (None, None) => return,
         };
-        // Where it works: Codex asks which directory to use when it's opened elsewhere.
+        // Where it works: Codex asks which directory to use when it's opened elsewhere, and
+        // OpenCode opens its sessions where it's run.
         let dir = match (&session.thread, &session.worktree) {
             (Some(_), Some(tree)) => project::worktree_path(&session.dir, tree),
             _ => session.dir.clone(),
@@ -1359,7 +1363,8 @@ impl App {
     }
 
     /// Ends a background session: Claude Code's with `claude stop` (its conversation is kept), a
-    /// Codex one by stopping what pushes asides into its thread (which `codex resume` still opens).
+    /// Codex or OpenCode one by stopping what pushes asides into it (`codex resume` and `opencode
+    /// --session` still open it).
     fn stop_session(&mut self, id: &str) {
         let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
         let Some(name) = session.background else { return };

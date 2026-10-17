@@ -4,8 +4,9 @@
 //!
 //! It listens as a session (`--session`, which `asides mcp` gives in its instructions), and gets
 //! the asides the user speaks to that session. With `--codex-thread` it pushes them into a Codex
-//! thread instead (`codex queue`), for a session `asides codex` started. Delivery follows `agent_delivery` like `asides mcp`
-//! does. With `--timeout` it stops by itself and prints the command that carries on from there
+//! thread instead (`codex queue`), for a session `asides codex` started, and with
+//! `--opencode-session` into an OpenCode session `asides opencode` started. Delivery follows
+//! `agent_delivery` like `asides mcp` does. With `--timeout` it stops by itself and prints the command that carries on from there
 //! (`--after`), so nothing recorded in between is lost.
 
 use std::fs;
@@ -21,7 +22,7 @@ use asides_core::paths::{self, tilde};
 use asides_core::sessions;
 use asides_core::state::AppState;
 
-use crate::{codex, mcp, session};
+use crate::{codex, mcp, opencode, session};
 
 const POLL: Duration = Duration::from_millis(400);
 /// Checking where the user's asides go starts a process, so it's checked less often than the notes.
@@ -33,11 +34,32 @@ extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 
-/// Where deliveries go instead of standard output: a Codex thread, while the process `while_pid`
-/// (the Codex window) runs, or until stopped.
+/// Where deliveries go instead of standard output: a Codex thread or an OpenCode session, while the
+/// process `while_pid` (the agent's window) runs, or until stopped.
 pub struct Push {
-    pub thread: String,
+    pub to: PushTo,
     pub while_pid: Option<u32>,
+}
+
+pub enum PushTo {
+    Codex(String),
+    OpenCode(String),
+}
+
+impl PushTo {
+    fn agent(&self) -> &'static str {
+        match self {
+            PushTo::Codex(_) => "Codex",
+            PushTo::OpenCode(_) => "OpenCode",
+        }
+    }
+
+    fn send(&self, text: &str, images: &[PathBuf]) -> Result<()> {
+        match self {
+            PushTo::Codex(thread) => codex::queue(thread, text, images),
+            PushTo::OpenCode(session) => opencode::prompt(session, text, images),
+        }
+    }
 }
 
 pub fn run(
@@ -54,7 +76,7 @@ pub fn run(
     let delivery = || Config::load(&paths::config_path()).unwrap_or_default().agent_delivery;
     let sends = || AppState::read(&paths::state_path()).map(|s| s.agent_sends).unwrap_or_default();
     let id = id.unwrap_or_else(sessions::new_id);
-    let client = if push.is_some() { "Codex".to_string() } else { client() };
+    let client = push.as_ref().map(|p| p.to.agent().to_string()).unwrap_or_else(client);
     let (started_at, made) = session::listen(&dir, &id, &client);
     let mut listening = match &after {
         Some(token) => {
@@ -85,7 +107,7 @@ pub fn run(
     let started = Instant::now();
     let mut problem: Option<String> = None;
     let mut next_check = started;
-    // Pushes not made yet (Codex wasn't reachable): retried, in order, before anything newer.
+    // Pushes not made yet (the agent wasn't reachable): retried, in order, before anything newer.
     let mut unpushed: Vec<(String, Vec<PathBuf>)> = Vec::new();
     while !STOP.load(Ordering::Relaxed) {
         if let Some(push) = &push {
@@ -102,7 +124,7 @@ pub fn run(
                 unpushed.push((text, images));
             }
             while let Some((text, images)) = unpushed.first() {
-                match codex::queue(&push.thread, text, images) {
+                match push.to.send(text, images) {
                     Ok(()) => drop(unpushed.remove(0)),
                     Err(err) => {
                         eprintln!("asides: {err:#}");
@@ -140,6 +162,11 @@ pub fn run(
     }
     let _ = fs::remove_file(Listener::file(&paths::listeners_dir(), std::process::id()));
     session::leave(&id, made);
+    if let Some(Push { to: PushTo::OpenCode(session), .. }) = &push
+        && let Err(err) = opencode::release(session)
+    {
+        eprintln!("asides: {err:#}");
+    }
     Ok(())
 }
 

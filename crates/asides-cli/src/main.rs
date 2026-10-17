@@ -2,6 +2,7 @@ mod codex;
 mod listen;
 mod mcp;
 mod measure;
+mod opencode;
 mod session;
 mod start;
 
@@ -89,10 +90,13 @@ enum Command {
         #[arg(long, value_name = "ID")]
         session: Option<String>,
         /// Push the asides into this Codex thread instead of printing them (`asides codex`).
-        #[arg(long, value_name = "THREAD", hide = true)]
+        #[arg(long, value_name = "THREAD", hide = true, conflicts_with = "opencode_session")]
         codex_thread: Option<String>,
-        /// With --codex-thread: stop when this process (the Codex window) ends.
-        #[arg(long, value_name = "PID", hide = true, requires = "codex_thread")]
+        /// Push the asides into this OpenCode session instead of printing them (`asides opencode`).
+        #[arg(long, value_name = "SESSION", hide = true)]
+        opencode_session: Option<String>,
+        /// When pushing: stop when this process (the agent's window) ends.
+        #[arg(long, value_name = "PID", hide = true)]
         while_pid: Option<u32>,
     },
     /// Freeze the screen to measure and annotate it (Measure & Annotate), as the shortcut does.
@@ -198,8 +202,9 @@ fn run(cli: Cli) -> Result<()> {
         }
         Some(Command::Send) => send_batch(),
         Some(Command::Mcp { timeout, session: id }) => mcp::run(dir()?, timeout, session(id)?),
-        Some(Command::Listen { timeout, after, session: id, codex_thread, while_pid }) => {
-            let push = codex_thread.map(|thread| listen::Push { thread, while_pid });
+        Some(Command::Listen { timeout, after, session: id, codex_thread, opencode_session, while_pid }) => {
+            let to = codex_thread.map(listen::PushTo::Codex).or(opencode_session.map(listen::PushTo::OpenCode));
+            let push = to.map(|to| listen::Push { to, while_pid });
             listen::run(dir()?, timeout, after, session(id)?, push)
         }
         Some(Command::Annotate) => {

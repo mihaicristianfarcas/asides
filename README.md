@@ -335,10 +335,10 @@ switches to the next. While you record, the menu bar shows where it's going (`0:
   OpenCode, Asides makes it in `.asides/worktrees/`, and removes it after the session if nothing was
   done in it. Your notes stay
   in the repo. `--no-worktree` (or `worktrees = false`) keeps the session in the repo itself.
-- **In the background:** **Claude Code in the Background** or **Codex in the Background** (or
-  `asides claude --background`, `asides codex --background`) starts a session without a terminal;
-  **Show** in the menu opens it (`claude attach`, `codex resume`), and **Stop** ends it. OpenCode
-  can't: that would go through `opencode run`, which OpenCode's free tier refuses.
+- **In the background:** **Claude Code in the Background**, **Codex in the Background** or
+  **OpenCode in the Background** (or `asides claude --background`, and the same for `codex` and
+  `opencode`) starts a session without a terminal; **Show** in the menu opens it (`claude attach`,
+  `codex resume`, `opencode --session`), and **Stop** ends it.
 
 When the session you're talking to ends, your asides go to the newest other session in that repo,
 or to the notes only. Every aside is still written to the note, whichever session gets it.
@@ -368,7 +368,11 @@ How the agent gets your asides depends on what it can do:
   with `codex queue`, and the window opens that thread (`codex resume`). Codex never sits waiting
   for asides, and one that arrives while it works runs next. Without the app server (older Codex),
   it waits like the agents below.
-- **OpenCode, and agents you started yourself,** wait in a tool call (`wait_for_asides`), act on what
+- **OpenCode, started by Asides,** gets each aside as a message too. OpenCode 2 runs its sessions
+  in a background service; Asides starts the session there, with Asides' tools for it, adds each
+  aside as the session's next message, and the terminal opens it (`opencode --session`). OpenCode 1
+  waits like the agents below.
+- **Agents you started yourself** wait in a tool call (`wait_for_asides`), act on what
   it returns, then wait again. Asides that arrive while the agent works wait for it. Most agents hide
   tool results, so the agent first lists the asides it got, one line each.
 

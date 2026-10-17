@@ -4,7 +4,9 @@ with `asides claude`, `codex` and `opencode` (fake agents that record how they w
 Usage: e2e-mcp.py <asides CLI> <repo> <fixtures dir> <config.toml> <listeners dir> <another repo>
 """
 
+import base64
 import glob
+import http.server
 import json
 import os
 import queue
@@ -15,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 
 cli, repo, fixtures, config_path, listeners, other = sys.argv[1:7]
 sessions_dir = os.path.join(os.path.dirname(listeners), "sessions")
@@ -85,8 +88,8 @@ def tool(name, **arguments):
     return {"name": name, "arguments": arguments}
 
 
-def simulate(wav):
-    subprocess.run([cli, "-C", repo, "simulate", os.path.join(fixtures, wav)], check=True, capture_output=True)
+def simulate(wav, *args):
+    subprocess.run([cli, "-C", repo, "simulate", os.path.join(fixtures, wav), *args], check=True, capture_output=True)
 
 
 def status():
@@ -329,6 +332,7 @@ for name in ["claude", "codex", "opencode"]:
     with open(os.path.join(fakes, name), "w") as f:
         f.write(f"""#!/bin/sh
 [ "$1" = --version ] && echo "{name} 2.0.0" && exit 0
+[ "$1" = serve ] && exit 1
 printf '%s\\0' "$@" > "{fakes}/{name}.args"
 env | grep -E '^(ASIDES_|OPENCODE_CONFIG_CONTENT)' > "{fakes}/{name}.env"
 pwd -P > "{fakes}/{name}.pwd"
@@ -405,8 +409,61 @@ def queued():
         return []
 
 
+# OpenCode 2 runs sessions in a background service, found through its registration in
+# $XDG_STATE_HOME/opencode. Agents start with an empty one (no service: the real one stays out of
+# this); the fake service records requests and answers as OpenCode's does.
+no_state = tempfile.mkdtemp()
+
+
+class FakeOpenCode(http.server.BaseHTTPRequestHandler):
+    calls = []
+    sessions = {}
+    auth = "Basic " + base64.b64encode(b"opencode:fake-password").decode()
+
+    def log_message(self, *args):
+        pass
+
+    def answer(self):
+        if self.headers.get("Authorization") != FakeOpenCode.auth:
+            return self.reply(401, {"message": "Authentication required"})
+        url = urllib.parse.urlsplit(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(length)) if length else None
+        FakeOpenCode.calls.append({"method": self.command, "path": url.path,
+                                   "query": dict(urllib.parse.parse_qsl(url.query)), "body": body})
+        if self.command == "POST" and url.path == "/api/session":
+            session = f"ses_fake_{len(FakeOpenCode.sessions) + 1}"
+            FakeOpenCode.sessions[session] = body["location"]
+            return self.reply(200, {"data": {"id": session, "location": body["location"]}})
+        if self.command == "GET" and url.path.startswith("/api/session/"):
+            session = url.path.split("/")[3]
+            return self.reply(200, {"data": {"id": session, "location": FakeOpenCode.sessions.get(session)}})
+        if self.command == "GET" and url.path == "/api/config":
+            mine = {"type": "local", "command": ["asides", "mcp"]}
+            return self.reply(200, [{"type": "document", "info": {"mcp": {"servers": {"asides": mine}}}}])
+        if self.command in ("PUT", "DELETE"):
+            return self.reply(204, None)
+        return self.reply(200, {"data": []})
+
+    do_GET = do_POST = do_PUT = do_DELETE = answer
+
+    def reply(self, status, value):
+        data = b"" if value is None else json.dumps(value).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def opencode_calls(method, path):
+    return [c for c in FakeOpenCode.calls if c["method"] == method and c["path"] == path]
+
+
 def start(agent, sleep, *args, **extra):
-    env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "FAKE_SLEEP": str(sleep), **extra}
+    env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "FAKE_SLEEP": str(sleep),
+           "XDG_STATE_HOME": no_state, **extra}
     env.pop("CLAUDECODE", None)
     proc = subprocess.Popen([cli, "-C", repo, agent, *args], stdout=subprocess.PIPE, text=True, env=env)
     wait_until(f"asides {agent} starts the agent", lambda: os.path.exists(os.path.join(fakes, agent + ".pwd")), 20)
@@ -483,13 +540,72 @@ wait_until("asides reach the thread with no Codex window open",
 os.kill(record["pid"], 15)  # Stop, from the menu
 wait_until("stopping it ends the session", lambda: f"asides go to Claude Code · {repo_name}" in status(), 15)
 
+# OpenCode 2: a session in its background service, that asides pushes each aside into.
+service = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeOpenCode)
+threading.Thread(target=service.serve_forever, daemon=True).start()
+oc_state = tempfile.mkdtemp()
+os.makedirs(os.path.join(oc_state, "opencode"))
+with open(os.path.join(oc_state, "opencode", "service.json"), "w") as f:
+    json.dump({"id": "fake", "version": "2.0.0", "url": f"http://127.0.0.1:{service.server_address[1]}",
+               "pid": os.getpid(), "password": "fake-password"}, f)
+opencode, argv, env, cwd = start("opencode", 120, XDG_STATE_HOME=oc_state)
+created = opencode_calls("POST", "/api/session")[-1]["body"]
+server = opencode_calls("PUT", "/api/experimental/mcp/asides")[-1]
+oc_session = env.get("ASIDES_SESSION")
+check("asides opencode starts a session in OpenCode's service, in the worktree it works in",
+      created["location"]["directory"] == cwd and cwd.startswith(tree + "/asides-")
+      and created["title"].endswith(f"asides {oc_session}"), (created, cwd))
+check("and gives that directory the session's MCP server",
+      server["query"].get("location[directory]") == cwd
+      and server["body"]["config"]["command"][1:] == ["-C", os.path.realpath(repo), "mcp", "--session", oc_session],
+      server)
+first = opencode_calls("POST", "/api/session/ses_fake_1/prompt")
+check("its first prompt says asides come as messages", first and "as a message" in first[0]["body"]["text"], first)
+check("the TUI opens that session from the service", argv == ["--session", "ses_fake_1"]
+      and "OPENCODE_CONFIG_CONTENT" not in env, (argv, env))
+wait_until("it becomes the target", lambda: f"asides go to OpenCode · {repo_name} (asides-{oc_session})" in status(), 15)
+before = entries()
+simulate("en_bug.wav", "--image", os.path.join(fixtures, "screenshot.png"), "--at", "6.5")
+wait_for_entries(before + 1)
+time.sleep(2.5)
+sent = subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True).stdout
+check("Send to Agent sends the batch to the OpenCode session", sent.startswith("Sent"), sent)
+wait_until("the batch is pushed into the session as its next input",
+           lambda: any("padding on the summary card" in c["body"]["text"] and c["body"]["delivery"] == "queue"
+                       for c in opencode_calls("POST", "/api/session/ses_fake_1/prompt")[1:]), 120)
+check("with the screenshot attached",
+      any(f.get("uri", "").startswith("file:///") for c in opencode_calls("POST", "/api/session/ses_fake_1/prompt")
+          for f in (c["body"].get("files") or [])), opencode_calls("POST", "/api/session/ses_fake_1/prompt")[-1])
+opencode.terminate()
+opencode.wait(timeout=10)
+mine = {"type": "local", "command": ["asides", "mcp"]}
+wait_until("closing the TUI ends the session, and puts the user's own asides server back",
+           lambda: f"OpenCode · {repo_name}" not in status()
+           and any(c["body"] == {"config": mine} and c["query"].get("location[directory]") == cwd
+                   for c in opencode_calls("PUT", "/api/experimental/mcp/asides")), 15)
+env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "XDG_STATE_HOME": oc_state}
+background = subprocess.run([cli, "-C", repo, "opencode", "--background"], capture_output=True, text=True, env=env,
+                            timeout=60)
+check("asides opencode --background starts the session and returns", "opencode --session ses_fake_2" in background.stdout,
+      background.stdout + background.stderr)
+record = next(json.load(open(f)) for f in glob.glob(os.path.join(sessions_dir, "*.json"))
+              if json.load(open(f)).get("thread") == "ses_fake_2")
+check("its session lasts as long as what pushes into it", record["background"] and record["pushed"] and record["pid"] > 0,
+      record)
+restored = len(opencode_calls("PUT", "/api/experimental/mcp/asides"))
+os.kill(record["pid"], 15)  # Stop, from the menu
+wait_until("stopping it ends the session, and puts the user's server back",
+           lambda: f"asides go to Claude Code · {repo_name}" in status()
+           and opencode_calls("PUT", "/api/experimental/mcp/asides")[restored:], 15)
+service.shutdown()
+
 codex, argv, env, cwd = start("codex", 0, "--no-worktree", FAKE_NO_DAEMON="1")
 check("without Codex's daemon, Codex waits for asides in a tool call instead",
       "To listen, call the wait_for_asides tool" in argv[-1] and any("mcp_servers.asides.args=" in a for a in argv), argv)
 codex.wait(timeout=10)
 opencode, argv, env, cwd = start("opencode", 0)
 opencode_config = json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))
-check("for OpenCode, asides makes the worktree, in the notes folder",
+check("without OpenCode's service, OpenCode waits for asides, its server in its environment; asides makes its worktree",
       cwd.startswith(tree + "/asides-") and "--standalone" in argv
       and "--session" in opencode_config["mcp"]["servers"]["asides"]["command"], (cwd, argv, env))
 opencode.wait(timeout=10)

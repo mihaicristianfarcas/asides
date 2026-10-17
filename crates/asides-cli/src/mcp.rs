@@ -326,7 +326,7 @@ impl Server {
             let client = agents::client_label(&session.client);
             (session.dir.clone(), session.id.clone(), client, session.listening.is_some())
         };
-        // Asides pushes this session's asides into the conversation (`asides codex`).
+        // Asides pushes this session's asides into the conversation (`asides codex`, `asides opencode`).
         if SessionRecord::read(&paths::sessions_dir(), &id).is_some_and(|s| s.pushed) {
             return Some(tool_text(
                 "Asides sends the user's asides to this session as messages, as they're recorded: there's \

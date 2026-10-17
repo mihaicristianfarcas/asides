@@ -547,9 +547,7 @@ impl Tray {
                     items.push(item);
                 };
                 add(agent.name().into(), false);
-                if agent.runs_in_background() {
-                    add(format!("{} in the Background", agent.name()), true);
-                }
+                add(format!("{} in the Background", agent.name()), true);
             }
             items
         };

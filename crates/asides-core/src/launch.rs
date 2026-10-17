@@ -52,11 +52,9 @@ impl AgentKind {
         AgentKind::ALL.into_iter().find(|k| k.program() == program)
     }
 
-    /// Claude Code runs sessions in the background (`claude --bg`, which `claude attach` opens),
-    /// and so does Codex (a thread in its app-server daemon, which `codex resume` opens). OpenCode
-    /// would need `opencode run`, which its free tier refuses.
-    pub fn runs_in_background(self) -> bool {
-        matches!(self, AgentKind::Claude | AgentKind::Codex)
+    /// The agent a session record names (its [`name`](Self::name)).
+    pub fn named(name: &str) -> Option<AgentKind> {
+        AgentKind::ALL.into_iter().find(|k| k.name() == name)
     }
 
     /// Claude Code makes a git worktree itself when asked; for the others, asides does.
@@ -64,10 +62,12 @@ impl AgentKind {
         self == AgentKind::Claude
     }
 
-    /// Asides can hand Codex each aside as a message (`codex queue`), so it doesn't have to wait
-    /// for them in a tool call.
+    /// Asides can hand Codex and OpenCode each aside as a message (`codex queue`, a prompt to
+    /// OpenCode's service), so they don't have to wait for them in a tool call. Both run sessions
+    /// in a background process of their own, so these can also run with no window open, as Claude
+    /// Code's can (`claude --bg`).
     pub fn takes_pushes(self) -> bool {
-        self == AgentKind::Codex
+        matches!(self, AgentKind::Codex | AgentKind::OpenCode)
     }
 
     /// Claude Code watches `asides listen` with its Monitor tool; the others wait in a tool call.
@@ -150,7 +150,8 @@ pub struct Launch<'a> {
     pub worktree: Option<&'a str>,
     /// Start a Claude Code background session.
     pub background: bool,
-    /// Open this Codex thread (`codex resume`), which asides started, instead of a new session.
+    /// Open this session asides started (a Codex thread, `codex resume`; an OpenCode session,
+    /// `opencode --session`) instead of a new one.
     pub thread: Option<&'a str>,
     /// OpenCode before 2.0: servers sit directly under `mcp`, and there's no shared background
     /// service to stay away from.
@@ -210,6 +211,12 @@ pub fn command(launch: &Launch) -> Command {
             args.extend(set("tool_timeout_sec", CODEX_TOOL_TIMEOUT.to_string()));
             args.extend(launch.extra.iter().cloned());
             args.push(launch.prompt.into());
+        }
+        // A session asides started in OpenCode's service already has its MCP server and first
+        // prompt; the TUI opens it there.
+        AgentKind::OpenCode if launch.thread.is_some() => {
+            args.extend(launch.extra.iter().cloned());
+            args.extend(["--session".into(), launch.thread.unwrap_or_default().into()]);
         }
         AgentKind::OpenCode => {
             let mut command = vec![launch.asides.to_string()];
@@ -281,8 +288,19 @@ pub fn claude_background(agents_json: &str, name: &str) -> Option<Background> {
 
 /// The configuration a Codex thread asides starts gets: its MCP server, for the session.
 pub fn codex_thread_config(asides: &str, repo: &Path, session: &str) -> serde_json::Value {
-    let args = ["-C", &repo.to_string_lossy(), "mcp", "--session", session].map(String::from);
+    let args = server_args(repo, session);
     json!({ "mcp_servers": { "asides": { "command": asides, "args": args } } })
+}
+
+/// The command line of the MCP server an OpenCode session asides starts gets.
+pub fn opencode_server(asides: &str, repo: &Path, session: &str) -> Vec<String> {
+    let mut command = vec![asides.to_string()];
+    command.extend(server_args(repo, session));
+    command
+}
+
+fn server_args(repo: &Path, session: &str) -> Vec<String> {
+    ["-C", &repo.to_string_lossy(), "mcp", "--session", session].map(String::from).to_vec()
 }
 
 /// `text` as a TOML string (a JSON string is a valid TOML basic string).
@@ -435,6 +453,17 @@ mod tests {
     }
 
     #[test]
+    fn opencode_opens_the_session_asides_started() {
+        let command = command(&Launch { thread: Some("ses_1"), ..launch(AgentKind::OpenCode) });
+        assert_eq!(command.args, ["--session", "ses_1"], "no --standalone: the session is in the service");
+        assert!(!command.env.iter().any(|(k, _)| k == "OPENCODE_CONFIG_CONTENT"));
+        assert_eq!(
+            opencode_server("asides", Path::new("/r/shop"), "s1"),
+            ["asides", "-C", "/r/shop", "mcp", "--session", "s1"]
+        );
+    }
+
+    #[test]
     fn the_listen_prompt_says_how_to_listen() {
         let monitor = listen_prompt(&Via::Monitor("asides listen --session s".into()), None);
         assert!(monitor.contains("background monitor") && monitor.contains("\n\nasides listen --session s\n\n"));
@@ -448,5 +477,7 @@ mod tests {
         assert_eq!(AgentKind::parse("codex"), Some(AgentKind::Codex));
         assert_eq!(AgentKind::parse("cursor"), None);
         assert_eq!(AgentKind::OpenCode.name(), "OpenCode");
+        assert_eq!(AgentKind::named("OpenCode"), Some(AgentKind::OpenCode));
+        assert!(AgentKind::OpenCode.takes_pushes() && !AgentKind::Claude.takes_pushes());
     }
 }

@@ -7,9 +7,10 @@
 //! their edits don't collide; the notes stay in the repo. Claude Code makes the worktree itself;
 //! for the others, asides makes it in `.asides/worktrees/`.
 //!
-//! A Codex session is a thread asides starts in Codex's app-server daemon (`codex.rs`), with a
-//! process of `asides listen` pushing each aside into it; the terminal then opens the thread
-//! (`codex resume`). Without the daemon, Codex waits for asides in a tool call instead.
+//! A Codex session is a thread asides starts in Codex's app-server daemon (`codex.rs`), and an
+//! OpenCode session one it starts in OpenCode's background service (`opencode.rs`), with a process
+//! of `asides listen` pushing each aside into it; the terminal then opens it (`codex resume`,
+//! `opencode --session`). Without the daemon or service, they wait for asides in a tool call.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -26,7 +27,7 @@ use asides_core::project;
 use asides_core::sessions::{self, Session};
 use asides_core::state::AppState;
 
-use crate::{codex, listen};
+use crate::{codex, listen, opencode};
 
 pub struct Options {
     pub background: bool,
@@ -35,8 +36,10 @@ pub struct Options {
 }
 
 pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
-    if options.background && !kind.runs_in_background() {
-        bail!("{} can't run in the background; run `asides {}` in a terminal instead.", kind.name(), kind.program());
+    // OpenCode 1 has no background service: its sessions wait for asides in a tool call.
+    let opencode_1 = kind == AgentKind::OpenCode && major_version(kind) == Some(1);
+    if options.background && opencode_1 {
+        bail!("OpenCode 1 can't run in the background: update OpenCode, or run `asides opencode` in a terminal.");
     }
     let repo = project::resolve_bind_dir(start).with_context(|| format!("cannot use {}", start.display()))?;
     if project::ensure_git_exclude(&repo)? {
@@ -79,20 +82,31 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     let asides = listen::program();
     let in_worktree = worktree.as_ref().map(|_| repo.as_path());
 
-    // Codex: a thread in its daemon, that asides pushes the asides into.
-    if kind.takes_pushes() {
-        let new = codex::NewThread {
-            cwd: &workdir,
-            name: &name,
-            config: launch::codex_thread_config(&asides, &repo, &id),
-            prompt: &launch::listen_prompt(&Via::Messages, in_worktree),
+    // Codex and OpenCode: a session in their background process, that asides pushes the asides into.
+    if kind.takes_pushes() && !opencode_1 {
+        let prompt = launch::listen_prompt(&Via::Messages, in_worktree);
+        let started = if kind == AgentKind::Codex {
+            codex::start_thread(&codex::NewThread {
+                cwd: &workdir,
+                name: &name,
+                config: launch::codex_thread_config(&asides, &repo, &id),
+                prompt: &prompt,
+            })
+        } else {
+            opencode::start_session(&opencode::NewSession {
+                dir: &workdir,
+                name: &name,
+                server: launch::opencode_server(&asides, &repo, &id),
+                prompt: &prompt,
+            })
         };
-        match codex::start_thread(&new) {
+        let host = if kind == AgentKind::Codex { "Codex's app-server daemon" } else { "OpenCode's background service" };
+        match started {
             Ok(thread) => {
                 session.thread = Some(thread.clone());
                 session.pushed = true;
-                // In a terminal it pushes while Codex's window is open; in the background, until stopped.
-                let pusher = start_pusher(&repo, &id, &thread, (!options.background).then(std::process::id))?;
+                // In a terminal it pushes while the agent's window is open; in the background, until stopped.
+                let pusher = start_pusher(kind, &repo, &id, &thread, (!options.background).then(std::process::id))?;
                 if options.background {
                     session.pid = pusher;
                 }
@@ -100,11 +114,9 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
             }
             Err(err) if options.background => {
                 Session::remove(&paths::sessions_dir(), &id);
-                return Err(err).context("Codex runs in the background through its app-server daemon");
+                return Err(err).context(format!("{} runs in the background through {host}", kind.name()));
             }
-            Err(err) => {
-                println!("! Codex's app-server didn't start the session ({err:#}): it waits for asides instead.")
-            }
+            Err(err) => println!("! {host} didn't start the session ({err:#}): it waits for asides instead."),
         }
     }
     // The app sends the user's asides to it from now on (and starts, if it isn't running).
@@ -130,7 +142,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         worktree: worktree.as_deref(),
         background: options.background,
         thread: session.thread.as_deref(),
-        opencode_1: kind == AgentKind::OpenCode && major_version(kind) == Some(1),
+        opencode_1,
         extra: &extra,
     });
 
@@ -150,7 +162,11 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     }
 
     if let (true, Some(thread)) = (options.background, &session.thread) {
-        println!("Running in the background: `codex resume {thread}` opens it (the Asides menu can too).");
+        let open = match kind {
+            AgentKind::Codex => format!("`codex resume {thread}`"),
+            _ => format!("`opencode --session {thread}` in {}", tilde(&workdir)),
+        };
+        println!("Running in the background: {open} opens it (the Asides menu can too).");
         return Ok(());
     }
     let mut process = Process::new(&command.program);
@@ -214,15 +230,17 @@ fn major_version(kind: AgentKind) -> Option<u32> {
     version.trim_start_matches('v').split('.').next()?.parse().ok()
 }
 
-/// Starts the process that pushes session `id`'s asides into the Codex `thread`, on its own (a
-/// process group of its own, so closing the terminal doesn't stop it), while `while_pid` runs, or
-/// until stopped. What goes wrong goes to a log beside New Agent Session's scripts.
-fn start_pusher(repo: &Path, id: &str, thread: &str, while_pid: Option<u32>) -> Result<u32> {
+/// Starts the process that pushes session `id`'s asides into the Codex or OpenCode session `thread`,
+/// on its own (a process group of its own, so closing the terminal doesn't stop it), while
+/// `while_pid` runs, or until stopped. What goes wrong goes to a log beside New Agent Session's
+/// scripts.
+fn start_pusher(kind: AgentKind, repo: &Path, id: &str, thread: &str, while_pid: Option<u32>) -> Result<u32> {
     let logs = std::env::temp_dir().join("asides-sessions");
     std::fs::create_dir_all(&logs)?;
     let log = std::fs::File::create(logs.join(format!("push-{id}.log")))?;
     let mut pusher = Process::new(std::env::current_exe()?);
-    pusher.arg("-C").arg(repo).args(["listen", "--session", id, "--codex-thread", thread]);
+    let to = if kind == AgentKind::Codex { "--codex-thread" } else { "--opencode-session" };
+    pusher.arg("-C").arg(repo).args(["listen", "--session", id, to, thread]);
     if let Some(pid) = while_pid {
         pusher.args(["--while-pid", &pid.to_string()]);
     }
@@ -232,7 +250,7 @@ fn start_pusher(repo: &Path, id: &str, thread: &str, while_pid: Option<u32>) -> 
         .stderr(log)
         .process_group(0)
         .spawn()
-        .context("could not start pushing asides to Codex")?;
+        .with_context(|| format!("could not start pushing asides to {}", kind.name()))?;
     Ok(child.id())
 }
 

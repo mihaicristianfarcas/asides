@@ -86,9 +86,12 @@ crates/
   asides-cli/      shipped inside the bundle as Asides.app/Contents/Helpers/asides
     main.rs           clap subcommands, `open -g -b <bundle id> <link>`, waits for the app to acknowledge
     start.rs          `asides claude|codex|opencode`: a session record, a worktree when another session
-                      works in the repo, then `exec` of the agent (or `claude --bg`, or a Codex thread)
+                      works in the repo, then `exec` of the agent (or `claude --bg`, or a Codex
+                      thread or OpenCode session it pushes into)
     codex.rs          Codex sessions: a thread in its app-server daemon (WebSocket JSON-RPC through
                       `codex app-server proxy`), and `codex queue` to push each aside into it
+    opencode.rs       OpenCode sessions: a session in its background service (HTTP on localhost), its
+                      MCP server for that directory, and a prompt per aside
     session.rs        the session `asides mcp`/`asides listen` deliver to: its record, listening, the target
     mcp.rs            `asides mcp`: the MCP server (waiting, reading, the feedback loop, measure_image; prompts)
     listen.rs         `asides listen`: deliveries on stdout, for agents watching it in the background
@@ -273,6 +276,14 @@ as Wispr Flow typed it.
      once). In a terminal, the agent `exec`d is `codex resume <thread>`, and the pusher stops with
      it; in the background, the pusher is the session's process, and Stop ends it. Without the
      daemon, Codex waits in `wait_for_asides` like other agents.
+   - `asides opencode` (OpenCode 2) does the same in OpenCode's background service (`opencode.rs`,
+     found through the address and password it registers in `~/.local/state/opencode/service.json`,
+     started with `opencode serve --service` if it isn't running): the session's MCP server for its
+     directory (`PUT /api/experimental/mcp/asides`), the session (`POST /api/session`), and the first
+     prompt; `asides listen --opencode-session` pushes each delivery as a prompt with `delivery:
+     "queue"`, and when it stops, puts back the user's own `asides` server for that directory. The
+     agent `exec`d is `opencode --session <id>`. OpenCode 1, or a service that won't start, waits in
+     `wait_for_asides` with the server in `OPENCODE_CONFIG_CONTENT`.
    - An agent the user started connects to `asides mcp`, which writes a record that isn't
      listening yet (and removes it when the agent hangs up). When the user asks it to listen (the
      `listen` prompt, its first `wait_for_asides`, or `asides listen --session <id>`, the command
@@ -461,9 +472,13 @@ Break these only on purpose, and update this document when you do.
 - **Codex pushed, not polled.** In `wait_for_asides`, Codex is busy in a tool call that times out
   every 50 minutes, and you can't type to it. Its daemon runs threads whether or not a window has
   them open, and `codex queue` adds a message to one, so asides starts the thread there and pushes
-  each aside: Codex is idle between asides, in a window or in the background. OpenCode has the
-  same shape (`opencode run --session`), but its free tier refuses requests from anything but its
-  own app, so OpenCode stays on `wait_for_asides`.
+  each aside: Codex is idle between asides, in a window or in the background. OpenCode 2 has the
+  same shape: its TUI is a client of a background service that runs the sessions, so asides talks
+  to that service as the TUI does. (`opencode run` would be simpler, but OpenCode's free models
+  refuse it; they answer the service.) The service runs MCP servers per directory, not per session,
+  so a session's own server replaces the user's `asides` server in its directory while it runs:
+  two would offer every tool twice, and the user's would make the agent listen as another
+  session.
 - **Threads in a sidecar, append-only.** Agentation keeps annotation status and replies in its
   server's store. Asides keeps notes append-only and readable by anyone, so status and replies
   go in `threads.jsonl` next to `notes.md`. Several agent sessions write to it with single appends,

@@ -15,8 +15,8 @@ asides is a macOS menu-bar app plus a CLI.
   asides and their marks (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
 - `asides claude` (or `codex`, `opencode`; New Agent Session in the menu runs it in a terminal)
   starts an agent already listening, with the MCP server on its command line. Codex sessions are
-  threads in Codex's app-server daemon that asides pushes each aside into (`codex queue`). Every listening agent
-  is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
+  threads in Codex's app-server daemon, and OpenCode sessions live in OpenCode's background service:
+  asides pushes each aside into them. Every listening agent is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
   beside the note. A second session in a repo works in a git worktree.
 - Measure & Annotate (`⌃⌥M`) freezes every screen, in any app, under one toolbar: PixelSnap-style
   measuring (distances, snapped areas, holds, guides), numbered marks on elements and areas,
@@ -247,8 +247,13 @@ The user may record a request and ask you to "implement the note". Find it with
 - A Codex window given `-c` options runs a server of its own, which a thread the daemon holds is
   locked against ("This conversation is open in another app"). `codex resume <thread>` for a
   thread asides started passes no `-c`; the thread already has its configuration.
-- OpenCode's free tier refuses `opencode run` ("can only be used from within OpenCode"), so asides
-  can't push into OpenCode sessions or run them in the background.
+- OpenCode's free models refuse `opencode run` ("can only be used from within OpenCode"), but not
+  prompts sent to its background service, which is what the TUI does: asides starts and pushes
+  into sessions there. The service registers its address and password in
+  `~/.local/state/opencode/service.json` (HTTP basic auth, user `opencode`); the API is under
+  `/api/`, takes the directory as `location[directory]=<dir>`, and `GET /api/mcp` only lists the
+  servers of directories already loaded. `delivery: "queue"` waits for the turn in progress;
+  `"steer"` would join it.
 - Claude Code's `--worktree` branches from origin's default branch (`worktree.baseRef = "fresh"`),
   not from the branch the user is on; `--settings '{"worktree":{"baseRef":"head"}}'` changes that
   for one session.
