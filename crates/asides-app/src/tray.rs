@@ -12,7 +12,7 @@ use tray_icon::menu::accelerator::Accelerator;
 use tray_icon::menu::{CheckMenuItem, IsMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
-use crate::icons::StatusIcon;
+use crate::icons::{Mark, StatusIcon};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuAction {
@@ -94,7 +94,7 @@ pub struct Tray {
     new_session_items: Vec<Box<dyn IsMenuItem>>,
     new_session_actions: Vec<(MenuId, MenuAction)>,
     shown_new_session: Option<NewSessionShape>,
-    shown: Option<(&'static str, Option<String>)>,
+    shown: Option<(Mark, Option<String>)>,
     status: MenuItem,
     record: MenuItem,
     record_new: MenuItem,
@@ -136,7 +136,7 @@ pub struct Tray {
 
 /// What the menu should show; computed by the app on every change.
 pub struct View<'a> {
-    pub icon_key: &'static str,
+    pub mark: Mark,
     pub icon: &'a StatusIcon,
     pub title: Option<String>,
     pub status: String,
@@ -433,8 +433,8 @@ impl Tray {
     }
 
     pub fn show(&mut self, view: &View) {
-        let shown = (view.icon_key, view.title.clone());
-        if self.shown.as_ref().map(|s| s.0) != Some(view.icon_key) {
+        let shown = (view.mark, view.title.clone());
+        if self.shown.as_ref().map(|s| s.0) != Some(view.mark) {
             let icon = Some(view.icon.icon.clone());
             let _ = if view.icon.template { self.icon.set_icon_templated(icon) } else { self.icon.set_icon(icon) };
         }

@@ -553,8 +553,10 @@ Break these only on purpose, and update this document when you do.
 - **Links plus a state file instead of a socket.** Launch Services already guarantees a single
   instance and launches the app on demand, and the CLI only needs a one-shot acknowledgement.
 - **The status item is the app's mark.** Every status is the letter a's brackets with something
-  between them (the a when ready, a dot while recording, dots while transcribing…), so the menu
-  bar and the app icon are one shape. tray-icon takes RGBA, so `icons.rs` draws them itself, from
+  between them (the a when ready, a dot while recording, dots while transcribing, a check when
+  added, a cross when cancelled…), so the menu bar and the app icon are one shape. A moment's mark
+  (`icons::Mark`, an app `Flash`) says what happened on its own; beside the brackets goes only a
+  word or a number (`#3`, `→ Codex`), never a second symbol. tray-icon takes RGBA, so `icons.rs` draws them itself, from
   strokes and circles, as template images the system tints for light and dark menu bars (red while
   recording). tray-icon caps icons at 22 pt, so they are drawn on a 22 pt canvas at 2×.
 - **Shortcuts through Carbon hot keys** (global-hotkey). They need no Accessibility permission,

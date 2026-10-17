@@ -252,10 +252,12 @@ in your pull request what you tried.
   - an annotation's card microphone, then Done before it's transcribed: one entry, the annotation
     with `**Said:**` and what you said
   - `⌘⏎` (Send) in batch mode: the entry is written and sent to the listening agent
-  - × closes without adding, cancels a recording started in it and drops what was said in it
+  - × closes without adding, cancels a recording started in it and drops what was said in it; the
+    menu bar shows `[×]` for a moment, nothing beside it
   - a tap on `⌃⌥Space` while it's open adds it all, like Done
-- [ ] **Agent replies:** an agent's `resolve_aside` flashes `✓ #N` in the menu bar and shows under
-  Agent Replies; the note line counts the open asides.
+- [ ] **Agent replies:** an agent's `resolve_aside` flashes `[✓] #N` in the menu bar (`dismiss_aside`
+  `[–] #N`, `reply_to_aside` `[?] #N`) and shows under Agent Replies; the note line counts the open
+  asides.
 
 ## Common changes
 

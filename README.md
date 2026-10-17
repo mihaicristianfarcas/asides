@@ -13,7 +13,7 @@ Asides ready in ~/code/shop
 ```
 
 Notice a bug → hold `⌃⌥Space` and say what's wrong → let go → tap `⌃⌥Space` → keep testing. A few
-seconds later the transcript is in the note, and the menu-bar icon shows `✓ #5`.
+seconds later the transcript is in the note, and the menu-bar icon shows `[✓] #5`.
 
 - **Local and free.** Speech is transcribed by [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
   on the GPU (Metal). No account, no API key, and no audio leaves your Mac.
@@ -157,8 +157,8 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
   the microphone, how agents get asides, and the app agent sessions open in
 
 The status line shows where your asides go, e.g. `Ready · shop → Claude Code, listening`.
-When an agent resolves or replies to an aside, the menu bar says so for a moment (`✓ #3`), and the
-note line shows how many asides are still open.
+When an agent resolves or replies to an aside, the menu bar says so for a moment (`[✓] #3`, or
+`[?] #3` when it asks you something), and the note line shows how many asides are still open.
 
 ## Asides on your screen
 
