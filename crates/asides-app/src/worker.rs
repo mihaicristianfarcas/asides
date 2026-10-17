@@ -99,6 +99,9 @@ pub struct TranscribeJob {
 }
 
 pub enum Job {
+    /// Load this speech model now, while the user talks, if it's on disk (nothing comes back): the
+    /// recording that follows doesn't wait for it after a while unused.
+    Warm(String),
     Recording(Box<RecordingJob>),
     Transcribe(Box<TranscribeJob>),
     Image(Box<ImageJob>),
@@ -139,6 +142,10 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
                     Err(RecvTimeoutError::Disconnected) => return,
                 };
                 let outcome = match job {
+                    Job::Warm(model) => {
+                        warm(&model, &mut transcriber);
+                        continue;
+                    }
                     Job::Recording(job) => process_recording(*job, &models, &mut transcriber),
                     Job::Transcribe(job) => Ok(Outcome::Transcribed {
                         id: job.id,
@@ -209,6 +216,17 @@ fn process_recording(
     write_route(&note, number, &job.route);
     note.append(&entry).context("could not write the note")?;
     Ok(Outcome::Appended { note: note.title, number })
+}
+
+/// Loads `model` unless it's loaded or still downloading.
+fn warm(model: &str, transcriber: &mut Option<Transcriber>) {
+    if transcriber.as_ref().is_some_and(|t| t.model_id == model) {
+        return;
+    }
+    let path = asides_core::models::ModelSpec::find(model).path();
+    if path.is_file() {
+        *transcriber = Transcriber::load(model, &path).ok();
+    }
 }
 
 /// Whisper's segments for a recording (none when it's silent), loading the model if needed.

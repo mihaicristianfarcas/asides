@@ -854,6 +854,8 @@ impl App {
         let pid = frozen
             .map_or_else(macos::frontmost_app, |o| o.previous_app)
             .filter(|&pid| pid != std::process::id() as i32);
+        // The speech model, loaded while the user talks (it's let go after a while unused).
+        let _ = self.jobs.send(Job::Warm(self.config.model.clone()));
         if let (Some(pid), None) = (pid, annotation) {
             let (place, deep) = (place.clone(), self.config.measure.identify_elements);
             std::thread::spawn(move || {

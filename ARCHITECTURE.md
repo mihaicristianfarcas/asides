@@ -205,7 +205,9 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    `Job::Recording`.
 4. **Worker** (`process_recording`):
    - resamples to 16 kHz and checks for silence
-   - waits for and loads the model (cached; unloaded after 15 idle minutes)
+   - waits for and loads the model (cached; unloaded after 15 idle minutes). Loading takes seconds
+     (5.8 s for large-v3-turbo on an M4 Pro), so a recording queues `Job::Warm` as it starts: the
+     worker loads it while the user talks
    - transcribes: language detection limited to `config.languages`, then one beam-search pass
    - picks the target note: the latest one, or a new one with metadata when asked for, or (with
      `auto_new_note`) when the latest was started on another git branch or not written to for 8
