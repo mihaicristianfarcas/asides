@@ -226,6 +226,35 @@ pub fn command(launch: &Launch) -> Command {
     Command { program: launch.kind.program().into(), args, env }
 }
 
+/// Which of the variables `names` mark a process as part of an agent's session: those Claude Code
+/// (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, its pid and effort…) and OpenCode (`OPENCODE`,
+/// `AGENT`…) set for the commands they run, and asides' own. An agent's process can start the app
+/// (its `asides mcp` opens a link), which would hand them to every terminal and agent the app
+/// starts: Claude Code took a session started from the menu for a child of the first one (and
+/// turned off saving its transcript), and `asides` in that terminal meant the first session's repo.
+/// An agent's settings (`CLAUDE_CODE_USE_BEDROCK`) count only inside its session, where they're
+/// set again: from its settings, or the login shell.
+pub fn session_markers(names: impl IntoIterator<Item = String>) -> Vec<String> {
+    let names: Vec<String> = names.into_iter().collect();
+    let claude = names.iter().any(|n| n == "CLAUDECODE");
+    let opencode = names.iter().any(|n| n == "OPENCODE");
+    names
+        .into_iter()
+        .filter(|name| match name.as_str() {
+            SESSION_VAR | REPO_VAR | "AI_AGENT" | "CLAUDECODE" | "OPENCODE" => true,
+            "CLAUDE_PID" | "CLAUDE_EFFORT" | "CLAUDE_PROJECT_DIR" => claude,
+            n if n.starts_with("CLAUDE_CODE_") => claude,
+            "AGENT" | "OPENCODE_SESSION_ID" | "OPENCODE_TERMINAL" | "OPENCODE_PTY_HANDOFF" => opencode,
+            _ => false,
+        })
+        .collect()
+}
+
+/// [`session_markers`] of this process's environment.
+pub fn inherited_markers() -> Vec<String> {
+    session_markers(std::env::vars_os().filter_map(|(name, _)| name.into_string().ok()))
+}
+
 /// The configuration a Codex thread asides starts gets: its MCP server, for the session.
 pub fn codex_thread_config(asides: &str, repo: &Path, session: &str) -> serde_json::Value {
     let args = ["-C", &repo.to_string_lossy(), "mcp", "--session", session].map(String::from);
@@ -240,6 +269,41 @@ fn toml_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_markers_of_an_agents_session() {
+        let inside = [
+            "PATH",
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_EFFORT",
+            "AI_AGENT",
+            "ASIDES_REPO",
+            "OPENCODE",
+            "AGENT",
+            "OPENCODE_SESSION_ID",
+            "OPENCODE_PASSWORD",
+            "CODEX_HOME",
+        ];
+        assert_eq!(
+            session_markers(inside.map(String::from)),
+            [
+                "CLAUDECODE",
+                "CLAUDE_CODE_SESSION_ID",
+                "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_EFFORT",
+                "AI_AGENT",
+                "ASIDES_REPO",
+                "OPENCODE",
+                "AGENT",
+                "OPENCODE_SESSION_ID"
+            ]
+        );
+        // Outside an agent, settings with the same prefixes stay.
+        let outside = ["PATH", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_EFFORT", "AGENT", "OPENCODE_SESSION_ID"];
+        assert!(session_markers(outside.map(String::from)).is_empty());
+    }
 
     fn launch(kind: AgentKind) -> Launch<'static> {
         Launch {

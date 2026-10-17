@@ -248,6 +248,13 @@ The user may record a request and ask you to "implement the note". Find it with
   thread asides started passes no `-c`; the thread already has its configuration.
 - OpenCode's free tier refuses `opencode run` ("can only be used from within OpenCode"), so asides
   can't push into OpenCode sessions or run them in the background.
+- Agents mark the processes they run as part of their session (`CLAUDECODE`,
+  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT`, `OPENCODE`, `AGENT`…), and
+  `open` passes its caller's environment to the app it starts. An app started by an agent's `asides
+  mcp` handed them to every terminal and agent it started: Claude Code warned "Transcript saving is
+  off — inherited CLAUDE_CODE_CHILD_SESSION marker" and ran at the first session's effort. The app
+  and `asides <agent>` drop them (`launch::session_markers`). `ps eww` shows the environment a
+  process was started with, not what it removed since: check a child's.
 - `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
   run --help`, which does print help) before trying its commands.
 

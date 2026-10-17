@@ -436,6 +436,14 @@ Break these only on purpose, and update this document when you do.
   as a session of its own (`dirijor session run`). The script runs the command in the user's login
   shell (their PATH). AppleScript would reuse a terminal's window, but needs the Automation
   permission.
+- **A session is the user's own, not a child of the agent that started the app.** Agents mark the
+  processes they run as part of their session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
+  `CLAUDE_EFFORT`, `OPENCODE`, `AGENT`…), and `open` passes its caller's environment to the app it
+  starts, so an `asides mcp` starting the app handed them to every terminal and agent the app
+  started: Claude Code took those sessions for children of the first one (and stopped saving their
+  transcripts). The app drops them as it starts, and so does `asides <agent>`
+  (`launch::session_markers`). An agent's settings with the same prefixes come back from its
+  settings file or the login shell.
 - **A worktree for a second session in a repo.** Two agents editing one working tree collide.
   Claude Code manages its own worktrees (and offers to clean them up). Codex's `--worktree` doesn't
   apply to a thread started through its daemon, and OpenCode has none, so for them asides makes one

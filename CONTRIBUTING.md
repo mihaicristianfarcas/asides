@@ -170,6 +170,8 @@ in your pull request what you tried.
   its worktree, without asking which directory) and Stop ends them. Quitting the
   target agent hands asides to another session in the repo, or Notes Only. From Spotlight, with
   Asides not bound: New Agent Session ▸ In Another Directory… starts one after choosing a folder.
+  With Asides started by an agent (`open` it from Claude Code's shell), sessions still save their
+  transcripts (no "inherited CLAUDE_CODE_CHILD_SESSION" warning).
 - [ ] **Installed by hand:** with no `asides` command anywhere, opening `/Applications/Asides.app`
   links `/usr/local/bin/asides` (asking for a password if root owns the folder); after Cancel it
   isn't asked again. The app icon shows in Spotlight and Finder.

@@ -155,6 +155,10 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         return Ok(());
     }
     let mut process = Process::new(&command.program);
+    // A session is the user's own, even when another agent's shell ran this: not a child of that one.
+    for marker in launch::inherited_markers() {
+        process.env_remove(marker);
+    }
     process.args(&command.args).envs(command.env.iter().map(|(k, v)| (k, v))).current_dir(&workdir);
     if options.background {
         return start_background(process, &session, &name);

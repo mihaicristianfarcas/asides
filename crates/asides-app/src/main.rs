@@ -33,7 +33,7 @@ use asides_core::helper::{
 };
 use asides_core::inspect::{PtRect, Screen, Units};
 use asides_core::install;
-use asides_core::launch::AgentKind;
+use asides_core::launch::{self, AgentKind};
 use asides_core::link::Link;
 use asides_core::models::ModelSpec;
 use asides_core::notes;
@@ -194,6 +194,12 @@ struct App {
 }
 
 fn main() {
+    // An agent's process can start the app (its `asides mcp` opens a link): don't hand that
+    // session's markers to every terminal and agent the app starts.
+    for marker in launch::inherited_markers() {
+        // SAFETY: first thing in main, before any thread exists to read the environment.
+        unsafe { std::env::remove_var(marker) };
+    }
     let mtm = MainThreadMarker::new().expect("must start on the main thread");
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
