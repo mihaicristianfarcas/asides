@@ -1515,6 +1515,10 @@ impl App {
             if let Some(message) = &event.message {
                 status.push_str(&format!(": {}", short(message, 90)));
             }
+            // Frozen, the overlay covers the menu bar: it says so itself.
+            if let Some(overlay) = self.overlay.as_mut().filter(|o| o.frozen) {
+                overlay.send(&OverlayCommand::Notice { text: status.clone() });
+            }
             self.flash(SENT_FLASH, mark, Some(format!("#{id}")), status);
             self.sound("Purr");
         }

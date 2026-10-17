@@ -159,7 +159,8 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
 
 The status line shows where your asides go, e.g. `Ready · shop → Claude Code, listening`.
 When an agent resolves or replies to an aside, the menu bar says so for a moment (`[✓] #3`, or
-`[?] #3` when it asks you something), and the note line shows how many asides are still open.
+`[?] #3` when it asks you something; with the screen frozen, Asides says it on screen), and the
+note line shows how many asides are still open.
 
 ## Asides on your screen
 

@@ -305,7 +305,8 @@ event is one `write` on a file opened for appending, so concurrent writers don't
 Readers fold the events into each aside's state (`threads::fold`). An annotation without events of
 its own takes its entry's status, and an entry with annotations is open while any of them is
 (`threads::entry_status`). The app's threads watcher reports the latest note's events. It flashes
-the newest agent event in the menu bar, lists recent ones under Agent Replies, and the note line
+the newest agent event in the menu bar (and, with the screen frozen over the menu bar, sends it to
+the overlay as a `notice`), lists recent ones under Agent Replies, and the note line
 counts the open asides. `get_asides` and `get_pending_asides` quote each aside's thread under it.
 
 ### A Wispr Flow dictation
