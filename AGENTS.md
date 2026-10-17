@@ -236,6 +236,13 @@ The user may record a request and ask you to "implement the note". Find it with
   `ignoreShadowsDisplay` or not: a frozen screen was lighter under every window than the live one.
   macOS 26's (`captureScreenshotWithFilter`, `SCScreenshotConfiguration`) has them, in the
   display's color space; `capture::srgb` converts it.
+- An opaque window over an app's windows occludes them (`NSWindowOcclusionState` loses
+  `visible`), and many apps stop drawing while occluded: closing frozen over Diri showed its
+  window blurred for a frame (a stale placeholder) before it drew again, however long the overlay
+  waited, since it only draws once uncovered. The frozen screens are non-opaque
+  (`WindowBackgroundAppearance::Transparent`), though the screenshot covers every pixel: the
+  apps under them stay visible to macOS and keep drawing. A small window logging
+  `didChangeOcclusionStateNotification` under a cover shows it.
 - GPUI's pop-ups fade in and out (`NSWindowAnimationBehaviorUtilityWindow`), showing what they
   showed last while they fade: the overlay turns that off. A hidden GPUI window isn't drawn (its
   display link stops), so it shows its last frame when it's shown again (the last freeze, the

@@ -95,7 +95,10 @@ fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
             is_resizable: false,
             is_minimizable: false,
             display_id,
-            window_background: WindowBackgroundAppearance::Opaque,
+            // Not opaque, though the screenshot covers every pixel: an opaque window occludes the
+            // apps under it, and many (web views, Electron, terminals) stop drawing while occluded,
+            // then show a stale, blurred frame for a moment when it goes.
+            window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         };
         let o = overlay.clone();
