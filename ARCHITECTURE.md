@@ -86,7 +86,9 @@ crates/
   asides-cli/      shipped inside the bundle as Asides.app/Contents/Helpers/asides
     main.rs           clap subcommands, `open -g -b <bundle id> <link>`, waits for the app to acknowledge
     start.rs          `asides claude|codex|opencode`: a session record, a worktree when another session
-                      works in the repo, then `exec` of the agent (or `claude --bg`)
+                      works in the repo, then `exec` of the agent (or `claude --bg`, or a Codex thread)
+    codex.rs          Codex sessions: a thread in its app-server daemon (WebSocket JSON-RPC through
+                      `codex app-server proxy`), and `codex queue` to push each aside into it
     session.rs        the session `asides mcp`/`asides listen` deliver to: its record, listening, the target
     mcp.rs            `asides mcp`: the MCP server (waiting, reading, the feedback loop, measure_image; prompts)
     listen.rs         `asides listen`: deliveries on stdout, for agents watching it in the background
@@ -261,9 +263,16 @@ as Wispr Flow typed it.
      server (`asides -C <repo> mcp --session <id>`; Claude Code's `--mcp-config`, Codex's `-c
      mcp_servers.asides.*`, OpenCode's `OPENCODE_CONFIG_CONTENT` with `--standalone`), the listen
      prompt as its first message, and for Claude Code its asides tools pre-approved. When another
-     session is alive in the repo, the new one works in a git worktree: Claude Code and Codex make
-     it (`--worktree`); for OpenCode, `start.rs` makes it in `.asides/worktrees/` and removes it at a
-     later start if nothing was done in it.
+     session is alive in the repo, the new one works in a git worktree: Claude Code makes it
+     (`--worktree`); for Codex and OpenCode, `start.rs` makes it in `.asides/worktrees/` and removes
+     it at a later start if nothing was done in it.
+   - `asides codex` starts the session as a thread in Codex's app-server daemon instead
+     (`codex.rs`: `thread/start` with the MCP server in its config, `thread/name/set`, the first
+     prompt with `turn/start`), and a process of `asides listen --codex-thread` that pushes each
+     delivery into it with `codex queue` (the session is `pushed`: `wait_for_asides` returns at
+     once). In a terminal, the agent `exec`d is `codex resume <thread>`, and the pusher stops with
+     it; in the background, the pusher is the session's process, and Stop ends it. Without the
+     daemon, Codex waits in `wait_for_asides` like other agents.
    - An agent the user started connects to `asides mcp`, which writes a record that isn't
      listening yet (and removes it when the agent hangs up). When the user asks it to listen (the
      `listen` prompt, its first `wait_for_asides`, or `asides listen --session <id>`, the command
@@ -374,6 +383,7 @@ Break these only on purpose, and update this document when you do.
 | `<dir>/.asides/<note>/routes.jsonl` | worker | which session each entry was spoken to; one JSON line per entry, append-only |
 | `<dir>/.asides/worktrees/<name>/` | `asides opencode` | a git worktree for a second OpenCode session in the repo; removed at a later start if nothing was done in it |
 | `$TMPDIR/asides-sessions/*.command` | app | New Agent Session's (and Show's) script for the terminal; deletes itself when it runs |
+| `$TMPDIR/asides-sessions/push-<id>.log` | `asides listen --codex-thread` | what went wrong pushing a Codex session's asides |
 | `<dir>/.asides/<note>/threads.jsonl` | `asides mcp` | what happened to each aside since; one JSON event per line, append-only |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, `asides-overlay` | a Measure & Annotate session: the screens' pixels, `session.json`, `result.json`, images; removed when the overlay exits |
 | `~/Library/Application Support/Wispr Flow/flow.sqlite` | Wispr Flow | read-only, only with `wispr_flow` on. Dev-hooks builds read `Asides/test-wispr-flow.sqlite` instead when it exists (end-to-end test) |
@@ -427,8 +437,15 @@ Break these only on purpose, and update this document when you do.
   shell (their PATH). AppleScript would reuse a terminal's window, but needs the Automation
   permission.
 - **A worktree for a second session in a repo.** Two agents editing one working tree collide.
-  Claude Code and Codex manage their own worktrees (and offer to clean them up); OpenCode can't, so
-  asides makes one inside `.asides/`, which git already ignores locally.
+  Claude Code manages its own worktrees (and offers to clean them up). Codex's `--worktree` doesn't
+  apply to a thread started through its daemon, and OpenCode has none, so for them asides makes one
+  inside `.asides/`, which git already ignores locally.
+- **Codex pushed, not polled.** In `wait_for_asides`, Codex is busy in a tool call that times out
+  every 50 minutes, and you can't type to it. Its daemon runs threads whether or not a window has
+  them open, and `codex queue` adds a message to one, so asides starts the thread there and pushes
+  each aside: Codex is idle between asides, in a window or in the background. OpenCode has the
+  same shape (`opencode run --session`), but its free tier refuses requests from anything but its
+  own app, so OpenCode stays on `wait_for_asides`.
 - **Threads in a sidecar, append-only.** Agentation keeps annotation status and replies in its
   server's store. Asides keeps notes append-only and readable by anyone, so status and replies
   go in `threads.jsonl` next to `notes.md`. Several agent sessions write to it with single appends,

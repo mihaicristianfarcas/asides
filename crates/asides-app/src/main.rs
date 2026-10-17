@@ -91,7 +91,8 @@ enum UserEvent {
     Sessions(Vec<Listener>, Vec<Session>),
     /// The coding agents installed, as the user's login shell finds them.
     Agents(Vec<AgentKind>),
-    /// A background session started (what `asides claude --background` said), or why it didn't.
+    /// A background session started (what `asides claude --background` said), or what went wrong
+    /// starting or stopping one.
     Launched(Result<String, String>),
     CommandLinked(CommandLink),
     /// The screens, frozen for Measure & Annotate.
@@ -394,7 +395,7 @@ impl App {
                 self.flash = Some((Instant::now() + SENT_FLASH, "Started".into(), status));
                 self.refresh();
             }
-            UserEvent::Launched(Err(message)) => self.fail(format!("Could not start the session: {message}")),
+            UserEvent::Launched(Err(message)) => self.fail(message),
             UserEvent::CommandLinked(CommandLink::Linked) => {
                 let status = format!("You can now run `asides` in any terminal ({})", install::LINK);
                 self.flash = Some((Instant::now() + SENT_FLASH, "asides".into(), status));
@@ -530,6 +531,7 @@ impl App {
             MenuAction::Target(id) => self.set_target(id),
             MenuAction::NewSession { agent, dir, background } => self.new_session(agent, dir, background),
             MenuAction::ShowSession(id) => self.show_session(&id),
+            MenuAction::StopSession(id) => self.stop_session(&id),
             MenuAction::SwitchDirectory(dir) => self.bind_from_menu(&dir),
             MenuAction::ChooseDirectory => {
                 if let Some(dir) = macos::choose_directory(self.mtm, self.bound.as_deref()) {
@@ -1310,7 +1312,7 @@ impl App {
         if background {
             let proxy = self.proxy.clone();
             std::thread::spawn(move || {
-                let result = terminal::run(&command).map_err(|e| format!("{e:#}"));
+                let result = terminal::run(&command).map_err(|e| format!("Could not start the session: {e:#}"));
                 let _ = proxy.send_event(UserEvent::Launched(result));
             });
         } else {
@@ -1327,12 +1329,45 @@ impl App {
     /// Opens a background session in a terminal (`claude attach`).
     fn show_session(&mut self, id: &str) {
         let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
-        let Some(name) = session.background else { return };
-        let command = format!("claude attach {}", terminal::quote(&name));
+        let command = match (&session.thread, &session.background) {
+            (Some(thread), _) => format!("codex resume {}", terminal::quote(thread)),
+            (None, Some(name)) => format!("claude attach {}", terminal::quote(name)),
+            (None, None) => return,
+        };
+        // Where it works: Codex asks which directory to use when it's opened elsewhere.
+        let dir = match (&session.thread, &session.worktree) {
+            (Some(_), Some(tree)) => project::worktree_path(&session.dir, tree),
+            _ => session.dir.clone(),
+        };
         let terminal = terminal::app(&self.config.agents.terminal);
-        if let Err(err) = terminal::open(&terminal, &session.dir, &command, &self.label_of(id)) {
+        if let Err(err) = terminal::open(&terminal, &dir, &command, &self.label_of(id)) {
             self.fail(format!("{err:#}"));
         }
+    }
+
+    /// Ends a background session: Claude Code's with `claude stop` (its conversation is kept), a
+    /// Codex one by stopping what pushes asides into its thread (which `codex resume` still opens).
+    fn stop_session(&mut self, id: &str) {
+        let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
+        let Some(name) = session.background else { return };
+        if session.thread.is_some() {
+            if let Ok(pid) = libc::pid_t::try_from(session.pid)
+                && pid > 0
+            {
+                unsafe { libc::kill(pid, libc::SIGTERM) };
+            }
+        } else {
+            let command = format!("claude stop {}", terminal::quote(&name));
+            let proxy = self.proxy.clone();
+            std::thread::spawn(move || {
+                if let Err(err) = terminal::run(&command) {
+                    let _ = proxy.send_event(UserEvent::Launched(Err(format!("Could not stop the session: {err:#}"))));
+                }
+            });
+        }
+        let status = format!("Stopping {}…", self.label_of(id));
+        self.flash = Some((Instant::now() + SENT_FLASH, "Stop".into(), status));
+        self.refresh();
     }
 
     /// Starts or stops watching Wispr Flow's history to match the settings.

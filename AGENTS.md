@@ -14,7 +14,8 @@ asides is a macOS menu-bar app plus a CLI.
   entry (or a batch, on Send to Agent) as a prompt. They acknowledge, resolve, dismiss or reply to
   asides and their marks (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
 - `asides claude` (or `codex`, `opencode`; New Agent Session in the menu runs it in a terminal)
-  starts an agent already listening, with the MCP server on its command line. Every listening agent
+  starts an agent already listening, with the MCP server on its command line. Codex sessions are
+  threads in Codex's app-server daemon that asides pushes each aside into (`codex queue`). Every listening agent
   is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
   beside the note. A second session in a repo works in a git worktree.
 - Measure & Annotate (`⌃⌥M`) freezes every screen, in any app, under one toolbar: PixelSnap-style
@@ -239,6 +240,16 @@ The user may record a request and ask you to "implement the note". Find it with
 - Claude Code asks whether to trust a folder the first time it runs there, launched by asides or
   not. A scratch repo for a live test stalls on it; your own repos are already trusted.
 - macOS has no `timeout` command; scripts wait with a loop and `kill`.
+- Codex's app-server daemon speaks JSON-RPC over WebSocket; `codex app-server proxy` connects stdio
+  to its socket, so a client sends the HTTP upgrade first and masked frames after. Threads started
+  by `codex exec` run in that process, not the daemon: `codex queue` messages for them wait.
+- A Codex window given `-c` options runs a server of its own, which a thread the daemon holds is
+  locked against ("This conversation is open in another app"). `codex resume <thread>` for a
+  thread asides started passes no `-c`; the thread already has its configuration.
+- OpenCode's free tier refuses `opencode run` ("can only be used from within OpenCode"), so asides
+  can't push into OpenCode sessions or run them in the background.
+- `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
+  run --help`, which does print help) before trying its commands.
 
 ## Commits
 

@@ -38,6 +38,11 @@ pub struct Session {
     pub pid: u32,
     /// A Claude Code background session's name, which `claude attach` takes.
     pub background: Option<String>,
+    /// The Codex thread it runs in, which `codex resume` takes.
+    pub thread: Option<String>,
+    /// Asides sends its asides to the agent as messages (`codex queue`): the agent doesn't wait
+    /// for them in a tool call.
+    pub pushed: bool,
     /// The agent listens for asides (it was launched to, or asked to).
     pub listening: bool,
     /// Where its asides begin (an `agents::Listening` token): asides recorded for it while the

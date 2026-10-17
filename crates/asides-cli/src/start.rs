@@ -4,12 +4,16 @@
 //! message. The menu's New Session runs this in a terminal.
 //!
 //! When another session is already working in the repo, the new one works in a git worktree, so
-//! their edits don't collide; the notes stay in the repo. Claude Code and Codex make the worktree
-//! themselves; for OpenCode, asides makes it in `.asides/worktrees/`.
+//! their edits don't collide; the notes stay in the repo. Claude Code makes the worktree itself;
+//! for the others, asides makes it in `.asides/worktrees/`.
+//!
+//! A Codex session is a thread asides starts in Codex's app-server daemon (`codex.rs`), with a
+//! process of `asides listen` pushing each aside into it; the terminal then opens the thread
+//! (`codex resume`). Without the daemon, Codex waits for asides in a tool call instead.
 
 use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command as Process;
+use std::process::{Command as Process, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -23,7 +27,7 @@ use asides_core::sessions::{self, Session};
 use asides_core::state::AppState;
 use serde_json::Value;
 
-use crate::listen;
+use crate::{codex, listen};
 
 pub struct Options {
     pub background: bool,
@@ -58,7 +62,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     let sends = AppState::read(&paths::state_path()).map(|s| s.agent_sends).unwrap_or_default();
     let start = Listening::start(&repo, Some(&id), config.agent_delivery, &sends).token();
     let name = format!("{repo_name} · asides {id}");
-    let session = Session {
+    let mut session = Session {
         id: id.clone(),
         agent: kind.name().into(),
         dir: repo.clone(),
@@ -66,11 +70,44 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         // `exec` below makes this process the agent; a background agent's isn't known yet.
         pid: if options.background { 0 } else { std::process::id() },
         background: options.background.then(|| name.clone()),
+        thread: None,
+        pushed: false,
         listening: true,
         start: Some(start),
         started_ms: crate::now_ms(),
     };
     session.write(&paths::sessions_dir()).context("could not record the session")?;
+    let asides = listen::program();
+    let in_worktree = worktree.as_ref().map(|_| repo.as_path());
+
+    // Codex: a thread in its daemon, that asides pushes the asides into.
+    if kind.takes_pushes() {
+        let new = codex::NewThread {
+            cwd: &workdir,
+            name: &name,
+            config: launch::codex_thread_config(&asides, &repo, &id),
+            prompt: &launch::listen_prompt(&Via::Messages, in_worktree),
+        };
+        match codex::start_thread(&new) {
+            Ok(thread) => {
+                session.thread = Some(thread.clone());
+                session.pushed = true;
+                // In a terminal it pushes while Codex's window is open; in the background, until stopped.
+                let pusher = start_pusher(&repo, &id, &thread, (!options.background).then(std::process::id))?;
+                if options.background {
+                    session.pid = pusher;
+                }
+                session.write(&paths::sessions_dir()).context("could not record the session")?;
+            }
+            Err(err) if options.background => {
+                Session::remove(&paths::sessions_dir(), &id);
+                return Err(err).context("Codex runs in the background through its app-server daemon");
+            }
+            Err(err) => {
+                println!("! Codex's app-server didn't start the session ({err:#}): it waits for asides instead.")
+            }
+        }
+    }
     // The app sends the user's asides to it from now on (and starts, if it isn't running).
     let reached = tell_app(&id);
 
@@ -79,8 +116,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     } else {
         Via::Wait
     };
-    let prompt = launch::listen_prompt(&via, worktree.as_ref().map(|_| repo.as_path()));
-    let asides = listen::program();
+    let prompt = launch::listen_prompt(&via, in_worktree);
     let listen_prefix = format!("{asides} -C {} listen", listen::quote(&repo.to_string_lossy()));
     let mut extra = kind.extra_args(&config.agents).to_vec();
     extra.extend(options.args);
@@ -94,6 +130,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         listen_prefix: Some(&listen_prefix),
         worktree: worktree.as_deref(),
         background: options.background,
+        thread: session.thread.as_deref(),
         opencode_1: kind == AgentKind::OpenCode && major_version(kind) == Some(1),
         extra: &extra,
     });
@@ -113,6 +150,10 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         Err(err) => println!("  ! Asides didn't answer ({err:#}); run `asides` here once it's installed."),
     }
 
+    if let (true, Some(thread)) = (options.background, &session.thread) {
+        println!("Running in the background: `codex resume {thread}` opens it (the Asides menu can too).");
+        return Ok(());
+    }
     let mut process = Process::new(&command.program);
     process.args(&command.args).envs(command.env.iter().map(|(k, v)| (k, v))).current_dir(&workdir);
     if options.background {
@@ -170,6 +211,28 @@ fn major_version(kind: AgentKind) -> Option<u32> {
     let version =
         text.split_whitespace().find(|w| w.trim_start_matches('v').starts_with(|c: char| c.is_ascii_digit()))?;
     version.trim_start_matches('v').split('.').next()?.parse().ok()
+}
+
+/// Starts the process that pushes session `id`'s asides into the Codex `thread`, on its own (a
+/// process group of its own, so closing the terminal doesn't stop it), while `while_pid` runs, or
+/// until stopped. What goes wrong goes to a log beside New Agent Session's scripts.
+fn start_pusher(repo: &Path, id: &str, thread: &str, while_pid: Option<u32>) -> Result<u32> {
+    let logs = std::env::temp_dir().join("asides-sessions");
+    std::fs::create_dir_all(&logs)?;
+    let log = std::fs::File::create(logs.join(format!("push-{id}.log")))?;
+    let mut pusher = Process::new(std::env::current_exe()?);
+    pusher.arg("-C").arg(repo).args(["listen", "--session", id, "--codex-thread", thread]);
+    if let Some(pid) = while_pid {
+        pusher.args(["--while-pid", &pid.to_string()]);
+    }
+    let child = pusher
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log)
+        .process_group(0)
+        .spawn()
+        .context("could not start pushing asides to Codex")?;
+    Ok(child.id())
 }
 
 /// Makes the session the app's target. The app reads its record.

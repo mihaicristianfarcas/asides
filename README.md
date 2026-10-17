@@ -108,7 +108,7 @@ self-signed identity in your login keychain and asks for your password.
 | Command | |
 |---|---|
 | `asides` | Bind the repo you're in (its git root, or the current directory if it isn't a repo) and start the menu-bar app. Recordings append to the latest note there. |
-| `asides claude` | Start Claude Code here, already listening: each aside you record goes to it. `asides codex` and `asides opencode` do the same for those. Arguments go to the agent (`asides claude --model opus`). `--background` (Claude Code) runs it without a terminal; `--no-worktree` keeps a second session in the repo itself. See [Coding agents](#coding-agents). |
+| `asides claude` | Start Claude Code here, already listening: each aside you record goes to it. `asides codex` and `asides opencode` do the same for those. Arguments go to the agent (`asides claude --model opus`). `--background` (Claude Code, Codex) runs it without a terminal; `--no-worktree` keeps a second session in the repo itself. See [Coding agents](#coding-agents). |
 | `asides new [TITLE]` | The next recording starts a new note, titled TITLE or "Untitled". |
 | `asides path` | Print the latest note's path, e.g. `claude "fix the bugs in $(asides path)"`. |
 | `asides open` | Open the latest note in your Markdown editor. |
@@ -328,11 +328,13 @@ switches to the next. While you record, the menu bar shows where it's going (`0:
 - **In different repos:** start one in each. Switching to a session also switches the repo your
   notes go to.
 - **In the same repo:** a second session works in a git worktree of the repo, so the two don't edit
-  the same files. Claude Code and Codex make the worktree; for OpenCode, Asides makes it in
+  the same files. Claude Code makes the worktree; for Codex and OpenCode, Asides makes it in
   `.asides/worktrees/`, and removes it after the session if nothing was done in it. Your notes stay
   in the repo. `--no-worktree` (or `worktrees = false`) keeps the session in the repo itself.
-- **In the background:** **Claude Code in the Background** (or `asides claude --background`) starts a
-  Claude Code session without a terminal; **Show** in the menu opens it (`claude attach`).
+- **In the background:** **Claude Code in the Background** or **Codex in the Background** (or
+  `asides claude --background`, `asides codex --background`) starts a session without a terminal;
+  **Show** in the menu opens it (`claude attach`, `codex resume`), and **Stop** ends it. OpenCode
+  can't: that would go through `opencode run`, which OpenCode's free tier refuses.
 
 When the session you're talking to ends, your asides go to the newest other session in that repo,
 or to the notes only. Every aside is still written to the note, whichever session gets it.
@@ -352,14 +354,19 @@ Then, in a session in your repo, ask the agent to **listen to your asides** (in 
 Listening makes it a session like the others, and the target: Asides starts if it isn't running,
 and binds to the agent's repo.
 
-How the agent listens depends on what it can do:
+How the agent gets your asides depends on what it can do:
 
 - **Claude Code** runs `asides listen` in the background, with its Monitor tool. Each aside shows
   up in the chat as it reaches the agent, and the agent acts on it. In between, the agent is free:
   you can ask it other things.
-- **Codex, OpenCode and others** wait in a tool call (`wait_for_asides`), act on what it returns,
-  then wait again. Asides that arrive while the agent works wait for it. Most agents hide tool
-  results, so the agent first lists the asides it got, one line each.
+- **Codex, started by Asides,** gets each aside as a message, like one you typed. Asides starts the
+  session as a thread in Codex's app server (the daemon Codex keeps running), hands it each aside
+  with `codex queue`, and the window opens that thread (`codex resume`). Codex never sits waiting
+  for asides, and one that arrives while it works runs next. Without the app server (older Codex),
+  it waits like the agents below.
+- **OpenCode, and agents you started yourself,** wait in a tool call (`wait_for_asides`), act on what
+  it returns, then wait again. Asides that arrive while the agent works wait for it. Most agents hide
+  tool results, so the agent first lists the asides it got, one line each.
 
 ### Each aside, or in batches
 

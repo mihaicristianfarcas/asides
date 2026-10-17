@@ -1,3 +1,4 @@
+mod codex;
 mod listen;
 mod mcp;
 mod measure;
@@ -87,6 +88,12 @@ enum Command {
         /// The session to listen as (`asides mcp` gives it in its instructions).
         #[arg(long, value_name = "ID")]
         session: Option<String>,
+        /// Push the asides into this Codex thread instead of printing them (`asides codex`).
+        #[arg(long, value_name = "THREAD", hide = true)]
+        codex_thread: Option<String>,
+        /// With --codex-thread: stop when this process (the Codex window) ends.
+        #[arg(long, value_name = "PID", hide = true, requires = "codex_thread")]
+        while_pid: Option<u32>,
     },
     /// Freeze the screen to measure and annotate it (Measure & Annotate), as the shortcut does.
     Annotate,
@@ -191,7 +198,10 @@ fn run(cli: Cli) -> Result<()> {
         }
         Some(Command::Send) => send_batch(),
         Some(Command::Mcp { timeout, session: id }) => mcp::run(dir()?, timeout, session(id)?),
-        Some(Command::Listen { timeout, after, session: id }) => listen::run(dir()?, timeout, after, session(id)?),
+        Some(Command::Listen { timeout, after, session: id, codex_thread, while_pid }) => {
+            let push = codex_thread.map(|thread| listen::Push { thread, while_pid });
+            listen::run(dir()?, timeout, after, session(id)?, push)
+        }
         Some(Command::Annotate) => {
             if running_state().is_none() {
                 bail!("Asides is not running. Run `asides` in a repo to start it.");

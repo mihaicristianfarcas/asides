@@ -34,6 +34,8 @@ pub enum MenuAction {
     },
     /// Open a background session in a terminal.
     ShowSession(String),
+    /// End a background session.
+    StopSession(String),
     SwitchDirectory(PathBuf),
     ChooseDirectory,
     OpenNote,
@@ -83,6 +85,7 @@ pub struct Tray {
     target_rows: Vec<(Option<String>, CheckMenuItem)>,
     target_extras: Vec<Box<dyn IsMenuItem>>,
     shows: Vec<(String, MenuItem)>,
+    stops: Vec<(String, MenuItem)>,
     shown_targets: TargetsShape,
     new_session: Submenu,
     new_session_items: Vec<Box<dyn IsMenuItem>>,
@@ -312,6 +315,7 @@ impl Tray {
             target_rows: Vec::new(),
             target_extras: Vec::new(),
             shows: Vec::new(),
+            stops: Vec::new(),
             shown_targets: (Vec::new(), Vec::new()),
             new_session,
             new_session_items: Vec::new(),
@@ -400,6 +404,9 @@ impl Tray {
         if let Some((session, _)) = self.shows.iter().find(|(_, item)| item.id() == id) {
             return Some(MenuAction::ShowSession(session.clone()));
         }
+        if let Some((session, _)) = self.stops.iter().find(|(_, item)| item.id() == id) {
+            return Some(MenuAction::StopSession(session.clone()));
+        }
         if let Some((_, action)) = self.new_session_actions.iter().find(|(item, _)| item == id) {
             return Some(action.clone());
         }
@@ -474,14 +481,14 @@ impl Tray {
     }
 
     /// Shows where asides go (with sessions around): the sessions and Notes Only, the target
-    /// checked, and a Show item for each background session (`(id, label)`).
+    /// checked, and Show and Stop items for each background session (`(id, label)`).
     pub fn set_targets(&mut self, rows: &[TargetRow], shows: &[(String, String)]) {
         let shape = (rows.iter().map(|r| (r.id.clone(), r.label.clone())).collect::<Vec<_>>(), shows.to_vec());
         if self.shown_targets != shape {
             for (_, item) in self.target_rows.drain(..) {
                 let _ = self.menu.remove(&item);
             }
-            for (_, item) in self.shows.drain(..) {
+            for (_, item) in self.shows.drain(..).chain(self.stops.drain(..)) {
                 let _ = self.menu.remove(&item);
             }
             for item in self.target_extras.drain(..) {
@@ -506,6 +513,9 @@ impl Tray {
                 let item = MenuItem::new(menu_text(&format!("Show {label}")), true, None);
                 insert(&self.menu, &item);
                 self.shows.push((id.clone(), item));
+                let item = MenuItem::new(menu_text(&format!("Stop {label}")), true, None);
+                insert(&self.menu, &item);
+                self.stops.push((id.clone(), item));
             }
             self.shown_targets = shape;
         }

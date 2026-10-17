@@ -3,7 +3,8 @@
 //! each burst of output into a notification in the chat). The agent stays free between asides.
 //!
 //! It listens as a session (`--session`, which `asides mcp` gives in its instructions), and gets
-//! the asides the user speaks to that session. Delivery follows `agent_delivery` like `asides mcp`
+//! the asides the user speaks to that session. With `--codex-thread` it pushes them into a Codex
+//! thread instead (`codex queue`), for a session `asides codex` started. Delivery follows `agent_delivery` like `asides mcp`
 //! does. With `--timeout` it stops by itself and prints the command that carries on from there
 //! (`--after`), so nothing recorded in between is lost.
 
@@ -20,7 +21,7 @@ use asides_core::paths::{self, tilde};
 use asides_core::sessions;
 use asides_core::state::AppState;
 
-use crate::{mcp, session};
+use crate::{codex, mcp, session};
 
 const POLL: Duration = Duration::from_millis(400);
 /// Checking where the user's asides go starts a process, so it's checked less often than the notes.
@@ -32,7 +33,20 @@ extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 
-pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>, id: Option<String>) -> Result<()> {
+/// Where deliveries go instead of standard output: a Codex thread, while the process `while_pid`
+/// (the Codex window) runs, or until stopped.
+pub struct Push {
+    pub thread: String,
+    pub while_pid: Option<u32>,
+}
+
+pub fn run(
+    dir: PathBuf,
+    timeout: Option<u64>,
+    after: Option<String>,
+    id: Option<String>,
+    push: Option<Push>,
+) -> Result<()> {
     // Stopped by the agent (or Ctrl-C): finish the poll, then remove the listener record.
     for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
         unsafe { libc::signal(signal, stop as *const () as libc::sighandler_t) };
@@ -40,7 +54,7 @@ pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>, id: Option
     let delivery = || Config::load(&paths::config_path()).unwrap_or_default().agent_delivery;
     let sends = || AppState::read(&paths::state_path()).map(|s| s.agent_sends).unwrap_or_default();
     let id = id.unwrap_or_else(sessions::new_id);
-    let client = client();
+    let client = if push.is_some() { "Codex".to_string() } else { client() };
     let (started_at, made) = session::listen(&dir, &id, &client);
     let mut listening = match &after {
         Some(token) => {
@@ -71,7 +85,34 @@ pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>, id: Option
     let started = Instant::now();
     let mut problem: Option<String> = None;
     let mut next_check = started;
+    // Pushes not made yet (Codex wasn't reachable): retried, in order, before anything newer.
+    let mut unpushed: Vec<(String, Vec<PathBuf>)> = Vec::new();
     while !STOP.load(Ordering::Relaxed) {
+        if let Some(push) = &push {
+            if push.while_pid.is_some_and(|pid| !crate::is_running(pid)) {
+                break;
+            }
+            let items = listening.take(delivery(), sends().first());
+            if !items.is_empty() {
+                let (mut text, images) = mcp::asides_text(&items);
+                text.push_str(
+                    "\n\nWhen you've handled each, call resolve_aside with its number and a short summary (or \
+                     dismiss_aside with a reason, or reply_to_aside to ask me something).",
+                );
+                unpushed.push((text, images));
+            }
+            while let Some((text, images)) = unpushed.first() {
+                match codex::queue(&push.thread, text, images) {
+                    Ok(()) => drop(unpushed.remove(0)),
+                    Err(err) => {
+                        eprintln!("asides: {err:#}");
+                        break;
+                    }
+                }
+            }
+            std::thread::sleep(POLL);
+            continue;
+        }
         if timeout.is_some_and(|secs| started.elapsed() >= Duration::from_secs(secs)) {
             let secs = started.elapsed().as_secs();
             let took = if secs < 60 { format!("{secs} s") } else { format!("{} min", (secs + 30) / 60) };

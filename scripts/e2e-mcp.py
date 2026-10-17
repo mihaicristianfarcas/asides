@@ -335,10 +335,78 @@ pwd -P > "{fakes}/{name}.pwd"
 sleep "${{FAKE_SLEEP:-0}}"
 """)
     os.chmod(os.path.join(fakes, name), 0o755)
+# Codex also has a daemon, reached through `codex app-server proxy` (JSON-RPC over WebSocket), and
+# `codex queue`: the fake records the requests and the queued messages.
+with open(os.path.join(fakes, "codex"), "w") as f:
+    f.write(f"""#!/usr/bin/python3 -I
+import json, os, struct, sys, time
+fakes = {fakes!r}
+args = sys.argv[1:]
+def record(name, value):
+    with open(os.path.join(fakes, name), "a") as f:
+        f.write(json.dumps(value) + "\\n")
+if args[:1] == ["--version"]:
+    print("codex-cli 0.163.0")
+elif args[:2] == ["app-server", "proxy"]:
+    if os.environ.get("FAKE_NO_DAEMON"):
+        sys.exit(1)
+    inp, out = sys.stdin.buffer, sys.stdout.buffer
+    while inp.readline() not in (b"\\r\\n", b""):
+        pass
+    out.write(b"HTTP/1.1 101 Switching Protocols\\r\\nupgrade: websocket\\r\\nconnection: Upgrade\\r\\n\\r\\n")
+    out.flush()
+    while True:
+        head = inp.read(2)
+        if len(head) < 2 or head[0] & 0x0f == 8:
+            break
+        n = head[1] & 0x7f
+        if n == 126:
+            n = struct.unpack(">H", inp.read(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", inp.read(8))[0]
+        mask = inp.read(4)
+        message = json.loads(bytes(b ^ mask[i % 4] for i, b in enumerate(inp.read(n))))
+        record("codex-daemon.jsonl", message)
+        method = message.get("method")
+        if "id" not in message:
+            continue
+        if method == "thread/start":
+            count = sum(1 for _ in open(os.path.join(fakes, "codex-daemon.jsonl"))
+                        if '"thread/start"' in _)
+            result = {{"thread": {{"id": f"fake-thread-{{count}}"}}}}
+        else:
+            result = {{}}
+        data = json.dumps({{"jsonrpc": "2.0", "id": message["id"], "result": result}}).encode()
+        out.write(bytes([0x81]) + (bytes([len(data)]) if len(data) < 126 else bytes([126]) + struct.pack(">H", len(data))) + data)
+        out.flush()
+elif args[:1] == ["queue"]:
+    record("codex-queue.jsonl", {{"thread": args[args.index("--thread") + 1], "message": args[args.index("--message") + 1]}})
+else:
+    with open(os.path.join(fakes, "codex.args"), "w") as f:
+        f.write("\\0".join(args))
+    with open(os.path.join(fakes, "codex.env"), "w") as f:
+        f.write("\\n".join(f"{{k}}={{v}}" for k, v in os.environ.items() if k.startswith("ASIDES_")))
+    with open(os.path.join(fakes, "codex.pwd"), "w") as f:
+        f.write(os.path.realpath(os.getcwd()))
+    time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
+""")
 
 
-def start(agent, sleep, *args):
-    env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "FAKE_SLEEP": str(sleep)}
+def daemon_calls(method):
+    with open(os.path.join(fakes, "codex-daemon.jsonl")) as f:
+        return [m.get("params", {}) for m in map(json.loads, f) if m.get("method") == method]
+
+
+def queued():
+    try:
+        with open(os.path.join(fakes, "codex-queue.jsonl")) as f:
+            return [json.loads(line) for line in f]
+    except FileNotFoundError:
+        return []
+
+
+def start(agent, sleep, *args, **extra):
+    env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "FAKE_SLEEP": str(sleep), **extra}
     env.pop("CLAUDECODE", None)
     proc = subprocess.Popen([cli, "-C", repo, agent, *args], stdout=subprocess.PIPE, text=True, env=env)
     wait_until(f"asides {agent} starts the agent", lambda: os.path.exists(os.path.join(fakes, agent + ".pwd")), 20)
@@ -353,7 +421,7 @@ def start(agent, sleep, *args):
     return proc, argv, env, cwd
 
 
-claude, argv, env, cwd = start("claude", 30, "--model", "opus")
+claude, argv, env, cwd = start("claude", 300, "--model", "opus")
 session = env.get("ASIDES_SESSION", "")
 check("asides claude starts Claude Code in the repo, listening as a new session",
       cwd == os.path.realpath(repo) and argv[0].startswith("Listen to my asides") and f"--session {session}" in argv[0]
@@ -366,12 +434,60 @@ check("its tools pre-approved, and the user's own arguments passed on",
 wait_until("the app sends the user's asides to it", lambda: f"asides go to Claude Code · {repo_name}" in status(), 15)
 check("it shows as starting until it listens", f"Claude Code · {repo_name}: starting" in status(), status())
 
-codex, argv, env, cwd = start("codex", 0)
-check("a second session in the repo gets its own worktree (Codex makes it)",
-      "--worktree" in argv and "worktree of" in argv[-1] and any("mcp_servers.asides.args=" in a for a in argv), argv)
+# Codex: a thread in its daemon, that asides pushes each aside into.
+tree = os.path.join(os.path.realpath(repo), ".asides", "worktrees")
+codex, argv, env, cwd = start("codex", 120)
+thread = daemon_calls("thread/start")[-1]
+codex_session = thread["config"]["mcp_servers"]["asides"]["args"][-1]
+check("asides codex starts a thread in Codex's daemon, with the session's MCP server",
+      thread["config"]["mcp_servers"]["asides"]["args"][:4] == ["-C", os.path.realpath(repo), "mcp", "--session"]
+      and env.get("ASIDES_SESSION") == codex_session, (thread, env))
+check("a second session in the repo works in a worktree asides makes",
+      thread["cwd"].startswith(tree + "/asides-") and cwd == thread["cwd"], (thread["cwd"], cwd))
+check("the thread is named, and its first prompt says asides come as messages",
+      daemon_calls("thread/name/set")[-1]["name"].endswith(f"asides {codex_session}")
+      and "as a message" in daemon_calls("turn/start")[-1]["input"][0]["text"])
+check("the Codex window opens that thread, without -c (that would lock it out)", argv == ["resume", "fake-thread-1"], argv)
+wait_until("it becomes the target", lambda: f"asides go to Codex · {repo_name} (asides-{codex_session})" in status(), 15)
+before = entries()
+simulate("en_bug.wav")
+wait_for_entries(before + 1)
+time.sleep(2.5)  # the app reads the session records every 2 s
+sent = subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True).stdout
+check("in batch mode, Send to Agent sends the batch to the Codex session", sent.startswith("Sent"), sent)
+wait_until("the batch is pushed into the thread (codex queue)",
+           lambda: any(q["thread"] == "fake-thread-1" and "padding on the summary card" in q["message"] for q in queued()), 120)
+check("as a message that says how to resolve it", "resolve_aside" in queued()[-1]["message"])
+codex.terminate()
+codex.wait(timeout=10)
+wait_until("closing the Codex window ends the session and its pusher",
+           lambda: f"Codex · {repo_name} (asides-{codex_session})" not in status()
+           and "fake-thread-1" not in subprocess.run(["ps", "-axo", "command"], capture_output=True, text=True).stdout, 15)
+
+env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"]}
+background = subprocess.run([cli, "-C", repo, "codex", "--background"], capture_output=True, text=True, env=env, timeout=60)
+check("asides codex --background starts the thread and returns", "codex resume fake-thread-2" in background.stdout,
+      background.stdout + background.stderr)
+record = next(json.load(open(f)) for f in glob.glob(os.path.join(sessions_dir, "*.json"))
+              if json.load(open(f)).get("thread") == "fake-thread-2")
+check("its session lasts as long as what pushes into the thread", record["background"] and record["pushed"]
+      and record["pid"] > 0, record)
+wait_until("it becomes the target", lambda: f"asides go to Codex · {repo_name}" in status(), 15)
+before = entries()
+simulate("ro_bug.wav")
+wait_for_entries(before + 1)
+time.sleep(2.5)
+subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True)
+wait_until("asides reach the thread with no Codex window open",
+           lambda: any(q["thread"] == "fake-thread-2" and "Butonul" in q["message"] for q in queued()), 120)
+os.kill(record["pid"], 15)  # Stop, from the menu
+wait_until("stopping it ends the session", lambda: f"asides go to Claude Code · {repo_name}" in status(), 15)
+
+codex, argv, env, cwd = start("codex", 0, "--no-worktree", FAKE_NO_DAEMON="1")
+check("without Codex's daemon, Codex waits for asides in a tool call instead",
+      "To listen, call the wait_for_asides tool" in argv[-1] and any("mcp_servers.asides.args=" in a for a in argv), argv)
 codex.wait(timeout=10)
 opencode, argv, env, cwd = start("opencode", 0)
-tree = os.path.join(os.path.realpath(repo), ".asides", "worktrees")
 opencode_config = json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))
 check("for OpenCode, asides makes the worktree, in the notes folder",
       cwd.startswith(tree + "/asides-") and "--standalone" in argv

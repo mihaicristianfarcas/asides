@@ -50,14 +50,22 @@ impl AgentKind {
         AgentKind::ALL.into_iter().find(|k| k.program() == program)
     }
 
-    /// Claude Code runs sessions in the background (`claude --bg`) that `claude attach` opens.
+    /// Claude Code runs sessions in the background (`claude --bg`, which `claude attach` opens),
+    /// and so does Codex (a thread in its app-server daemon, which `codex resume` opens). OpenCode
+    /// would need `opencode run`, which its free tier refuses.
     pub fn runs_in_background(self) -> bool {
+        matches!(self, AgentKind::Claude | AgentKind::Codex)
+    }
+
+    /// Claude Code makes a git worktree itself when asked; for the others, asides does.
+    pub fn makes_worktrees(self) -> bool {
         self == AgentKind::Claude
     }
 
-    /// Claude Code and Codex make a git worktree themselves when asked; for OpenCode, asides does.
-    pub fn makes_worktrees(self) -> bool {
-        matches!(self, AgentKind::Claude | AgentKind::Codex)
+    /// Asides can hand Codex each aside as a message (`codex queue`), so it doesn't have to wait
+    /// for them in a tool call.
+    pub fn takes_pushes(self) -> bool {
+        self == AgentKind::Codex
     }
 
     /// Claude Code watches `asides listen` with its Monitor tool; the others wait in a tool call.
@@ -81,6 +89,8 @@ pub enum Via {
     Monitor(String),
     /// Waiting in `wait_for_asides` calls.
     Wait,
+    /// Asides sends each aside as a message.
+    Messages,
 }
 
 /// The listen prompt: what the agent is asked first, or gets from `/asides:listen`. `worktree` is
@@ -108,6 +118,11 @@ pub fn listen_prompt(via: &Via, worktree: Option<&Path>) -> String {
              listening. If you don't have the Monitor tool, {wait}"
         )),
         Via::Wait => text.push_str(&format!("\n\nTo listen, {wait}")),
+        Via::Messages => text.push_str(
+            "\n\nAsides sends you each aside as a message as soon as it's transcribed (or a batch, when I send \
+             them): act on it when it arrives. There's nothing to wait for or poll in between; I may ask you \
+             other things. For now, say in a sentence that you're ready.",
+        ),
     }
     text.push_str(
         "\n\nWhen you've handled an aside, call resolve_aside with its number and a short summary of what you \
@@ -133,6 +148,8 @@ pub struct Launch<'a> {
     pub worktree: Option<&'a str>,
     /// Start a Claude Code background session.
     pub background: bool,
+    /// Open this Codex thread (`codex resume`), which asides started, instead of a new session.
+    pub thread: Option<&'a str>,
     /// OpenCode before 2.0: servers sit directly under `mcp`, and there's no shared background
     /// service to stay away from.
     pub opencode_1: bool,
@@ -171,6 +188,13 @@ pub fn command(launch: &Launch) -> Command {
             }
             args.extend(launch.extra.iter().cloned());
         }
+        // A thread asides started in Codex's daemon already has its MCP server and first prompt.
+        // It opens without `-c`: with configuration of its own, Codex runs a server of its own,
+        // which the daemon's thread is locked against ("open in another app").
+        AgentKind::Codex if launch.thread.is_some() => {
+            args.extend(launch.extra.iter().cloned());
+            args.extend(["resume".into(), launch.thread.unwrap_or_default().into()]);
+        }
         AgentKind::Codex => {
             server.extend(["--timeout".into(), CODEX_WAIT.to_string()]);
             let set = |key: &str, value: String| ["-c".to_string(), format!("mcp_servers.asides.{key}={value}")];
@@ -180,9 +204,6 @@ pub fn command(launch: &Launch) -> Command {
                 format!("[{}]", server.iter().map(|a| toml_string(a)).collect::<Vec<_>>().join(", ")),
             ));
             args.extend(set("tool_timeout_sec", CODEX_TOOL_TIMEOUT.to_string()));
-            if launch.worktree.is_some() {
-                args.push("--worktree".into());
-            }
             args.extend(launch.extra.iter().cloned());
             args.push(launch.prompt.into());
         }
@@ -205,6 +226,12 @@ pub fn command(launch: &Launch) -> Command {
     Command { program: launch.kind.program().into(), args, env }
 }
 
+/// The configuration a Codex thread asides starts gets: its MCP server, for the session.
+pub fn codex_thread_config(asides: &str, repo: &Path, session: &str) -> serde_json::Value {
+    let args = ["-C", &repo.to_string_lossy(), "mcp", "--session", session].map(String::from);
+    json!({ "mcp_servers": { "asides": { "command": asides, "args": args } } })
+}
+
 /// `text` as a TOML string (a JSON string is a valid TOML basic string).
 fn toml_string(text: &str) -> String {
     serde_json::Value::from(text).to_string()
@@ -225,6 +252,7 @@ mod tests {
             listen_prefix: Some("asides listen"),
             worktree: None,
             background: false,
+            thread: None,
             opencode_1: false,
             extra: &[],
         }
@@ -262,8 +290,17 @@ mod tests {
     }
 
     #[test]
+    fn codex_opens_the_thread_asides_started() {
+        let command = command(&Launch { thread: Some("01a1-thread"), ..launch(AgentKind::Codex) });
+        assert_eq!(command.args, ["resume", "01a1-thread"], "no -c: it would lock Codex out of the thread");
+        let config = codex_thread_config("asides", Path::new("/r/shop"), "s1");
+        assert_eq!(config.pointer("/mcp_servers/asides/args/4").unwrap(), "s1");
+        assert!(listen_prompt(&Via::Messages, None).contains("as a message"));
+    }
+
+    #[test]
     fn codex_gets_config_overrides_and_long_waits() {
-        let command = command(&Launch { worktree: Some("x"), ..launch(AgentKind::Codex) });
+        let command = command(&launch(AgentKind::Codex));
         assert_eq!(
             command.args,
             [
@@ -274,7 +311,6 @@ mod tests {
                  \"--timeout\", \"3000\"]",
                 "-c",
                 "mcp_servers.asides.tool_timeout_sec=3600",
-                "--worktree",
                 "Listen to my asides."
             ]
         );

@@ -79,7 +79,7 @@ deleted.
 |---|---|---|
 | Unit | `make test` | notes, metadata, Markdown, git info, links, state, config, resampling, language choice, icon rendering, measuring (edges, snapping, guides, colors), the Measure & Annotate session (measuring, holds, guides, marks, drawings, screenshots, restore) and its Markdown, the overlay's keys and protocol, rendering a session's screenshot offscreen, threads, the MCP feedback-loop tools, `asides measure` |
 | Speech | `make test-speech` | transcription of the fixtures (needs the model) and a real model download with checksum check (190 MB) |
-| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a scripted Measure & Annotate session on a drawn screen instead of the real one (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (listening making its session the target, each and batch delivery, two sessions in one repo each getting only their own asides, Send to Agent, cancelling, `asides listen`, sending with no agent listening, resolving, dismissing and replying to marks, `measure_image`), plus fake agents for `asides claude`, `codex` and `opencode` (their command lines, worktrees for a second session, pruning them). It restores your `config.toml` afterwards |
+| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a scripted Measure & Annotate session on a drawn screen instead of the real one (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (listening making its session the target, each and batch delivery, two sessions in one repo each getting only their own asides, Send to Agent, cancelling, `asides listen`, sending with no agent listening, resolving, dismissing and replying to marks, `measure_image`), plus fake agents for `asides claude`, `codex` and `opencode` (their command lines, worktrees for a second session, pruning them; a fake Codex daemon and `codex queue` for pushed Codex sessions, in a window and in the background, and the fallback without the daemon). It restores your `config.toml` afterwards |
 | Overlay replay | below | the real overlay windows, driven by AppKit mouse and key events, captured to PNGs you look at |
 | Manual | checklist below | everything a script can't do: the microphone, shortcuts, menus, your own hand on the overlay, and permissions |
 
@@ -165,7 +165,9 @@ in your pull request what you tried.
   target under Asides Go To; Codex and OpenCode the same, waiting in `wait_for_asides`. A second
   session in the repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the menu bar
   saying where asides go, and a recording shows `→ <agent>` while it runs and reaches only that
-  session. Claude Code in the Background starts without a window; Show opens it. Quitting the
+  session. A Codex session gets each aside as a message, in its window, without waiting in a tool
+  call. Claude Code and Codex in the Background start without a window; Show opens them (Codex in
+  its worktree, without asking which directory) and Stop ends them. Quitting the
   target agent hands asides to another session in the repo, or Notes Only. From Spotlight, with
   Asides not bound: New Agent Session ▸ In Another Directory… starts one after choosing a folder.
 - [ ] **Installed by hand:** with no `asides` command anywhere, opening `/Applications/Asides.app`

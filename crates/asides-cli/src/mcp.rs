@@ -326,6 +326,15 @@ impl Server {
             let client = agents::client_label(&session.client);
             (session.dir.clone(), session.id.clone(), client, session.listening.is_some())
         };
+        // Asides pushes this session's asides into the conversation (`asides codex`).
+        if SessionRecord::read(&paths::sessions_dir(), &id).is_some_and(|s| s.pushed) {
+            return Some(tool_text(
+                "Asides sends the user's asides to this session as messages, as they're recorded: there's \
+                 nothing to wait for."
+                    .into(),
+                false,
+            ));
+        }
         // The first wait: this session listens, and the user's asides come to it.
         if !started {
             let (listening, made) = session::listen(&dir, &id, &client);
@@ -408,12 +417,15 @@ impl Server {
 /// The listen prompt. Claude Code can watch `asides listen` with its Monitor tool and stay free in
 /// between; other agents wait in a tool call.
 fn listen_prompt(client: &str, dir: &Path, id: &str) -> String {
-    let via = if client.to_ascii_lowercase().contains("claude") {
+    let record = SessionRecord::read(&paths::sessions_dir(), id);
+    let via = if record.as_ref().is_some_and(|s| s.pushed) {
+        Via::Messages
+    } else if client.to_ascii_lowercase().contains("claude") {
         Via::Monitor(crate::listen::command(dir, Some(LISTEN_SECS), None, Some(id)))
     } else {
         Via::Wait
     };
-    let worktree = SessionRecord::read(&paths::sessions_dir(), id).and_then(|s| s.worktree).map(|_| dir);
+    let worktree = record.and_then(|s| s.worktree).map(|_| dir);
     launch::listen_prompt(&via, worktree)
 }
 
