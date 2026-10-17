@@ -295,10 +295,12 @@ pub fn background(frame: &Frame, rect: Rect) -> Option<Rgb> {
     counts.into_iter().max_by_key(|&(rgb, n)| (n, rgb)).map(|(rgb, _)| rgb)
 }
 
-/// Which pixels of `rect` (row by row) are drawn on its background: those its outline can't reach
-/// without crossing a sharp change, stepping across and down. What the background does on the way
-/// doesn't matter (a gradient, a soft shadow, what glass blurs behind it); what's drawn on it has
-/// edges. Something that crosses the outline counts as background.
+/// Which pixels of `rect` (row by row) are drawn on its background: those the background on its
+/// outline can't reach without crossing a sharp change, stepping across and down. What the
+/// background does on the way doesn't matter (a gradient, a soft shadow, what glass blurs behind
+/// it); what's drawn on it has edges. The outline's background is its longest stretch without a
+/// sharp change, and the stretches colored like it: what crosses the outline (a button the area
+/// cuts into) is drawn on it.
 ///
 /// Between two neighbours there's an edge when they differ by more than `threshold`, or when one
 /// of them and the pixel beyond the other do while that pair is alike: an edge that anti-aliasing
@@ -357,8 +359,15 @@ fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
     }
     drop((down_one, down_two));
     let mut reached = vec![false; w * h];
-    let mut stack: Vec<(usize, usize)> =
-        (0..w).flat_map(|x| [(x, 0), (x, h - 1)]).chain((0..h).flat_map(|y| [(0, y), (w - 1, y)])).collect();
+    let pixel = |x: usize, y: usize| {
+        let i = (rect.y as usize + y) * stride + (rect.x as usize + x) * 4;
+        [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2]]
+    };
+    let mut stack = outline_background(w, h, threshold, pixel, |a, b| {
+        // Neighbours on the outline: across or down from one another.
+        let (first, second) = if (a.1, a.0) < (b.1, b.0) { (a, b) } else { (b, a) };
+        if first.1 == second.1 { edge_across[second.1 * w + second.0] } else { edge_down[second.1 * w + second.0] }
+    });
     while let Some((x, y)) = stack.pop() {
         let row = y * w;
         if reached[row + x] {
@@ -386,6 +395,64 @@ fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
         }
     }
     reached.into_iter().map(|r| !r).collect()
+}
+
+/// The pixels on the outline of a `w` × `h` area that are its background: its longest stretch
+/// without an edge (`edge` between two neighbours on it), the stretches whose average color is
+/// within `threshold` of that one's, and any as long as a quarter of the outline (an object across
+/// the area cuts the background in two, and behind glass the two halves differ).
+fn outline_background(
+    w: usize,
+    h: usize,
+    threshold: u8,
+    pixel: impl Fn(usize, usize) -> [u8; 3],
+    edge: impl Fn((usize, usize), (usize, usize)) -> bool,
+) -> Vec<(usize, usize)> {
+    // Clockwise from the top-left corner, each pixel once.
+    let mut ring: Vec<(usize, usize)> = (0..w).map(|x| (x, 0)).collect();
+    ring.extend((1..h).map(|y| (w - 1, y)));
+    if h > 1 {
+        ring.extend((0..w.saturating_sub(1)).rev().map(|x| (x, h - 1)));
+    }
+    if w > 1 {
+        ring.extend((1..h.saturating_sub(1)).rev().map(|y| (0, y)));
+    }
+    let n = ring.len();
+    let cuts: Vec<usize> = (0..n).filter(|&i| n > 1 && edge(ring[i], ring[(i + 1) % n])).map(|i| (i + 1) % n).collect();
+    if cuts.is_empty() {
+        return ring;
+    }
+    // Stretches between cuts (going round), each with its color summed.
+    let stretches: Vec<Vec<(usize, usize)>> = cuts
+        .iter()
+        .enumerate()
+        .map(|(k, &start)| {
+            let end = cuts[(k + 1) % cuts.len()];
+            let len = (end + n - start - 1) % n + 1;
+            (0..len).map(|j| ring[(start + j) % n]).collect()
+        })
+        .collect();
+    let average = |stretch: &[(usize, usize)]| {
+        let mut sum = [0u64; 3];
+        for &(x, y) in stretch {
+            let p = pixel(x, y);
+            (0..3).for_each(|c| sum[c] += p[c] as u64);
+        }
+        sum.map(|c| (c / stretch.len().max(1) as u64) as u8)
+    };
+    let longest = stretches.iter().max_by_key(|s| s.len()).expect("a cut makes a stretch");
+    let background = average(longest);
+    stretches
+        .iter()
+        .filter(|s| {
+            s.len() == longest.len() || s.len() * 4 >= n || {
+                let color = average(s);
+                (0..3).all(|c| color[c].abs_diff(background[c]) <= threshold)
+            }
+        })
+        .flatten()
+        .copied()
+        .collect()
 }
 
 /// The bounds of whatever `rect` surrounds: the smallest rectangle holding everything drawn on its
@@ -700,6 +767,16 @@ mod tests {
     }
 
     #[test]
+    fn an_area_cutting_into_an_object_still_snaps_to_it() {
+        // A drag around the button that cuts into its left edge: the button, as far as the area
+        // goes, not the text on it.
+        let frame = button();
+        assert_eq!(snap_area(&frame, Rect::new(44, 25, 70, 30), Tolerance::DEFAULT), Some(Rect::new(44, 30, 56, 20)));
+        let found = objects(&frame, Rect::new(44, 25, 70, 30), Tolerance::DEFAULT, 3);
+        assert_eq!(found, [Rect::new(44, 30, 56, 20)]);
+    }
+
+    #[test]
     fn soft_shadows_and_gradients_are_not_edges() {
         // A white card on a page that darkens downwards, with a shadow under it that fades into
         // the page over 24 px.
@@ -734,7 +811,8 @@ mod tests {
         // The pixel between is as close to either side: both runs take it.
         let d = distance_at(&frame, 60, 20, Tolerance::DEFAULT, &Stops::default()).unwrap();
         assert_eq!(d.horizontal, Span { start: 30, end: 100 });
-        assert_eq!(snap_area(&frame, Rect::new(5, 5, 90, 30), Tolerance::DEFAULT), None, "the card crosses the area");
+        // An area across the edge has two backgrounds and nothing drawn on them.
+        assert_eq!(snap_area(&frame, Rect::new(5, 5, 90, 30), Tolerance::DEFAULT), None);
         assert_eq!(snap_area(&frame, Rect::new(5, 5, 40, 30), Tolerance::DEFAULT), None);
     }
 
