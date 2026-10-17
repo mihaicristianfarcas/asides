@@ -304,8 +304,7 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn new(spec: Spec, frames: Vec<Frame>, dir: PathBuf, commands: Receiver<Command>) -> Overlay {
-        let screens =
-            spec.screens.iter().zip(&frames).map(|(s, f)| Session::screen(s.screen.clone(), f.clone())).collect();
+        let screens = spec.screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
         let mut session = Session::new(screens, Tolerance(spec.tolerance.min(100)), spec.units);
         session.tool = Tool::Measure;
         // Opened over the live screen, there are no frozen screens yet.
@@ -409,7 +408,7 @@ impl Overlay {
                 _ => return self.notice("Could not freeze the screen."),
             }
         }
-        let states = screens.iter().zip(&frames).map(|(s, f)| Session::screen(s.screen.clone(), f.clone())).collect();
+        let states = screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
         self.session = self.session.refrozen(states);
         if let Some(tool) = tool {
             self.session.set_tool(tool);

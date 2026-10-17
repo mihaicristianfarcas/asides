@@ -33,6 +33,26 @@ impl Attachment {
     }
 }
 
+/// Drops the places in `texts` (`**In:** …`, each a text of its own: where the user was when they
+/// started talking) that say where the last place before them already said, in the entry's order;
+/// a block that names its place (an annotated screenshot's) says it too. Sorts `texts` by offset.
+pub fn without_repeated_places(texts: &mut Vec<(f32, String)>) {
+    texts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut last: Option<String> = None;
+    texts.retain(|(_, text)| {
+        let place = |line: &str| line.starts_with(crate::inspect::PLACE).then(|| line.to_string());
+        if !text.contains('\n')
+            && let Some(here) = place(text.trim())
+        {
+            return last.replace(here.clone()).is_none_or(|before| before != here);
+        }
+        if let Some(named) = text.lines().rev().find_map(|l| place(l.trim())) {
+            last = Some(named);
+        }
+        true
+    });
+}
+
 /// `## 3 · 14:38` followed by the verbatim transcript. Each image is placed before the first
 /// segment that starts at or after the moment it was attached, splitting the paragraph there.
 pub fn compose_entry(
@@ -154,6 +174,21 @@ mod tests {
 
     fn img(offset: f32, n: u32) -> Attachment {
         Attachment { offset, rel_path: format!("images/0{n}.png"), label: format!("img{n}"), text: None }
+    }
+
+    #[test]
+    fn says_each_place_once() {
+        let mut texts = vec![
+            (5.0, "**In:** Safari · \"Shop\"".to_string()),
+            (0.0, "**In:** Safari · \"Shop\"".to_string()),
+            (2.0, "- Distance 12 across".to_string()),
+            (8.0, "![shot](images/1.png)\n\n**In:** Simulator\n### 1. button".to_string()),
+            (9.0, "**In:** Simulator".to_string()),
+            (12.0, "**In:** Safari · \"Shop\"".to_string()),
+        ];
+        without_repeated_places(&mut texts);
+        let offsets: Vec<f32> = texts.iter().map(|t| t.0).collect();
+        assert_eq!(offsets, [0.0, 2.0, 8.0, 12.0], "{texts:?}");
     }
 
     #[test]

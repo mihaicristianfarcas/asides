@@ -515,6 +515,9 @@ impl Annotation {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inspection {
     pub screen: Screen,
+    /// Where the user was on the screen, said when the annotations don't say it.
+    #[serde(default)]
+    pub place: Option<String>,
     #[serde(default)]
     pub units: Units,
     #[serde(default)]
@@ -631,13 +634,16 @@ impl Inspection {
         places.all(|p| p.as_ref() == Some(&first)).then_some(first)
     }
 
-    /// `**In:** Safari · "Settings" · http://localhost:3000/settings`, when all annotations share it.
+    /// `**In:** Safari · "Settings" · http://localhost:3000/settings`, when all annotations share it,
+    /// or where the user was on the screen when it froze, when no annotation says otherwise.
     pub fn context_markdown(&self) -> Option<String> {
-        let (app, window, url) = self.shared_context()?;
-        let mut parts = vec![app];
-        parts.extend(window.map(|w| quote(&w)));
-        parts.extend(url);
-        Some(format!("**In:** {}", parts.join(" · ")))
+        match self.shared_context() {
+            Some((app, window, url)) => Some(place_markdown(&app, window.as_deref(), url.as_deref())),
+            None if self.annotations.iter().all(|a| a.element.as_ref().and_then(|e| e.app.as_ref()).is_none()) => {
+                self.place.clone()
+            }
+            None => None,
+        }
     }
 
     pub fn annotation_markdown(&self, annotation: &Annotation, detail: Detail) -> String {
@@ -797,6 +803,17 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "'"))
 }
 
+/// Where something was, in an app: `**In:** Safari · "Settings — Shop" · http://localhost:3000/settings`.
+pub fn place_markdown(app: &str, window: Option<&str>, url: Option<&str>) -> String {
+    let mut parts = vec![app.to_string()];
+    parts.extend(window.filter(|w| !w.trim().is_empty()).map(quote));
+    parts.extend(url.filter(|u| !u.is_empty()).map(String::from));
+    format!("{PLACE}{}", parts.join(" · "))
+}
+
+/// How a place begins (see [`place_markdown`]).
+pub const PLACE: &str = "**In:** ";
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
@@ -884,6 +901,7 @@ mod tests {
 
     fn inspection() -> Inspection {
         Inspection {
+            place: None,
             screen: screen(),
             units: Units::Pt,
             measurements: vec![
@@ -974,6 +992,14 @@ mod tests {
         finder.element = Some(Element { app: Some("Finder".into()), name: Some("row".into()), ..Element::default() });
         let mixed = Inspection { annotations: vec![a.clone(), finder.clone()], ..inspection() };
         assert_eq!(mixed.context_markdown(), None);
+        // Where the user was, when no annotation says where it is.
+        let placed = |annotations| Inspection {
+            annotations,
+            place: Some("**In:** Simulator · \"iPhone 17\"".into()),
+            ..inspection()
+        };
+        assert_eq!(placed(vec![]).context_markdown().as_deref(), Some("**In:** Simulator · \"iPhone 17\""));
+        assert_eq!(placed(vec![a.clone(), finder.clone()]).context_markdown(), None, "annotations in different apps");
         assert!(
             mixed.annotation_markdown(a, Detail::Standard).contains("**App:** Safari · \"Settings — Shop\"\n**Page:**")
         );

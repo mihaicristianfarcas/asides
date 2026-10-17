@@ -279,7 +279,11 @@ And then the heading.
 
 The screenshot comes just before the first thing you did on that screen, with where the annotations
 are (`**In:** Safari · "Settings — Shop" · http://localhost:3000/settings`, when they're all in the
-same app and page), the screen and units of the measurements, and the guides. Then each
+same app and page; without annotations, the app and window you were in), the screen and units of
+the measurements, and the guides. What you say gets the same line where you start talking, and
+again whenever you're somewhere else, so an agent knows which app, window and page you meant even
+when there's no screenshot (the page's address needs Identify UI Elements; window titles, the
+Screen Recording permission Asides already has to freeze the screen). Then each
 measurement and annotation is placed when you made it, among what you said; measurements made one
 after another stay one list. An entry made without talking is marked `· Screen`, with the same
 blocks in the order you made them. Images added to an aside are at most 1568 pixels on their long

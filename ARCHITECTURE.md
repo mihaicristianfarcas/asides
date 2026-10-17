@@ -191,6 +191,10 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    shortcut held, or `measure.record`):
    - checks the binding and the microphone permission, and starts cpal
    - snapshots the environment (browser, display) and the clipboard's change count
+   - looks up where the user is (`elements::place`, on a thread of its own: an app can be slow to
+     answer accessibility): the frontmost window of the app a frozen screen stands for, or of the
+     one in front, its title, and the page's URL with `identify_elements`. It goes in the aside as
+     `**In:** …` where the take starts (`markdown::without_repeated_places` drops repeats)
    - consumes any pending "new note" request
    - plays the start sound
 2. **While recording** (`tick`, every 250 ms): updates the timer in the menu bar. With
@@ -214,7 +218,9 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
 1. **Open** (`App::open_asides`, on `⌃⌥Space`, `⌃⌥N`, `⌃⌥P`, the menu or `asides annotate`): Asides
    opens frozen. `capture_screens` checks the Screen Recording permission (asking for it the first
    time), lists the displays and snapshots the window list and the frontmost app, then asks
-   ScreenCaptureKit for one sRGB screenshot per display. On `UserEvent::Captured`, `show_overlay`:
+   ScreenCaptureKit for one sRGB screenshot per display, and looks up where the user is (as a
+   recording does) while it does: it goes with the screen holding that window (`SpecScreen::place`),
+   said with its screenshot when no annotation says where it is. On `UserEvent::Captured`, `show_overlay`:
    `overlay::start` writes each display's pixels and `session.json` (`helper::Spec`: the screens, the
    settings and keys, the last session's guides, the toolbar's place, whether a recording is under
    way; `live` opens it over the live screen instead, for development) into a temporary session

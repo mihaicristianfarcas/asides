@@ -63,6 +63,8 @@ impl Tool {
 pub struct ScreenState {
     pub screen: Screen,
     pub frame: Frame,
+    /// Where the user was on it when it froze (`helper::SpecScreen::place`).
+    pub place: Option<String>,
     pub guides: Vec<Guide>,
     pub held: Vec<Measurement>,
     /// When each held measurement was made, in seconds into the session.
@@ -247,10 +249,16 @@ impl Session {
         }
     }
 
+    /// A frozen screen as the app described it, and its pixels.
+    pub fn from_spec(spec: &crate::helper::SpecScreen, frame: Frame) -> ScreenState {
+        ScreenState { place: spec.place.clone(), ..Session::screen(spec.screen.clone(), frame) }
+    }
+
     pub fn screen(screen: Screen, frame: Frame) -> ScreenState {
         ScreenState {
             screen,
             frame,
+            place: None,
             guides: Vec::new(),
             held: Vec::new(),
             held_times: Vec::new(),
@@ -895,6 +903,7 @@ impl Session {
                     i,
                     Inspection {
                         screen: s.screen.clone(),
+                        place: s.place.clone(),
                         units: self.units,
                         measurements: s.held.clone(),
                         measurement_times: s.held_times.clone(),

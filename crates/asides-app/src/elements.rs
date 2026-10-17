@@ -121,6 +121,20 @@ pub fn identify(windows: &[WindowInfo], x: f64, y: f64, deep: bool) -> Option<El
     Some(Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes))
 }
 
+/// Where the user is in the app with process id `pid`: its frontmost window, and with `deep` (and
+/// the permission) the page in it, as `**In:** Safari · "Checkout — Shop" · http://…`, and that
+/// window's frame. `None` when it has no window on screen. Window titles need the Screen Recording
+/// permission.
+pub fn place(pid: i32, deep: bool) -> Option<(String, PtRect)> {
+    let windows = windows(None);
+    let window = windows.iter().find(|w| w.pid == pid && w.layer == 0)?;
+    let b = window.bounds;
+    let nodes = if deep && trusted() { element_at(pid, b.x + b.width / 2.0, b.y + b.height / 2.0) } else { Vec::new() };
+    let element = Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes);
+    let place = asides_core::inspect::place_markdown(&window.app, window.title.as_deref(), element.url.as_deref());
+    Some((place, b))
+}
+
 /// An accessibility object we own (+1), released when dropped.
 struct Ax(Retained<AnyObject>);
 
@@ -238,4 +252,23 @@ pub fn element_at(pid: i32, x: f64, y: f64) -> Vec<Node> {
         current = element.attribute("AXParent").map(Ax);
     }
     nodes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Prints where the user is in the app in front (and in Safari, when it's open): run with
+    /// `--ignored --nocapture`; titles need the Screen Recording permission, URLs Accessibility.
+    #[test]
+    #[ignore]
+    fn prints_the_place_in_front() {
+        let front = crate::macos::frontmost_app().unwrap();
+        println!("front: {:?}", place(front, true));
+        for app in objc2_app_kit::NSWorkspace::sharedWorkspace().runningApplications() {
+            if app.bundleIdentifier().is_some_and(|id| id.to_string() == "com.apple.Safari") {
+                println!("Safari: {:?}", place(app.processIdentifier(), true));
+            }
+        }
+    }
 }

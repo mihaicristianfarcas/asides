@@ -71,8 +71,7 @@ fn run(dir: &Path) -> anyhow::Result<()> {
 /// Plays a script, without windows, and writes the result. `live` and `freeze` steps go back to
 /// the live screen and freeze it again (the same image).
 fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> anyhow::Result<()> {
-    let screens =
-        || spec.screens.iter().zip(&frames).map(|(s, f)| Session::screen(s.screen.clone(), f.clone())).collect();
+    let screens = || spec.screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
     let mut session = Session::new(screens(), Tolerance(spec.tolerance.min(100)), spec.units);
     let refs: Vec<&Frame> = frames.iter().collect();
     let exporter = export::Exporter::new(&refs, style::parse_color(&spec.color));

@@ -124,6 +124,8 @@ struct Recording {
     clipboard: isize,
     /// Started from an annotation's card in Measure & Annotate (its key): what's said is about it.
     annotation: Option<u32>,
+    /// Where the user was when they started talking (`**In:** …`), once it's been looked up.
+    place: Arc<Mutex<Option<String>>>,
 }
 
 /// A recording that ended while Measure & Annotate was open. What's said in a session waits for
@@ -242,7 +244,7 @@ struct App {
     wispr: Option<Arc<AtomicBool>>,
     /// Measure & Annotate: when the screens were asked for, the screens, and the windows on them
     /// when the shortcut was pressed (until the capture arrives).
-    capturing: Option<(Instant, Vec<ScreenInfo>, Vec<WindowInfo>)>,
+    capturing: Option<Capturing>,
     /// Measure & Annotate's overlay, while it's open.
     overlay: Option<Overlay>,
     /// What was said in the open Measure & Annotate session, until it ends.
@@ -830,6 +832,20 @@ impl App {
         };
         let route = self.route(&dir);
         let to_agent = self.target_session().filter(|s| s.dir == dir).map(|s| s.agent.clone());
+        // Where the user is, for the aside: in the app a frozen screen stands for, or the one in
+        // front. Looked up aside, since an app can take a moment to answer accessibility.
+        let place = Arc::new(Mutex::new(None));
+        let frozen = self.overlay.as_ref().filter(|o| o.frozen);
+        let pid = frozen
+            .map_or_else(macos::frontmost_app, |o| o.previous_app)
+            .filter(|&pid| pid != std::process::id() as i32);
+        if let (Some(pid), None) = (pid, annotation) {
+            let (place, deep) = (place.clone(), self.config.measure.identify_elements);
+            std::thread::spawn(move || {
+                let found = elements::place(pid, deep).map(|(place, _)| place);
+                *place.lock().unwrap() = found;
+            });
+        }
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -845,6 +861,7 @@ impl App {
             pressed,
             clipboard: clipboard::change_count(),
             annotation,
+            place,
         });
         // A recording started in Asides (with its talk key, a microphone, or the shortcut) ends
         // with it.
@@ -901,6 +918,10 @@ impl App {
         let (samples, sample_rate) = recording.recorder.finish();
         self.sound("Pop");
         self.sync_session_hotkey();
+        let mut texts = recording.texts;
+        if let Some(place) = recording.place.lock().unwrap().take() {
+            texts.insert(0, (0.0, place));
+        }
         Some(Take {
             started_at: recording.started_at,
             started: recording.started,
@@ -908,7 +929,7 @@ impl App {
             new_note: recording.new_note,
             route: recording.route,
             images: recording.images,
-            texts: recording.texts,
+            texts,
             environment: recording.environment,
             samples,
             sample_rate,
@@ -1042,7 +1063,7 @@ impl App {
     /// opens frozen once the screenshots arrive, or, open, freezes (`freeze_overlay`).
     fn capture_screens(&mut self) {
         // A capture that never answered doesn't block the next one for long.
-        if self.capturing.as_ref().is_some_and(|(at, ..)| at.elapsed() < CAPTURE_TIMEOUT) {
+        if self.capturing.as_ref().is_some_and(|c| c.at.elapsed() < CAPTURE_TIMEOUT) {
             return;
         }
         if !capture::permitted() {
@@ -1065,10 +1086,20 @@ impl App {
         // the app the user is in, to give the keyboard back to when the screen goes live again.
         let overlay = self.overlay.as_mut();
         let without = overlay.as_ref().map(|o| o.pid());
+        let front = macos::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
         if let Some(overlay) = overlay {
-            overlay.previous_app = macos::frontmost_app();
+            overlay.previous_app = front;
         }
-        self.capturing = Some((Instant::now(), screens, elements::windows(without)));
+        // Where the user is, for the screenshot's aside, looked up aside while the screens are taken.
+        let place = Arc::new(Mutex::new(None));
+        if let Some(pid) = front {
+            let (place, deep) = (place.clone(), self.config.measure.identify_elements);
+            std::thread::spawn(move || {
+                let found = elements::place(pid, deep);
+                *place.lock().unwrap() = found;
+            });
+        }
+        self.capturing = Some(Capturing { at: Instant::now(), screens, windows: elements::windows(without), place });
         let proxy = Mutex::new(self.proxy.clone());
         capture::capture(displays, without, move |result| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::Captured(result));
@@ -1077,8 +1108,8 @@ impl App {
 
     /// Asides, open over the live screen, frozen: the screenshots go to its overlay.
     fn freeze_overlay(&mut self, captures: Vec<Capture>) {
-        let Some((_, screens, windows)) = self.capturing.take() else { return };
-        let (spec_screens, frames) = spec_screens(screens, captures);
+        let Some(Capturing { screens, windows, place, .. }) = self.capturing.take() else { return };
+        let (spec_screens, frames) = spec_screens(screens, captures, place.lock().unwrap().take());
         let Some(overlay) = &mut self.overlay else { return };
         overlay.windows = windows;
         if spec_screens.is_empty() {
@@ -1091,8 +1122,8 @@ impl App {
     }
 
     fn show_overlay(&mut self, captures: Vec<Capture>) {
-        let Some((_, screens, windows)) = self.capturing.take() else { return };
-        let (spec_screens, frames) = spec_screens(screens, captures);
+        let Some(Capturing { screens, windows, place, .. }) = self.capturing.take() else { return };
+        let (spec_screens, frames) = spec_screens(screens, captures, place.lock().unwrap().take());
         if spec_screens.is_empty() {
             return self.fail("Could not capture the screen.".into());
         }
@@ -1433,6 +1464,7 @@ impl App {
             new_note = new_note.or(take.new_note);
             add(take.images, take.texts, start);
         }
+        asides_core::markdown::without_repeated_places(&mut texts);
         self.submit(Job::Recording(Box::new(RecordingJob {
             dir: first.dir,
             samples: joined.samples,
@@ -2219,16 +2251,28 @@ impl App {
             pixels: String::new(),
             width: frame.width,
             height: frame.height,
+            place: None,
         };
         let spec = Spec { screens: vec![screen], script: Some(script), ..self.overlay_spec() };
         self.open_overlay(spec, &[frame], Vec::new())
     }
 }
 
-/// The captured screens, as the overlay gets them, and their pixels.
+/// A freeze under way: when it began, the screens and windows as they were, and where the user
+/// is (being looked up: the place and its window's frame).
+struct Capturing {
+    at: Instant,
+    screens: Vec<ScreenInfo>,
+    windows: Vec<WindowInfo>,
+    place: Arc<Mutex<Option<(String, PtRect)>>>,
+}
+
+/// The captured screens, as the overlay gets them, and their pixels; `place` goes with the screen
+/// its window is on.
 fn spec_screens(
     screens: Vec<ScreenInfo>,
     captures: Vec<Capture>,
+    place: Option<(String, PtRect)>,
 ) -> (Vec<SpecScreen>, Vec<asides_core::measure::Frame>) {
     let mut captures: Vec<Option<Capture>> = captures.into_iter().map(Some).collect();
     let mut frames = Vec::new();
@@ -2248,6 +2292,13 @@ fn spec_screens(
             pixels: String::new(),
             width: capture.frame.width,
             height: capture.frame.height,
+            place: place
+                .as_ref()
+                .filter(|(_, b)| {
+                    let (cx, cy) = (b.x + b.width / 2.0, b.y + b.height / 2.0);
+                    cx >= s.origin.0 && cx < s.origin.0 + w && cy >= s.origin.1 && cy < s.origin.1 + h
+                })
+                .map(|(place, _)| place.clone()),
         });
         frames.push(capture.frame);
     }

@@ -80,6 +80,9 @@ pub struct SpecScreen {
     pub pixels: String,
     pub width: u32,
     pub height: u32,
+    /// Where the user was, when the window they were in is on this screen (`**In:** …`).
+    #[serde(default)]
+    pub place: Option<String>,
 }
 
 /// From the overlay to the app.
