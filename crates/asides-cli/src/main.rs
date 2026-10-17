@@ -362,7 +362,9 @@ fn status(dir: &Path) -> Result<()> {
                 None => println!("  asides go to notes only"),
             }
             for (session, label) in live.iter().zip(&labels) {
-                println!("  session {label}: {}", session.state(&listeners, now_ms()).as_str());
+                let problem = listeners.iter().filter(|l| l.session == session.id).find_map(|l| l.problem.as_ref());
+                let why = problem.map(|p| format!(" ({p})")).unwrap_or_default();
+                println!("  session {label}: {}{why}", session.state(&listeners, now_ms()).as_str());
             }
             if let Some(pending) = &state.pending_new {
                 let title = pending.title.as_deref().map(|t| format!(" \"{t}\"")).unwrap_or_default();
