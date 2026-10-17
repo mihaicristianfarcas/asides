@@ -510,7 +510,8 @@ fn read_note_at(
     me: Option<&str>,
 ) -> Result<String, String> {
     let latest = notes::latest_note(dir);
-    let note = note.or(latest.clone()).ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)))?;
+    // A repo without notes yet: an answer, not a failure (agents show failures in red).
+    let Some(note) = note.or(latest.clone()) else { return Ok(no_asides(dir)) };
     let content =
         fs::read_to_string(note.file()).map_err(|e| format!("Could not read {}: {e}", note.file().display()))?;
     let entries: Vec<_> =
@@ -563,7 +564,7 @@ fn thread_text(threads: &std::collections::BTreeMap<AsideId, threads::Thread>, e
 fn find_note(dir: &Path, name: Option<&str>) -> Result<Note, String> {
     let all = notes::list_notes(dir);
     let Some(name) = name.map(str::trim).filter(|n| !n.is_empty() && *n != "latest") else {
-        return all.last().cloned().ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)));
+        return all.last().cloned().ok_or_else(|| no_asides(dir));
     };
     all.iter()
         .rev()
@@ -574,10 +575,10 @@ fn find_note(dir: &Path, name: Option<&str>) -> Result<Note, String> {
 
 /// The asides nobody has resolved or dismissed yet, in the latest note (or `note`, or all notes).
 fn pending_text(dir: &Path, note: Option<&str>, all: bool) -> Result<String, String> {
-    let notes = if all { notes::list_notes(dir) } else { vec![find_note(dir, note)?] };
-    if notes.is_empty() {
-        return Err(format!("There are no asides in {} yet.", tilde(dir)));
+    if notes::list_notes(dir).is_empty() {
+        return Ok(no_asides(dir));
     }
+    let notes = if all { notes::list_notes(dir) } else { vec![find_note(dir, note)?] };
     let mut text = String::new();
     let mut count = 0;
     for note in &notes {
@@ -624,10 +625,14 @@ fn pending_text(dir: &Path, note: Option<&str>, all: bool) -> Result<String, Str
 }
 
 /// This repo's notes, oldest first, with how many of their asides are still open.
+fn no_asides(dir: &Path) -> String {
+    format!("There are no asides in {} yet.", tilde(dir))
+}
+
 fn notes_text(dir: &Path) -> String {
     let all = notes::list_notes(dir);
     if all.is_empty() {
-        return format!("There are no asides in {} yet.", tilde(dir));
+        return no_asides(dir);
     }
     let mut text = format!("Notes in {} (oldest first; the last one is where new asides go):", tilde(dir));
     for note in &all {
@@ -961,7 +966,7 @@ mod tests {
     fn reading_a_note_moves_the_cursor_past_it() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cursor = Cursor::default();
-        assert!(read_note(tmp.path(), None, &mut cursor).unwrap_err().contains("no asides"));
+        assert!(read_note(tmp.path(), None, &mut cursor).unwrap().contains("no asides"));
         let at = Local.with_ymd_and_hms(2026, 10, 15, 14, 32, 0).unwrap();
         let note = notes::create_note(tmp.path(), at, "S", "---\ntitle: S\nbranch: main\n---").unwrap();
         note.append("## 1 · 14:32\n\nOne.").unwrap();
@@ -977,6 +982,12 @@ mod tests {
     fn agents_resolve_dismiss_and_reply_to_asides() {
         let tmp = tempfile::tempdir().unwrap();
         let at = Local.with_ymd_and_hms(2026, 10, 15, 14, 32, 0).unwrap();
+        // Before the first aside, there's nothing to read or work through, which isn't a failure.
+        let empty = format!("There are no asides in {} yet.", tilde(tmp.path()));
+        assert_eq!(pending_text(tmp.path(), None, true).unwrap(), empty);
+        assert_eq!(read_note(tmp.path(), None, &mut Cursor::default()).unwrap(), empty);
+        assert!(pending_text(tmp.path(), Some("Checkout"), false).is_ok());
+
         let note = notes::create_note(tmp.path(), at, "Checkout", "---\ntitle: Checkout\n---").unwrap();
         note.append("## 1 · 14:32\n\nThe card needs padding.").unwrap();
         note.append(
