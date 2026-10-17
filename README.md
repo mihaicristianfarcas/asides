@@ -330,8 +330,10 @@ switches to the next. While you record, the menu bar shows where it's going (`0:
 - **In different repos:** start one in each. Switching to a session also switches the repo your
   notes go to.
 - **In the same repo:** a second session works in a git worktree of the repo, so the two don't edit
-  the same files. Claude Code makes the worktree; for Codex and OpenCode, Asides makes it in
-  `.asides/worktrees/`, and removes it after the session if nothing was done in it. Your notes stay
+  the same files. It branches from the commit you're on, so it has your branch's work (not what you
+  haven't committed). Claude Code makes the worktree, in `.claude/worktrees/`; for Codex and
+  OpenCode, Asides makes it in `.asides/worktrees/`, and removes it after the session if nothing was
+  done in it. Your notes stay
   in the repo. `--no-worktree` (or `worktrees = false`) keeps the session in the repo itself.
 - **In the background:** **Claude Code in the Background** or **Codex in the Background** (or
   `asides claude --background`, `asides codex --background`) starts a session without a terminal;

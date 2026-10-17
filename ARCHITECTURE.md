@@ -455,7 +455,9 @@ Break these only on purpose, and update this document when you do.
 - **A worktree for a second session in a repo.** Two agents editing one working tree collide.
   Claude Code manages its own worktrees (and offers to clean them up). Codex's `--worktree` doesn't
   apply to a thread started through its daemon, and OpenCode has none, so for them asides makes one
-  inside `.asides/`, which git already ignores locally.
+  inside `.asides/`, which git already ignores locally. Either way the worktree branches from the
+  user's HEAD, the branch they're testing: Claude Code's default is origin's default branch, so
+  asides passes it `worktree.baseRef = "head"` with `--settings`, for that session only.
 - **Codex pushed, not polled.** In `wait_for_asides`, Codex is busy in a tool call that times out
   every 50 minutes, and you can't type to it. Its daemon runs threads whether or not a window has
   them open, and `codex queue` adds a message to one, so asides starts the thread there and pushes

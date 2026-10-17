@@ -249,6 +249,9 @@ The user may record a request and ask you to "implement the note". Find it with
   thread asides started passes no `-c`; the thread already has its configuration.
 - OpenCode's free tier refuses `opencode run` ("can only be used from within OpenCode"), so asides
   can't push into OpenCode sessions or run them in the background.
+- Claude Code's `--worktree` branches from origin's default branch (`worktree.baseRef = "fresh"`),
+  not from the branch the user is on; `--settings '{"worktree":{"baseRef":"head"}}'` changes that
+  for one session.
 - `claude stop` takes a background session's id (`claude agents --json` gives it for the name);
   `claude attach` takes either.
 - Agents mark the processes they run as part of their session (`CLAUDECODE`,

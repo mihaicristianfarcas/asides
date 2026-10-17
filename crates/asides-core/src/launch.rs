@@ -18,6 +18,8 @@ pub const REPO_VAR: &str = "ASIDES_REPO";
 /// timeout raised to match; other clients' defaults give up after 60 s.
 pub const CODEX_WAIT: u64 = 3000;
 const CODEX_TOOL_TIMEOUT: u64 = 3600;
+/// Claude Code settings for a session's worktree: branch from the current HEAD.
+const WORKTREE_FROM_HEAD: &str = r#"{"worktree":{"baseRef":"head"}}"#;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentKind {
@@ -181,7 +183,9 @@ pub fn command(launch: &Launch) -> Command {
             }
             args.extend(["--name".into(), launch.name.into()]);
             if let Some(tree) = launch.worktree {
-                args.extend(["--worktree".into(), tree.into()]);
+                // From the user's HEAD, as asides' own worktrees: by default Claude Code branches
+                // from origin's default branch, without the branch the user is testing.
+                args.extend(["--worktree".into(), tree.into(), "--settings".into(), WORKTREE_FROM_HEAD.into()]);
             }
             if launch.background {
                 args.push("--bg".into());
@@ -378,6 +382,8 @@ mod tests {
                 "my shop · asides a1b2c3d4",
                 "--worktree",
                 "asides-a1b2c3d4",
+                "--settings",
+                r#"{"worktree":{"baseRef":"head"}}"#,
                 "--model",
                 "opus"
             ]
