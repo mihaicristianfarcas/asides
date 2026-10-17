@@ -18,10 +18,11 @@ use std::process::{Command as Process, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use asides_core::agents::Listening;
+use asides_core::agents::{self, AgentKind};
 use asides_core::config::{Config, pretty_shortcut};
-use asides_core::launch::{self, AgentKind, Launch, Via};
+use asides_core::launch::{self, Launch, Via};
 use asides_core::link::Link;
+use asides_core::listening::Listening;
 use asides_core::paths::{self, tilde};
 use asides_core::project;
 use asides_core::sessions::{self, Session};
@@ -36,6 +37,9 @@ pub struct Options {
 }
 
 pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
+    if options.background && !kind.runs_in_background() {
+        bail!("{} can't run in the background: run `asides {}` in a terminal.", kind.name(), kind.program());
+    }
     // OpenCode 1 has no background service: its sessions wait for asides in a tool call.
     let opencode_1 = kind == AgentKind::OpenCode && major_version(kind) == Some(1);
     if options.background && opencode_1 {
@@ -129,7 +133,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     };
     let prompt = launch::listen_prompt(&via, in_worktree);
     let listen_prefix = format!("{asides} -C {} listen", listen::quote(&repo.to_string_lossy()));
-    let mut extra = kind.extra_args(&config.agents).to_vec();
+    let mut extra = config.agents.args(kind).to_vec();
     extra.extend(options.args);
     let command = launch::command(&Launch {
         kind,
@@ -145,6 +149,9 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
         opencode_1,
         extra: &extra,
     });
+    if kind == AgentKind::Gemini {
+        register_gemini_server(&asides, &workdir)?;
+    }
 
     let place = match &worktree {
         Some(tree) => format!("{} (worktree {tree}: another session works in the repo)", tilde(&repo)),
@@ -171,7 +178,7 @@ pub fn run(kind: AgentKind, start: &Path, options: Options) -> Result<()> {
     }
     let mut process = Process::new(&command.program);
     // A session is the user's own, even when another agent's shell ran this: not a child of that one.
-    for marker in launch::inherited_markers() {
+    for marker in agents::inherited_markers() {
         process.env_remove(marker);
     }
     process.args(&command.args).envs(command.env.iter().map(|(k, v)| (k, v))).current_dir(&workdir);
@@ -235,7 +242,7 @@ fn major_version(kind: AgentKind) -> Option<u32> {
 /// `while_pid` runs, or until stopped. What goes wrong goes to a log beside New Agent Session's
 /// scripts.
 fn start_pusher(kind: AgentKind, repo: &Path, id: &str, thread: &str, while_pid: Option<u32>) -> Result<u32> {
-    let logs = std::env::temp_dir().join("asides-sessions");
+    let logs = sessions_dir();
     std::fs::create_dir_all(&logs)?;
     let log = std::fs::File::create(logs.join(format!("push-{id}.log")))?;
     let mut pusher = Process::new(std::env::current_exe()?);
@@ -252,6 +259,32 @@ fn start_pusher(kind: AgentKind, repo: &Path, id: &str, thread: &str, while_pid:
         .spawn()
         .with_context(|| format!("could not start pushing asides to {}", kind.name()))?;
     Ok(child.id())
+}
+
+/// Where a session's files go: its pusher's log (beside New Agent Session's scripts).
+fn sessions_dir() -> std::path::PathBuf {
+    std::env::temp_dir().join("asides-sessions")
+}
+
+/// Gemini CLI takes MCP servers only from its settings: unless the user's (or the project's) have
+/// an `asides` server, asides registers its own for the user, once, and says so.
+fn register_gemini_server(asides: &str, workdir: &Path) -> Result<()> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let files = [home.join(".gemini/settings.json"), workdir.join(".gemini/settings.json")];
+    let settings: Vec<String> = files.iter().filter_map(|f| std::fs::read_to_string(f).ok()).collect();
+    let Some(add) = launch::gemini_server(asides, &settings.iter().map(String::as_str).collect::<Vec<_>>()) else {
+        return Ok(());
+    };
+    let out = Process::new("gemini").args(&add).output().context("could not run gemini: is it installed?")?;
+    if !out.status.success() {
+        bail!("could not add Asides' MCP server to Gemini CLI: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    println!(
+        "Added Asides' MCP server to Gemini CLI for you, once (`gemini {}`; `gemini mcp remove --scope user asides` \
+         takes it out).",
+        add.iter().map(|a| listen::quote(a)).collect::<Vec<_>>().join(" ")
+    );
+    Ok(())
 }
 
 /// Makes the session the app's target. The app reads its record.

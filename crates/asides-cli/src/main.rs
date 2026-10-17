@@ -11,10 +11,11 @@ use std::process::Command as Process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use asides_core::agents::Listener;
+use asides_core::agents::AgentKind;
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
-use asides_core::launch::{self, AgentKind};
+use asides_core::launch;
 use asides_core::link::Link;
+use asides_core::listening::Listener;
 use asides_core::notes::{self, Note};
 use asides_core::paths::{self, BUNDLE_ID, tilde};
 use asides_core::project;
@@ -26,7 +27,8 @@ use clap::{Args, Parser, Subcommand};
 ///
 /// Run `asides` in a repo (or any directory) to bind the menu-bar app to it, then use the
 /// global shortcuts while testing. Notes live in `<repo>/.asides/`. Run `asides claude` (or
-/// `codex`, `opencode`) to start a coding agent there that acts on each aside.
+/// `codex`, `opencode`, `gemini`, `copilot`, `qwen`) to start a coding agent there that acts on
+/// each aside.
 #[derive(Parser)]
 #[command(name = "asides", version)]
 struct Cli {
@@ -45,6 +47,12 @@ enum Command {
     Codex(StartArgs),
     /// Start OpenCode here, listening for your asides: each one you record goes to it.
     Opencode(StartArgs),
+    /// Start Gemini CLI here, listening for your asides: each one you record goes to it.
+    Gemini(StartArgs),
+    /// Start GitHub Copilot CLI here, listening for your asides: each one you record goes to it.
+    Copilot(StartArgs),
+    /// Start Qwen Code here, listening for your asides: each one you record goes to it.
+    Qwen(StartArgs),
     /// Bind this directory; the next recording starts a new note, titled TITLE or "Untitled".
     New { title: Vec<String> },
     /// Print the path of the latest note in this directory.
@@ -63,7 +71,7 @@ enum Command {
     Quit,
     /// Send to Agent: hand the asides recorded so far to agents listening in batch mode.
     Send,
-    /// Run the MCP server that hands your asides to coding agents (Claude Code, Codex, OpenCode).
+    /// Run the MCP server that hands your asides to coding agents (Claude Code, Codex, Cursor, …).
     ///
     /// Agents start it themselves; register it once, e.g. `claude mcp add asides -- asides mcp`.
     Mcp {
@@ -135,7 +143,8 @@ enum Command {
 
 #[derive(Args)]
 struct StartArgs {
-    /// Run in the background, without a terminal (Claude Code); `claude attach` opens it.
+    /// Run in the background, without a terminal (Claude Code, Codex, OpenCode); the Asides menu's
+    /// Show opens it.
     #[arg(long)]
     background: bool,
     /// Work in the repo itself even when another session already does (no git worktree).
@@ -182,6 +191,9 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Claude(args)) => agent(AgentKind::Claude, args),
         Some(Command::Codex(args)) => agent(AgentKind::Codex, args),
         Some(Command::Opencode(args)) => agent(AgentKind::OpenCode, args),
+        Some(Command::Gemini(args)) => agent(AgentKind::Gemini, args),
+        Some(Command::Copilot(args)) => agent(AgentKind::Copilot, args),
+        Some(Command::Qwen(args)) => agent(AgentKind::Qwen, args),
         Some(Command::New { title }) => {
             let title = Some(title.join(" ")).filter(|t| !t.trim().is_empty());
             bind(&dir()?, true, title)

@@ -726,7 +726,7 @@ And the Pay button text wraps.</pre></div>
     </div>
     <div class="feature">
       <h3>Straight to your agent</h3>
-      <p>Claude Code, Codex and OpenCode get each aside as you say it, or a batch when you send it.</p>
+      <p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code get each aside as you say it, or a batch when you send it. Any agent with MCP can listen.</p>
     </div>
     <div class="feature">
       <h3>Wispr Flow too</h3>
@@ -751,9 +751,11 @@ brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class=
       </li>
       <li>
         <p>Optionally, add it to your coding agent, then ask the agent to listen to your asides (in Claude Code, <code>/asides:listen</code>). Each aside reaches it as you say it, or in a batch when you send it (Preferences → Agents Get Asides).</p>
-        <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
+        <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
 codex mcp add asides -- asides mcp
-opencode mcp add --global asides -- asides mcp</code></pre><button class="copy" type="button" hidden>Copy</button></div>
+opencode mcp add --global asides -- asides mcp
+gemini mcp add --scope user --trust asides asides mcp
+copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="button" hidden>Copy</button></div>
       </li>
     </ol>
   </section>
@@ -798,7 +800,7 @@ opencode mcp add --global asides -- asides mcp</code></pre><button class="copy" 
     }
   }
 
-  // One agent's command at a time. Without JavaScript, the block lists all three, one per line.
+  // One agent's command at a time. Without JavaScript, the block lists them all, one per line.
   const picker = document.querySelector('.agents');
   if (picker) {
     const panel = picker.nextElementSibling;

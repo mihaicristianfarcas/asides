@@ -24,8 +24,8 @@ seconds later the transcript is in the note, and the menu-bar icon shows `[✓] 
   sentence you were saying.
 - **Context for whoever reads it.** Each new note records the git remote, branch, commit and
   uncommitted changes, plus your macOS version, browser and display.
-- **Straight to your agent.** `asides claude` (or Codex, OpenCode, or New Agent Session in the
-  menu) starts an agent that's already listening: each aside you record goes to it as soon as it's
+- **Straight to your agent.** `asides claude` (or Codex, OpenCode, Gemini CLI, Copilot CLI, Qwen
+  Code, or New Agent Session in the menu) starts an agent that's already listening: each aside you record goes to it as soon as it's
   transcribed, or in a batch when you send it. Run several, in one repo or many, and switch which
   one you're talking to with `⌃⌥Tab`.
 - **One toolbar, over anything.** `⌃⌥Space` freezes your screen, in any app, under one toolbar:
@@ -108,7 +108,7 @@ self-signed identity in your login keychain and asks for your password.
 | Command | |
 |---|---|
 | `asides` | Bind the repo you're in (its git root, or the current directory if it isn't a repo) and start the menu-bar app. Recordings append to the latest note there. |
-| `asides claude` | Start Claude Code here, already listening: each aside you record goes to it. `asides codex` and `asides opencode` do the same for those. Arguments go to the agent (`asides claude --model opus`). `--background` (Claude Code, Codex) runs it without a terminal; `--no-worktree` keeps a second session in the repo itself. See [Coding agents](#coding-agents). |
+| `asides claude` | Start Claude Code here, already listening: each aside you record goes to it. `asides codex`, `asides opencode`, `asides gemini`, `asides copilot` and `asides qwen` do the same for those. Arguments go to the agent (`asides claude --model opus`). `--background` (Claude Code, Codex, OpenCode) runs it without a terminal; `--no-worktree` keeps a second session in the repo itself. See [Coding agents](#coding-agents). |
 | `asides new [TITLE]` | The next recording starts a new note, titled TITLE or "Untitled". |
 | `asides path` | Print the latest note's path, e.g. `claude "fix the bugs in $(asides path)"`. |
 | `asides open` | Open the latest note in your Markdown editor. |
@@ -147,8 +147,9 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
 - send what you've recorded to your coding agent (in batch mode)
 - choose which agent session your asides go to, or Notes Only (**Asides Go To**, once one is
   listening), and open a background session (**Show**)
-- start Claude Code, Codex or OpenCode in this repo, a recent one or another, in a terminal or in
-  the background (**New Agent Session**)
+- start a coding agent (Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI or Qwen Code, the ones
+  you have) in this repo, a recent one or another, in a terminal or in the background (**New Agent
+  Session**)
 - read what agents said about your asides (**Agent Replies**: resolved, dismissed, questions)
 - switch between recently used repos, or choose another one (**Directory** submenu)
 - open, reveal or copy the path of the latest note
@@ -346,7 +347,7 @@ And on mobile the button text wraps.
 Start the agent from Asides. In your repo:
 
 ```bash
-asides claude          # or: asides codex, asides opencode
+asides claude          # or: asides codex, opencode, gemini, copilot, qwen
 ```
 
 Or, from the menu, **New Agent Session ▸ Claude Code** (in the repo Asides is bound to, a recent one,
@@ -358,7 +359,9 @@ instead. Either way the agent starts already listening, with Asides' MCP server 
 line, so there's nothing to set up first, and its asides tools allowed. Each aside you record from
 then on goes to it as a prompt; you can still type to it as usual. Your own arguments go along
 (`asides claude --model opus`), and `[agents]` in the settings can add some to every session.
-Agents ask before editing or running things as they normally do.
+Agents ask before editing or running things as they normally do. Gemini CLI can't be given a
+server on its command line: the first `asides gemini` adds Asides' to its settings for you
+(`gemini mcp add --scope user --trust asides asides mcp`), and every session uses it as its own.
 
 ### Several sessions
 
@@ -391,6 +394,17 @@ or to the notes only. Every aside is still written to the note, whichever sessio
 claude mcp add --scope user asides -- asides mcp      # Claude Code
 codex mcp add asides -- asides mcp                    # Codex
 opencode mcp add --global asides -- asides mcp        # OpenCode
+gemini mcp add --scope user --trust asides asides mcp # Gemini CLI
+copilot mcp add asides -- asides mcp                  # Copilot CLI
+qwen mcp add --scope user --trust asides asides mcp   # Qwen Code
+amp mcp add asides -- asides mcp                      # Amp
+```
+
+Editors and other agents take the same server in their MCP settings: Cursor (`~/.cursor/mcp.json`),
+Windsurf, VS Code, Zed, Goose, Cline, Kiro, Warp… In the usual JSON:
+
+```json
+{ "mcpServers": { "asides": { "command": "asides", "args": ["mcp"] } } }
 ```
 
 Then, in a session in your repo, ask the agent to **listen to your asides** (in Claude Code,
@@ -413,6 +427,9 @@ How the agent gets your asides depends on what it can do:
   in a background service; Asides starts the session there, with Asides' tools for it, adds each
   aside as the session's next message, and the terminal opens it (`opencode --session`). OpenCode 1
   waits like the agents below.
+- **Gemini CLI, Copilot CLI and Qwen Code, started by Asides,** wait in a tool call
+  (`wait_for_asides`), with their time limit for one raised to an hour, so they wait long between
+  asides.
 - **Agents you started yourself** wait in a tool call (`wait_for_asides`), act on what
   it returns, then wait again. Asides that arrive while the agent works wait for it. Most agents hide
   tool results, so the agent first lists the asides it got, one line each.
@@ -520,6 +537,9 @@ worktrees = true             # a second session in a repo works in a git worktre
 claude = []                  # extra arguments for each agent, e.g. ["--model", "opus"]
 codex = []
 opencode = []
+gemini = []
+copilot = []
+qwen = []
 
 [measure]
 color = "#FF2D55"            # lines and labels

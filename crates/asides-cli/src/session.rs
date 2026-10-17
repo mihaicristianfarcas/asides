@@ -3,9 +3,9 @@
 
 use std::path::Path;
 
-use asides_core::agents::Listening;
 use asides_core::config::{Config, pretty_shortcut};
 use asides_core::link::Link;
+use asides_core::listening::Listening;
 use asides_core::paths;
 use asides_core::sessions::Session;
 use asides_core::state::AppState;

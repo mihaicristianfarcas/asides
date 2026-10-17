@@ -26,15 +26,16 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use asides_core::agents::Listener;
+use asides_core::agents::{self, AgentKind};
 use asides_core::config::{AgentDelivery, Config};
 use asides_core::helper::{
     Command as OverlayCommand, Event as OverlayEvent, Outcome as OverlayOutcome, Spec, SpecScreen,
 };
 use asides_core::inspect::{self, PtRect, Screen, Units};
 use asides_core::install;
-use asides_core::launch::{self, AgentKind};
+use asides_core::launch;
 use asides_core::link::Link;
+use asides_core::listening::Listener;
 use asides_core::models::ModelSpec;
 use asides_core::notes;
 use asides_core::overlay::Saved;
@@ -267,7 +268,7 @@ struct App {
 fn main() {
     // An agent's process can start the app (its `asides mcp` opens a link): don't hand that
     // session's markers to every terminal and agent the app starts.
-    for marker in launch::inherited_markers() {
+    for marker in agents::inherited_markers() {
         // SAFETY: first thing in main, before any thread exists to read the environment.
         unsafe { std::env::remove_var(marker) };
     }

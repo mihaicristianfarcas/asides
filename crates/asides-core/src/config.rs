@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::agents::AgentKind;
 use crate::inspect::{Detail, Units};
 
 const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
@@ -26,7 +27,7 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # a key).
 # [agents] terminal: the app New Agent Session opens agents in ("Terminal", the default when "";
 # "Ghostty", "iTerm", "Diri", or another that runs .command scripts); worktrees: a second session in
-# a repo works in its own git worktree; claude, codex, opencode:
+# a repo works in its own git worktree; claude, codex, opencode, gemini, copilot, qwen:
 # extra arguments for that agent's sessions, e.g. claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
@@ -81,11 +82,37 @@ pub struct Agents {
     pub claude: Vec<String>,
     pub codex: Vec<String>,
     pub opencode: Vec<String>,
+    pub gemini: Vec<String>,
+    pub copilot: Vec<String>,
+    pub qwen: Vec<String>,
 }
 
 impl Default for Agents {
     fn default() -> Self {
-        Self { terminal: String::new(), worktrees: true, claude: Vec::new(), codex: Vec::new(), opencode: Vec::new() }
+        Self {
+            terminal: String::new(),
+            worktrees: true,
+            claude: Vec::new(),
+            codex: Vec::new(),
+            opencode: Vec::new(),
+            gemini: Vec::new(),
+            copilot: Vec::new(),
+            qwen: Vec::new(),
+        }
+    }
+}
+
+impl Agents {
+    /// The extra arguments for `kind`'s sessions.
+    pub fn args(&self, kind: AgentKind) -> &[String] {
+        match kind {
+            AgentKind::Claude => &self.claude,
+            AgentKind::Codex => &self.codex,
+            AgentKind::OpenCode => &self.opencode,
+            AgentKind::Gemini => &self.gemini,
+            AgentKind::Copilot => &self.copilot,
+            AgentKind::Qwen => &self.qwen,
+        }
     }
 }
 

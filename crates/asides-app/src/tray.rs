@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use asides_core::agents::AgentKind;
 use asides_core::config::{AgentDelivery, Config};
 use asides_core::inspect::{Detail, Units};
-use asides_core::launch::AgentKind;
 use asides_core::models::MODELS;
 use asides_core::paths::tilde;
 use tray_icon::menu::accelerator::Accelerator;
@@ -552,14 +552,16 @@ impl Tray {
                     items.push(item);
                 };
                 add(agent.name().into(), false);
-                add(format!("{} in the Background", agent.name()), true);
+                if agent.runs_in_background() {
+                    add(format!("{} in the Background", agent.name()), true);
+                }
             }
             items
         };
         match agents {
             None => items.push(Box::new(MenuItem::new("Looking for coding agents…", false, None))),
             Some([]) => items.push(Box::new(MenuItem::new(
-                "No coding agents found (Claude Code, Codex or OpenCode)",
+                "No coding agents found (Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Qwen Code)",
                 false,
                 None,
             ))),

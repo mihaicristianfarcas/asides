@@ -1,88 +1,26 @@
-//! Starting a coding agent that listens for asides: Claude Code, Codex or OpenCode, with asides'
+//! Starting a coding agent that listens for asides (see `agents.rs` for the agents), with asides'
 //! MCP server given on its command line (no `mcp add` needed), tied to one session, and the listen
 //! prompt as its first message. `asides claude` (and the menu's New Session, which runs it in a
 //! terminal) builds the command here.
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
-use crate::config::Agents;
+use crate::agents::AgentKind;
 
 /// The variables `asides <agent>` sets for the agent, so the `asides` commands it runs (and an
 /// `asides mcp` it was already set up with) know their session and repo, even from a worktree.
 pub const SESSION_VAR: &str = "ASIDES_SESSION";
 pub const REPO_VAR: &str = "ASIDES_REPO";
 
-/// How long a launched Codex waits in one `wait_for_asides` call, in seconds, with its tool
-/// timeout raised to match; other clients' defaults give up after 60 s.
-pub const CODEX_WAIT: u64 = 3000;
-const CODEX_TOOL_TIMEOUT: u64 = 3600;
+/// How long a launched agent that waits for asides in a tool call (Codex without its daemon,
+/// Gemini CLI, Copilot CLI, Qwen Code) waits in one `wait_for_asides` call, in seconds, with its
+/// client's tool timeout raised to match; their defaults give up after a minute or ten.
+pub const LONG_WAIT: u64 = 3000;
+const LONG_TOOL_TIMEOUT: u64 = 3600;
 /// Claude Code settings for a session's worktree: branch from the current HEAD.
 const WORKTREE_FROM_HEAD: &str = r#"{"worktree":{"baseRef":"head"}}"#;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AgentKind {
-    Claude,
-    Codex,
-    OpenCode,
-}
-
-impl AgentKind {
-    pub const ALL: [AgentKind; 3] = [AgentKind::Claude, AgentKind::Codex, AgentKind::OpenCode];
-
-    /// Its program, which is also its `asides` subcommand and its key in `[agents]`.
-    pub fn program(self) -> &'static str {
-        match self {
-            AgentKind::Claude => "claude",
-            AgentKind::Codex => "codex",
-            AgentKind::OpenCode => "opencode",
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            AgentKind::Claude => "Claude Code",
-            AgentKind::Codex => "Codex",
-            AgentKind::OpenCode => "OpenCode",
-        }
-    }
-
-    pub fn parse(program: &str) -> Option<AgentKind> {
-        AgentKind::ALL.into_iter().find(|k| k.program() == program)
-    }
-
-    /// The agent a session record names (its [`name`](Self::name)).
-    pub fn named(name: &str) -> Option<AgentKind> {
-        AgentKind::ALL.into_iter().find(|k| k.name() == name)
-    }
-
-    /// Claude Code makes a git worktree itself when asked; for the others, asides does.
-    pub fn makes_worktrees(self) -> bool {
-        self == AgentKind::Claude
-    }
-
-    /// Asides can hand Codex and OpenCode each aside as a message (a turn in Codex's daemon, a prompt to
-    /// OpenCode's service), so they don't have to wait for them in a tool call. Both run sessions
-    /// in a background process of their own, so these can also run with no window open, as Claude
-    /// Code's can (`claude --bg`).
-    pub fn takes_pushes(self) -> bool {
-        matches!(self, AgentKind::Codex | AgentKind::OpenCode)
-    }
-
-    /// Claude Code watches `asides listen` with its Monitor tool; the others wait in a tool call.
-    pub fn listens_with_monitor(self) -> bool {
-        self == AgentKind::Claude
-    }
-
-    pub fn extra_args(self, agents: &Agents) -> &[String] {
-        match self {
-            AgentKind::Claude => &agents.claude,
-            AgentKind::Codex => &agents.codex,
-            AgentKind::OpenCode => &agents.opencode,
-        }
-    }
-}
 
 /// How an agent listens.
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +110,17 @@ pub fn command(launch: &Launch) -> Command {
     let mut server = vec!["-C".to_string(), repo.clone(), "mcp".into(), "--session".into(), launch.session.into()];
     let mut env = vec![(SESSION_VAR.to_string(), launch.session.to_string()), (REPO_VAR.to_string(), repo.clone())];
     let mut args: Vec<String> = Vec::new();
+    if launch.kind.waits_long_when_started() {
+        server.extend(["--timeout".into(), LONG_WAIT.to_string()]);
+    }
+    // How Copilot CLI and Qwen Code describe a local server: they take the same shape.
+    let local = |server: &[String], fields: Value| {
+        let mut config = json!({ "command": launch.asides, "args": server, "timeout": LONG_TOOL_TIMEOUT * 1000 });
+        if let (Some(config), Value::Object(fields)) = (config.as_object_mut(), fields) {
+            config.extend(fields);
+        }
+        config
+    };
     match launch.kind {
         AgentKind::Claude => {
             let config =
@@ -201,14 +150,13 @@ pub fn command(launch: &Launch) -> Command {
             args.extend(["resume".into(), launch.thread.unwrap_or_default().into()]);
         }
         AgentKind::Codex => {
-            server.extend(["--timeout".into(), CODEX_WAIT.to_string()]);
             let set = |key: &str, value: String| ["-c".to_string(), format!("mcp_servers.asides.{key}={value}")];
             args.extend(set("command", toml_string(launch.asides)));
             args.extend(set(
                 "args",
                 format!("[{}]", server.iter().map(|a| toml_string(a)).collect::<Vec<_>>().join(", ")),
             ));
-            args.extend(set("tool_timeout_sec", CODEX_TOOL_TIMEOUT.to_string()));
+            args.extend(set("tool_timeout_sec", LONG_TOOL_TIMEOUT.to_string()));
             args.extend(launch.extra.iter().cloned());
             args.push(launch.prompt.into());
         }
@@ -233,37 +181,46 @@ pub fn command(launch: &Launch) -> Command {
             args.extend(["--prompt".into(), launch.prompt.into()]);
             args.extend(launch.extra.iter().cloned());
         }
+        // Gemini CLI takes servers only from settings files, and a system one of a session's own
+        // only from a folder root owns: it uses the user's `asides` server (see `gemini_server`),
+        // which is the session's through the variables above, since Gemini passes its environment
+        // to its servers.
+        AgentKind::Gemini => {
+            args.extend(["--prompt-interactive".into(), launch.prompt.into()]);
+            args.extend(launch.extra.iter().cloned());
+        }
+        // Copilot CLI adds servers for one session, and approves a server's tools by its name.
+        // `--allow-tool` takes every value after it unless given with `=`.
+        AgentKind::Copilot => {
+            let config =
+                json!({ "mcpServers": { "asides": local(&server, json!({ "type": "local", "tools": ["*"] })) } });
+            args.extend(["--additional-mcp-config".into(), config.to_string(), "--allow-tool=asides".into()]);
+            args.extend(["--name".into(), launch.name.into()]);
+            args.extend(launch.extra.iter().cloned());
+            args.extend(["--interactive".into(), launch.prompt.into()]);
+        }
+        // Qwen Code (from Gemini CLI) takes servers on its command line; trusted, as above.
+        AgentKind::Qwen => {
+            let config = json!({ "mcpServers": { "asides": local(&server, json!({ "trust": true })) } });
+            args.extend(["--mcp-config".into(), config.to_string()]);
+            args.extend(launch.extra.iter().cloned());
+            args.extend(["--prompt-interactive".into(), launch.prompt.into()]);
+        }
     }
     Command { program: launch.kind.program().into(), args, env }
 }
 
-/// Which of the variables `names` mark a process as part of an agent's session: those Claude Code
-/// (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, its pid and effort…) and OpenCode (`OPENCODE`,
-/// `AGENT`…) set for the commands they run, and asides' own. An agent's process can start the app
-/// (its `asides mcp` opens a link), which would hand them to every terminal and agent the app
-/// starts: Claude Code took a session started from the menu for a child of the first one (and
-/// turned off saving its transcript), and `asides` in that terminal meant the first session's repo.
-/// An agent's settings (`CLAUDE_CODE_USE_BEDROCK`) count only inside its session, where they're
-/// set again: from its settings, or the login shell.
-pub fn session_markers(names: impl IntoIterator<Item = String>) -> Vec<String> {
-    let names: Vec<String> = names.into_iter().collect();
-    let claude = names.iter().any(|n| n == "CLAUDECODE");
-    let opencode = names.iter().any(|n| n == "OPENCODE");
-    names
-        .into_iter()
-        .filter(|name| match name.as_str() {
-            SESSION_VAR | REPO_VAR | "AI_AGENT" | "CLAUDECODE" | "OPENCODE" => true,
-            "CLAUDE_PID" | "CLAUDE_EFFORT" | "CLAUDE_PROJECT_DIR" => claude,
-            n if n.starts_with("CLAUDE_CODE_") => claude,
-            "AGENT" | "OPENCODE_SESSION_ID" | "OPENCODE_TERMINAL" | "OPENCODE_PTY_HANDOFF" => opencode,
-            _ => false,
-        })
-        .collect()
-}
-
-/// [`session_markers`] of this process's environment.
-pub fn inherited_markers() -> Vec<String> {
-    session_markers(std::env::vars_os().filter_map(|(name, _)| name.into_string().ok()))
+/// The command that registers asides' MCP server with Gemini CLI for the user (trusted: its tools
+/// run without asking), unless `settings` (their `~/.gemini/settings.json`, or the project's) has
+/// one: Gemini CLI can't be given one on its command line.
+pub fn gemini_server(asides: &str, settings: &[&str]) -> Option<Vec<String>> {
+    // Gemini's settings may have comments; the server's key, quoted, is enough to tell.
+    let has = |text: &&str| match serde_json::from_str::<Value>(text) {
+        Ok(json) => json.pointer("/mcpServers/asides").is_some(),
+        Err(_) => text.contains("\"asides\""),
+    };
+    (!settings.iter().any(has))
+        .then(|| ["mcp", "add", "--scope", "user", "--trust", "asides", asides, "mcp"].map(String::from).to_vec())
 }
 
 /// A Claude Code background session, as `claude agents --json` lists it.
@@ -311,41 +268,6 @@ fn toml_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn finds_the_markers_of_an_agents_session() {
-        let inside = [
-            "PATH",
-            "CLAUDECODE",
-            "CLAUDE_CODE_SESSION_ID",
-            "CLAUDE_CODE_CHILD_SESSION",
-            "CLAUDE_EFFORT",
-            "AI_AGENT",
-            "ASIDES_REPO",
-            "OPENCODE",
-            "AGENT",
-            "OPENCODE_SESSION_ID",
-            "OPENCODE_PASSWORD",
-            "CODEX_HOME",
-        ];
-        assert_eq!(
-            session_markers(inside.map(String::from)),
-            [
-                "CLAUDECODE",
-                "CLAUDE_CODE_SESSION_ID",
-                "CLAUDE_CODE_CHILD_SESSION",
-                "CLAUDE_EFFORT",
-                "AI_AGENT",
-                "ASIDES_REPO",
-                "OPENCODE",
-                "AGENT",
-                "OPENCODE_SESSION_ID"
-            ]
-        );
-        // Outside an agent, settings with the same prefixes stay.
-        let outside = ["PATH", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_EFFORT", "AGENT", "OPENCODE_SESSION_ID"];
-        assert!(session_markers(outside.map(String::from)).is_empty());
-    }
 
     #[test]
     fn finds_a_background_session_by_name() {
@@ -464,20 +386,44 @@ mod tests {
     }
 
     #[test]
+    fn gemini_uses_the_users_server_as_the_session() {
+        let command = command(&launch(AgentKind::Gemini));
+        assert_eq!(command.args, ["--prompt-interactive", "Listen to my asides."]);
+        assert!(command.env.contains(&(SESSION_VAR.into(), "a1b2c3d4".into())));
+        let add = gemini_server("/bin/asides", &[r#"{"mcpServers": {"github": {}}}"#]).unwrap();
+        assert_eq!(add, ["mcp", "add", "--scope", "user", "--trust", "asides", "/bin/asides", "mcp"]);
+        assert_eq!(gemini_server("asides", &["{}", r#"{"mcpServers": {"asides": {"command": "asides"}}}"#]), None);
+        assert_eq!(gemini_server("asides", &["// mine\n{\"mcpServers\": {\"asides\": {}}}"]), None, "with comments");
+    }
+
+    #[test]
+    fn copilot_and_qwen_get_the_server_on_their_command_lines() {
+        let command = command(&launch(AgentKind::Copilot));
+        assert_eq!(command.args[0], "--additional-mcp-config");
+        let config: Value = serde_json::from_str(&command.args[1]).unwrap();
+        assert_eq!(config["mcpServers"]["asides"]["type"], "local");
+        assert_eq!(config["mcpServers"]["asides"]["tools"], json!(["*"]));
+        assert_eq!(config.pointer("/mcpServers/asides/args/4").unwrap(), "a1b2c3d4");
+        assert_eq!(
+            command.args[2..],
+            ["--allow-tool=asides", "--name", "my shop · asides a1b2c3d4", "--interactive", "Listen to my asides."]
+        );
+        let command = super::command(&launch(AgentKind::Qwen));
+        assert_eq!(
+            (command.args[0].as_str(), command.args[2..].to_vec()),
+            ("--mcp-config", vec!["--prompt-interactive".to_string(), "Listen to my asides.".into()])
+        );
+        let config: Value = serde_json::from_str(&command.args[1]).unwrap();
+        assert_eq!(config["mcpServers"]["asides"]["trust"], true);
+        assert_eq!(config["mcpServers"]["asides"]["timeout"], 3_600_000);
+    }
+
+    #[test]
     fn the_listen_prompt_says_how_to_listen() {
         let monitor = listen_prompt(&Via::Monitor("asides listen --session s".into()), None);
         assert!(monitor.contains("background monitor") && monitor.contains("\n\nasides listen --session s\n\n"));
         let wait = listen_prompt(&Via::Wait, Some(Path::new("/r/shop")));
         assert!(wait.contains("To listen, call the wait_for_asides tool") && wait.contains("worktree of /r/shop"));
         assert!(wait.ends_with("Keep listening until I tell you to stop."));
-    }
-
-    #[test]
-    fn names_agents() {
-        assert_eq!(AgentKind::parse("codex"), Some(AgentKind::Codex));
-        assert_eq!(AgentKind::parse("cursor"), None);
-        assert_eq!(AgentKind::OpenCode.name(), "OpenCode");
-        assert_eq!(AgentKind::named("OpenCode"), Some(AgentKind::OpenCode));
-        assert!(AgentKind::OpenCode.takes_pushes() && !AgentKind::Claude.takes_pushes());
     }
 }

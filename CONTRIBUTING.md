@@ -50,10 +50,12 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 ```
 
 To try it in an agent without changing its settings, run `asides claude` (or `asides codex`,
-`asides opencode`) in a scratch repo: it passes the server on the agent's command line. To check
-the command line itself without a model call, add `-p --output-format stream-json --verbose` for
-Claude Code and read the `init` message's `mcp_servers`, or run `codex -c … mcp get asides` with the
-same `-c` options. With a dev-hooks build installed, `asides simulate <wav>` stands in for speaking.
+`opencode`, `copilot`, `qwen`) in a scratch repo: it passes the server on the agent's command line
+(`asides gemini` adds it to Gemini CLI's settings once). To check the command line itself without a
+model call, add `-p --output-format stream-json --verbose` for Claude Code and read the `init`
+message's `mcp_servers`, run `codex -c … mcp get asides` with the same `-c` options, give Copilot
+CLI `-p` in place of `--interactive` (it checks the server config before asking for a login), or
+give Qwen Code `-p` (it warns when a server fails to start). With a dev-hooks build installed, `asides simulate <wav>` stands in for speaking.
 
 The app's output (`eprintln!`) is discarded when it's launched normally. To see it, quit the app
 (`asides quit`) and run the binary from a terminal:
@@ -166,7 +168,9 @@ in your pull request what you tried.
 - [ ] **Agent sessions:** New Agent Session ▸ Claude Code opens Terminal in the repo with Claude
   Code already listening (no approval asked for the monitor or the asides tools; no prompt from the
   terminal in Ghostty or Diri either, picked under Open Agent Sessions In), and becomes the target
-  under Asides Go To; Codex and OpenCode the same. With Ghostty picked and running, the first
+  under Asides Go To; Codex and OpenCode the same, and Gemini CLI, Copilot CLI and Qwen Code when
+  installed (no Background item for them; Gemini CLI asks you to trust the folder first, and the
+  first session says it added Asides' server to its settings). With Ghostty picked and running, the first
   session asks whether Asides may control Ghostty: allowed, each session is a new tab in its front
   window; declined (or Ghostty not running), a Ghostty window of its own. A second session in the
   repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the menu bar saying where

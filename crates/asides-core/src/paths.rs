@@ -24,7 +24,7 @@ pub fn models_dir() -> PathBuf {
     support_dir().join("models")
 }
 
-/// One record per agent session listening through `asides mcp` (see `agents::Listener`).
+/// One record per agent session listening through `asides mcp` (see `listening::Listener`).
 pub fn listeners_dir() -> PathBuf {
     support_dir().join("listeners")
 }

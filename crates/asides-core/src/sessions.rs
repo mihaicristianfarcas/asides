@@ -6,7 +6,7 @@
 //! connects to `asides mcp`, and removed when it ends. A record counts once the agent listens
 //! (`listening`): an agent that has the MCP server but wasn't asked to listen isn't a session the
 //! user talks to. The processes that deliver asides to it (`asides mcp`, `asides listen`) also
-//! write listener records naming it (`agents::Listener`), which say whether it's waiting.
+//! write listener records naming it (`listening::Listener`), which say whether it's waiting.
 
 use std::fs;
 use std::io;
@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::Listener;
+use crate::listening::Listener;
 
 /// How long a launched session counts as starting, before its agent listens.
 pub const STARTING_MS: u64 = 2 * 60 * 1000;
@@ -45,7 +45,7 @@ pub struct Session {
     pub pushed: bool,
     /// The agent listens for asides (it was launched to, or asked to).
     pub listening: bool,
-    /// Where its asides begin (an `agents::Listening` token): asides recorded for it while the
+    /// Where its asides begin (an `listening::Listening` token): asides recorded for it while the
     /// agent was starting reach it once it listens.
     pub start: Option<String>,
     pub started_ms: u64,

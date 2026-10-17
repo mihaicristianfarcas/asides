@@ -27,9 +27,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use asides_core::agents::{self, Cursor, Item, Listener, Listening};
+use asides_core::agents::{self, AgentKind};
 use asides_core::config::{AgentDelivery, Config};
 use asides_core::launch::{self, Via};
+use asides_core::listening::{self, Cursor, Item, Listener, Listening};
 use asides_core::measure::{Rect, Tolerance};
 use asides_core::notes::{self, Note};
 use asides_core::paths::{self, tilde};
@@ -46,9 +47,9 @@ const PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "
 const POLL: Duration = Duration::from_millis(400);
 const PROGRESS_EVERY: Duration = Duration::from_secs(20);
 /// Most clients give up on a tool call after 60 s (Codex, and the MCP SDKs' default), so a wait
-/// returns before that unless the client is known to allow more or `--timeout` says otherwise.
+/// returns before that unless the client is known to allow more (`AgentKind::wait`) or
+/// `--timeout` says otherwise.
 const DEFAULT_WAIT: Duration = Duration::from_secs(50);
-const CLAUDE_CODE_WAIT: Duration = Duration::from_secs(25 * 60);
 const MAX_WAIT_SECS: u64 = 3600;
 /// Screenshots larger than this are only linked; image content has size limits in most clients.
 const MAX_INLINE_IMAGE: u64 = 3_750_000;
@@ -348,8 +349,7 @@ impl Server {
             let session = self.session.lock().unwrap();
             let default = match session.timeout {
                 Some(secs) => Duration::from_secs(secs),
-                None if session.client.to_ascii_lowercase().contains("claude") => CLAUDE_CODE_WAIT,
-                None => DEFAULT_WAIT,
+                None => AgentKind::of_client(&session.client).map_or(DEFAULT_WAIT, AgentKind::wait),
             };
             timeout.map(|s| Duration::from_secs(s.clamp(1, MAX_WAIT_SECS))).unwrap_or(default)
         };
@@ -422,7 +422,7 @@ fn listen_prompt(client: &str, dir: &Path, id: &str) -> String {
     let record = SessionRecord::read(&paths::sessions_dir(), id);
     let via = if record.as_ref().is_some_and(|s| s.pushed) {
         Via::Messages
-    } else if client.to_ascii_lowercase().contains("claude") {
+    } else if AgentKind::of_client(client).is_some_and(AgentKind::listens_with_monitor) {
         Via::Monitor(crate::listen::command(dir, Some(LISTEN_SECS), None, Some(id)))
     } else {
         Via::Wait
@@ -490,9 +490,9 @@ pub(crate) fn asides_text(items: &[Item]) -> (String, Vec<PathBuf>) {
             text.push_str(&format!("\n\nNote \"{}\" ({}{context}):", note.title, note.file().display()));
             current = Some(note);
         }
-        let heading = agents::absolute_links(&note.dir, &heading);
-        text.push_str(&format!("\n\n## {heading}\n\n{}", agents::absolute_links(&note.dir, body.trim())));
-        images.extend(agents::image_paths(&note.dir, body));
+        let heading = listening::absolute_links(&note.dir, &heading);
+        text.push_str(&format!("\n\n## {heading}\n\n{}", listening::absolute_links(&note.dir, body.trim())));
+        images.extend(listening::image_paths(&note.dir, body));
     }
     (text, images)
 }
@@ -528,8 +528,8 @@ fn read_note_at(
         text.push_str("\n\nNo entries yet.");
     }
     for entry in &entries {
-        let heading = agents::absolute_links(&note.dir, &entry.heading);
-        text.push_str(&format!("\n\n## {heading}\n\n{}", agents::absolute_links(&note.dir, &entry.body)));
+        let heading = listening::absolute_links(&note.dir, &entry.heading);
+        text.push_str(&format!("\n\n## {heading}\n\n{}", listening::absolute_links(&note.dir, &entry.body)));
         if let Some(route) = routes.get(&entry.number).filter(|r| r.session.is_some() && r.session.as_deref() != me) {
             let agent = route.agent.as_deref().unwrap_or("another agent");
             text.push_str(&format!("\n\n> The user said this to another session ({agent})."));
@@ -593,11 +593,11 @@ fn pending_text(dir: &Path, note: Option<&str>, all: bool) -> Result<String, Str
                 continue;
             }
             count += 1;
-            let heading = agents::absolute_links(&note.dir, &entry.heading);
+            let heading = listening::absolute_links(&note.dir, &entry.heading);
             section.push_str(&format!(
                 "\n\n## {heading} ({})\n\n{}",
                 status.as_str(),
-                agents::absolute_links(&note.dir, &entry.body)
+                listening::absolute_links(&note.dir, &entry.body)
             ));
             let parts = threads::parts(&entry.body);
             if !parts.is_empty() {
@@ -949,7 +949,7 @@ mod tests {
         fs::create_dir(note.dir.join("images")).unwrap();
         fs::write(note.dir.join("images/01-143300.png"), [0x89, b'P', b'N', b'G']).unwrap();
         note.append("## 1 · 14:32\n\nThe card.\n\n![14:33:00](images/01-143300.png)").unwrap();
-        let items = agents::collect(tmp.path(), &Cursor::default(), None);
+        let items = listening::collect(tmp.path(), &Cursor::default(), None);
         let result = delivery(&items);
         let text = result.pointer("/content/0/text").and_then(Value::as_str).unwrap();
         assert!(text.starts_with("A new aside from the user."), "{text}");
@@ -978,7 +978,7 @@ mod tests {
         assert!(text.contains("---\ntitle: S\nbranch: main\n---") && text.contains("## 2 · 14:33\n\nTwo."), "{text}");
         assert!(!text.contains("One."));
         assert_eq!(cursor, Cursor { note: Some(note.dir.clone()), entry: 2, len: 4 });
-        assert!(agents::collect(tmp.path(), &cursor, None).is_empty());
+        assert!(listening::collect(tmp.path(), &cursor, None).is_empty());
     }
 
     #[test]

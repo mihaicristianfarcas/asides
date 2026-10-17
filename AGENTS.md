@@ -15,7 +15,7 @@ asides is a macOS menu-bar app plus a CLI.
 - Coding agents can listen through `asides mcp`, an MCP server in the CLI, and get each new
   entry (or a batch, on Send to Agent) as a prompt. They acknowledge, resolve, dismiss or reply to
   asides and their annotations (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
-- `asides claude` (or `codex`, `opencode`; New Agent Session in the menu runs it in a terminal)
+- `asides claude` (or `codex`, `opencode`, `gemini`, `copilot`, `qwen`; New Agent Session in the menu runs it in a terminal)
   starts an agent already listening, with the MCP server on its command line. Codex sessions are
   threads in Codex's app-server daemon, and OpenCode sessions live in OpenCode's background service:
   asides pushes each aside into them. Every listening agent is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
@@ -113,7 +113,7 @@ changes.
 - read `~/Library/Application Support/Asides/state.json`
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md), and run Claude Code, Codex or
   OpenCode against it with a one-off MCP config, using `asides simulate` for speech
-- run `asides claude`/`codex`/`opencode` with a fake agent first on `PATH` to see the command line it
+- run `asides claude`/`codex`/`opencode`/`gemini`/`copilot`/`qwen` with a fake agent first on `PATH` to see the command line it
   builds, and check the real agent accepts it without a model call (CONTRIBUTING.md)
 - run `asides listen --timeout N` and read what it prints
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
@@ -363,6 +363,20 @@ The user may record a request and ask you to "implement the note". Find it with
   accessibility. Shortcuts need the whole chord posted (modifier key events, then the key, through
   a private `CGEventSource`); a key event carrying only modifier flags doesn't fire a Carbon hot
   key. It's the user's screen and mouse: keep it short.
+- Gemini CLI reads MCP servers only from settings files, and skips a system settings file
+  (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`, or the defaults one) unless root owns its folder: a session
+  can't have a server of its own. It passes its environment to its servers (plus `GEMINI_CLI=1`),
+  so the user's `asides mcp` becomes the session's through `ASIDES_SESSION`. In a folder the user
+  hasn't trusted, its MCP servers are disabled (`gemini mcp list` says Disabled;
+  `GEMINI_CLI_TRUST_WORKSPACE=true` trusts it for a check).
+- Copilot CLI's `--allow-tool` takes every value after it unless given with `=`, and its `mcp list`
+  doesn't take `--additional-mcp-config`. It validates that config before asking for a login, so
+  `-p` in place of `--interactive` checks a command line without a model call. Qwen Code (from
+  Gemini CLI) takes servers with `--mcp-config` and says "MCP server(s) failed to start" under `-p`
+  when one doesn't.
+- The agent CLIs write into your home on their first run, even for `--version` (Copilot unpacks
+  170 MB into `~/Library/Caches/copilot`; Gemini makes `~/.gemini`): install them into a scratch
+  prefix (`npm install --prefix`) and run them with a scratch `HOME`.
 - `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
   run --help`, which does print help) before trying its commands.
 

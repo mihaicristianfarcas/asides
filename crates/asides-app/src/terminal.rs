@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use asides_core::launch::AgentKind;
+use asides_core::agents::AgentKind;
 
 /// The apps sessions can open in, as the menu offers them (when installed). Terminal is the
 /// default; `[agents] terminal` can also name another app that runs `.command` scripts.

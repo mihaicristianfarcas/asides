@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use asides_core::agents::Listener;
+use asides_core::listening::Listener;
 use asides_core::notes;
 use asides_core::sessions::Session;
 use asides_core::threads::{self, Event, THREADS_FILE};

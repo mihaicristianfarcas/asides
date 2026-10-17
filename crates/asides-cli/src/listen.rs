@@ -16,8 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use asides_core::agents::{self, Listener, Listening};
+use asides_core::agents;
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
+use asides_core::listening::{Listener, Listening};
 use asides_core::paths::{self, tilde};
 use asides_core::sessions;
 use asides_core::state::AppState;

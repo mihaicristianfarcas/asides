@@ -20,7 +20,7 @@ How asides fits together, for anyone about to change it. User-facing behavior is
             <repo>/.asides/<YYYY-MM-DD-HHMM Title>/notes.md, images/, audio/
       ▲
       │ reads entries; state.json (batch sends), config.toml (delivery mode)
-┌─────────────┐  stdio JSON-RPC   ┌────────────────────────────┐   asides claude|codex|opencode
+┌─────────────┐  stdio JSON-RPC   ┌────────────────────────────┐   asides claude|codex|gemini|…
 │ asides mcp  │ ◀───────────────▶ │ coding agent (Claude Code, │ ◀── (in a terminal the menu's New
 │   (CLI)     │                   │ Codex, OpenCode, …)        │     Agent Session opens, or --bg)
 └─────────────┘                   └────────────────────────────┘
@@ -67,10 +67,13 @@ crates/
     project.rs        bind rules (git root or the current directory), git facts, .git/info/exclude
     link.rs           asides:// link format (the CLI → app protocol)
     state.rs          state.json (the app → CLI protocol), recent directories, batch sends, the target
-    agents.rs         what a listening agent has seen and what's new (Cursor, Listening), listener records
+    agents.rs         the coding agents asides starts, in one place (Claude Code, Codex, OpenCode, Gemini CLI,
+                      Copilot CLI, Qwen Code): names, how each listens, runs in the background, its MCP
+                      client's name and tool-call time limit, the variables marking its commands; client labels
+    listening.rs      what a listening agent has seen and what's new (Cursor, Listening), listener records
     sessions.rs       agent sessions (sessions/<id>.json): records, labels, what each is doing
     routes.rs         routes.jsonl: which session each entry was spoken to
-    launch.rs         starting an agent: Claude Code, Codex, OpenCode command lines with the MCP server; the listen prompt
+    launch.rs         starting an agent: its command line with the MCP server; the listen prompt
     threads.rs        threads.jsonl: what agents (and the user) did with each aside; aside ids (3, 3.2)
     measure.rs        PixelSnap-style measuring on a frame: distances to edges, snapping areas and guides, objects, colors
     inspect.rs        a Measure & Annotate result (measurements, guides, annotations, drawings, elements, what was
@@ -88,7 +91,7 @@ crates/
     paths.rs          bundle ID, URL scheme, Application Support paths, tilde()
   asides-cli/      shipped inside the bundle as Asides.app/Contents/Helpers/asides
     main.rs           clap subcommands, `open -g -b <bundle id> <link>`, waits for the app to acknowledge
-    start.rs          `asides claude|codex|opencode`: a session record, a worktree when another session
+    start.rs          `asides claude|codex|opencode|gemini|copilot|qwen`: a session record, a worktree when another session
                       works in the repo, then `exec` of the agent (or `claude --bg`, or a Codex
                       thread or OpenCode session it pushes into)
     codex.rs          Codex sessions: a thread in its app-server daemon (WebSocket JSON-RPC through
@@ -308,14 +311,20 @@ as Wispr Flow typed it.
 ### Agent sessions (`asides claude`, `asides mcp`, `asides listen`)
 
 1. **A session starts** one of two ways:
-   - `asides claude` (or `codex`, `opencode`; the menu's New Agent Session runs it in a terminal
+   - `asides claude` (or `codex`, `opencode`, `gemini`, `copilot`, `qwen`; the menu's New Agent Session runs it in a terminal
      through a `.command` script, or in the login shell with `--background`) resolves the repo,
      writes `sessions/<id>.json` (listening, with where its asides start: a `Listening` token),
      sends `asides://session?id=…` so the app makes it the target, and `exec`s the agent: from then
      on the record's process is the agent. The agent's command line (`launch.rs`) carries the MCP
      server (`asides -C <repo> mcp --session <id>`; Claude Code's `--mcp-config`, Codex's `-c
-     mcp_servers.asides.*`, OpenCode's `OPENCODE_CONFIG_CONTENT` with `--standalone`), the listen
-     prompt as its first message, and for Claude Code its asides tools pre-approved. When another
+     mcp_servers.asides.*`, OpenCode's `OPENCODE_CONFIG_CONTENT` with `--standalone`, Copilot CLI's
+     `--additional-mcp-config`, Qwen Code's `--mcp-config`), the listen prompt as its first message,
+     and its asides tools pre-approved (Claude Code's `--allowedTools`, Copilot CLI's `--allow-tool`,
+     a trusted server for Qwen Code). Those that wait in a tool call get an hour for one (Codex's
+     `tool_timeout_sec`, the others' `timeout`) and wait 50 minutes. Gemini CLI takes servers only
+     from settings files (a system one only from a folder root owns), so the first `asides gemini`
+     adds the user's (`gemini mcp add --scope user --trust`), and it's the session's server through
+     `ASIDES_SESSION` and `ASIDES_REPO`, which Gemini passes to its servers. When another
      session is alive in the repo, the new one works in a git worktree: Claude Code makes it
      (`--worktree`); for Codex and OpenCode, `start.rs` makes it in `.asides/worktrees/` and removes
      it at a later start if nothing was done in it.
@@ -503,11 +512,18 @@ Break these only on purpose, and update this document when you do.
   agents in one repo act on the same request.
 - **Routes in a sidecar, written before the entry.** The note stays a plain record of what was said
   (invariant 5), and an agent polling it can't see an entry before its route.
-- **Agents started with their own command lines.** Each agent can take an MCP server on its command
-  line (Claude Code's `--mcp-config` overrides a user-scope server of the same name; Codex's `-c`;
-  OpenCode's inline config, read by a `--standalone` server since OpenCode 2's shared service
-  wouldn't see it), so `asides claude` needs no `mcp add` and ties the server to its session. `exec`
-  keeps the agent in charge of the terminal (Ctrl-Z, signals, exit code).
+- **Agents started with their own command lines.** Most agents can take an MCP server on their
+  command line (Claude Code's `--mcp-config` overrides a user-scope server of the same name; Codex's
+  `-c`; OpenCode's inline config, read by a `--standalone` server since OpenCode 2's shared service
+  wouldn't see it; Copilot CLI's and Qwen Code's JSON), so `asides claude` needs no `mcp add` and
+  ties the server to its session. Gemini CLI can't (a settings file of the session's own must be in
+  a folder owned by root), so it gets the user's server, registered once, and the session through
+  its environment. `exec` keeps the agent in charge of the terminal (Ctrl-Z, signals, exit code).
+- **One module for the agents.** What differs between agents (names, how each takes a server and a
+  first prompt, how it listens, its MCP client's name and time limit for a tool call, the variables
+  it marks its commands with) is declared in `agents.rs` and built into command lines in
+  `launch.rs`; the rest of asides asks them. Agents asides doesn't start work through `asides mcp`
+  set up by hand, labeled by their client's name (`agents::client_label`).
 - **Terminals through scripts; Ghostty tabs through AppleScript.** Sessions open in Terminal unless
   the user picks another app. Terminal and iTerm run a `.command` script they're asked to open
   (`open -a`), in a new window. A tab is better (the user's window, not one per session), but it
