@@ -146,9 +146,15 @@ pub fn run(
                     Err(err) => {
                         let wait = retry.map_or(RETRY_FIRST, |(_, wait)| (wait * 2).min(RETRY_LONGEST));
                         retry = Some((Instant::now() + wait, wait));
-                        let problem = format!("{err:#}");
+                        let full = format!("{err:#}");
+                        // For the menu: one line, short.
+                        let first = full.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("it failed");
+                        let mut problem: String = first.chars().take(160).collect();
+                        if problem.len() < first.len() {
+                            problem.push('…');
+                        }
                         if record.problem.as_ref() != Some(&problem) {
-                            eprintln!("asides: {problem}");
+                            eprintln!("asides: {full}");
                             record.problem = Some(problem);
                             let _ = record.write(&paths::listeners_dir());
                         }
