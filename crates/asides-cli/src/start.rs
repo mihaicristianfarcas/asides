@@ -25,7 +25,6 @@ use asides_core::paths::{self, tilde};
 use asides_core::project;
 use asides_core::sessions::{self, Session};
 use asides_core::state::AppState;
-use serde_json::Value;
 
 use crate::{codex, listen};
 
@@ -198,10 +197,8 @@ fn start_background(mut process: Process, session: &Session, name: &str) -> Resu
 fn background_pid(name: &str) -> Option<u32> {
     for _ in 0..20 {
         let out = Process::new("claude").args(["agents", "--json"]).output().ok()?;
-        let list: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
-        let found = list.as_array().into_iter().flatten().find(|s| s["name"].as_str() == Some(name));
-        if let Some(pid) = found.and_then(|s| s["pid"].as_u64()) {
-            return u32::try_from(pid).ok();
+        if let Some(pid) = launch::claude_background(&String::from_utf8_lossy(&out.stdout), name).and_then(|s| s.pid) {
+            return Some(pid);
         }
         std::thread::sleep(Duration::from_millis(500));
     }

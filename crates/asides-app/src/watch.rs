@@ -97,7 +97,8 @@ pub fn sessions(
 }
 
 /// Reports the events of the latest note in the directory `bound` holds whenever they change (an
-/// agent resolved or replied to an aside), and once for each note it starts watching.
+/// agent resolved or replied to an aside), and once for each note it starts watching (none, with the
+/// directory, when it has no notes yet).
 pub fn threads(bound: Arc<Mutex<Option<PathBuf>>>, report: impl Fn(PathBuf, Vec<Event>) -> bool + Send + 'static) {
     std::thread::Builder::new()
         .name("asides-threads".into())
@@ -105,15 +106,17 @@ pub fn threads(bound: Arc<Mutex<Option<PathBuf>>>, report: impl Fn(PathBuf, Vec<
             let mut last: Option<(PathBuf, Option<(u64, std::time::SystemTime)>)> = None;
             loop {
                 std::thread::sleep(THREADS_POLL);
-                let dir = bound.lock().unwrap().clone();
-                let Some(note) = dir.as_deref().and_then(notes::latest_note) else { continue };
-                let stamp = std::fs::metadata(note.dir.join(THREADS_FILE))
-                    .ok()
-                    .and_then(|m| Some((m.len(), m.modified().ok()?)));
-                let now = (note.dir.clone(), stamp);
+                let Some(dir) = bound.lock().unwrap().clone() else { continue };
+                // So the last repo's replies don't stay in the menu.
+                let note = notes::latest_note(&dir).map(|note| note.dir);
+                let stamp = note.as_ref().and_then(|note| {
+                    let meta = std::fs::metadata(note.join(THREADS_FILE)).ok()?;
+                    Some((meta.len(), meta.modified().ok()?))
+                });
+                let now = (note.clone().unwrap_or(dir), stamp);
                 if last.as_ref() != Some(&now) {
-                    last = Some(now);
-                    if !report(note.dir.clone(), threads::read(&note.dir)) {
+                    last = Some(now.clone());
+                    if !report(now.0, note.as_deref().map(threads::read).unwrap_or_default()) {
                         return;
                     }
                 }

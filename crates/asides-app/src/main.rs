@@ -91,8 +91,8 @@ enum UserEvent {
     Sessions(Vec<Listener>, Vec<Session>),
     /// The coding agents installed, as the user's login shell finds them.
     Agents(Vec<AgentKind>),
-    /// A background session started (what `asides claude --background` said), or what went wrong
-    /// starting or stopping one.
+    /// A background session started (what to say about it), or what went wrong starting or
+    /// stopping one.
     Launched(Result<String, String>),
     CommandLinked(CommandLink),
     /// The screens, frozen for Measure & Annotate.
@@ -396,8 +396,7 @@ impl App {
                 self.agents = Some(agents);
                 self.refresh();
             }
-            UserEvent::Launched(Ok(said)) => {
-                let status = said.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("Started").to_string();
+            UserEvent::Launched(Ok(status)) => {
                 self.flash = Some((Instant::now() + SENT_FLASH, "Started".into(), status));
                 self.refresh();
             }
@@ -1317,8 +1316,10 @@ impl App {
         let command = terminal::from_this_app(&command);
         if background {
             let proxy = self.proxy.clone();
+            let started = format!("{} is working in the background in {name}: Show opens it", agent.name());
             std::thread::spawn(move || {
-                let result = terminal::run(&command).map_err(|e| format!("Could not start the session: {e:#}"));
+                let result =
+                    terminal::run(&command).map(|_| started).map_err(|e| format!("Could not start the session: {e:#}"));
                 let _ = proxy.send_event(UserEvent::Launched(result));
             });
         } else {
@@ -1363,9 +1364,12 @@ impl App {
                 unsafe { libc::kill(pid, libc::SIGTERM) };
             }
         } else {
-            let command = format!("claude stop {}", terminal::quote(&name));
             let proxy = self.proxy.clone();
             std::thread::spawn(move || {
+                // `claude stop` takes the session's id, which `claude agents` gives for its name.
+                let listed = terminal::run("claude agents --json").ok();
+                let id = listed.and_then(|list| launch::claude_background(&list, &name)).map(|s| s.id);
+                let command = format!("claude stop {}", terminal::quote(&id.unwrap_or(name)));
                 if let Err(err) = terminal::run(&command) {
                     let _ = proxy.send_event(UserEvent::Launched(Err(format!("Could not stop the session: {err:#}"))));
                 }

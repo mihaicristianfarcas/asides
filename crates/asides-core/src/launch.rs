@@ -255,6 +255,26 @@ pub fn inherited_markers() -> Vec<String> {
     session_markers(std::env::vars_os().filter_map(|(name, _)| name.into_string().ok()))
 }
 
+/// A Claude Code background session, as `claude agents --json` lists it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Background {
+    /// What `claude stop` takes (`claude attach` also takes the name).
+    pub id: String,
+    pub pid: Option<u32>,
+}
+
+/// The session named `name` in `claude agents --json`'s output (after whatever a login shell
+/// printed first).
+pub fn claude_background(agents_json: &str, name: &str) -> Option<Background> {
+    let list = &agents_json[agents_json.find('[')?..=agents_json.rfind(']')?];
+    let list: serde_json::Value = serde_json::from_str(list).ok()?;
+    let found = list.as_array()?.iter().find(|s| s["name"].as_str() == Some(name))?;
+    Some(Background {
+        id: found["id"].as_str()?.to_string(),
+        pid: found["pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()),
+    })
+}
+
 /// The configuration a Codex thread asides starts gets: its MCP server, for the session.
 pub fn codex_thread_config(asides: &str, repo: &Path, session: &str) -> serde_json::Value {
     let args = ["-C", &repo.to_string_lossy(), "mcp", "--session", session].map(String::from);
@@ -303,6 +323,20 @@ mod tests {
         // Outside an agent, settings with the same prefixes stay.
         let outside = ["PATH", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_EFFORT", "AGENT", "OPENCODE_SESSION_ID"];
         assert!(session_markers(outside.map(String::from)).is_empty());
+    }
+
+    #[test]
+    fn finds_a_background_session_by_name() {
+        let list = r#"[
+            {"pid": 51, "id": "0a1b2c3d", "kind": "interactive", "name": "other"},
+            {"pid": 77543, "id": "79133e0b", "kind": "background", "name": "my shop · asides e7e073ed"}
+        ]"#;
+        let found = claude_background(list, "my shop · asides e7e073ed");
+        assert_eq!(found, Some(Background { id: "79133e0b".into(), pid: Some(77543) }));
+        assert_eq!(claude_background(list, "my shop · asides 00000000"), None);
+        assert_eq!(claude_background("not json", "other"), None);
+        let after_a_banner = format!("Welcome back!\n{list}");
+        assert_eq!(claude_background(&after_a_banner, "other").map(|s| s.id), Some("0a1b2c3d".into()));
     }
 
     fn launch(kind: AgentKind) -> Launch<'static> {
