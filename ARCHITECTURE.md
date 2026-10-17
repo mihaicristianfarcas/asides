@@ -158,12 +158,12 @@ Casks/asides.rb       the Homebrew cask; the repository doubles as a tap
 | Config watcher | polls `config.toml`'s modification time every 2 s | `UserEvent::ConfigFileChanged` |
 | Wispr Flow watcher (while on) | a `wispr::History`; queries only after `flow.sqlite` changes | `UserEvent::Wispr` |
 | Sessions watcher | reads `listeners/` and `sessions/` every 2 s, removes records of ended processes | `UserEvent::Sessions` |
-| Agent finder (once, at launch) | asks the login shell which agents are installed | `UserEvent::Agents` |
+| Agent finder (at launch, and when the menu opens, at most once a minute) | asks the login shell which agents are installed | `UserEvent::Agents` |
 | Background launch (per launch) | runs `asides claude --background` in the login shell | `UserEvent::Launched` |
 | Threads watcher | checks the bound directory's latest `threads.jsonl` every second | `UserEvent::Threads` |
 | ScreenCaptureKit queues | turn each display's screenshot into a frame | `UserEvent::Captured` |
 | Overlay reader (while it's open) | reads `asides-overlay`'s standard output | `UserEvent::Overlay` |
-| global-hotkey, muda | | `UserEvent::HotKey`, `UserEvent::Menu` |
+| global-hotkey, muda, tray-icon | | `UserEvent::HotKey`, `UserEvent::Menu`, `UserEvent::MenuOpened` |
 
 Background threads never touch AppKit objects. They send `UserEvent`s through the
 `EventLoopProxy`, and `App::handle` runs them on the main thread. The overlay is another process

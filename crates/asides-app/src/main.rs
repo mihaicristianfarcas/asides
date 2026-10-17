@@ -76,6 +76,8 @@ const ERROR_ICON: Duration = Duration::from_secs(6);
 const MIN_RECORDING_SECS: f32 = 0.3;
 /// How long the outcome of a Send to Agent stays in the menu bar.
 const SENT_FLASH: Duration = Duration::from_secs(4);
+/// How often opening the menu looks for agents installed since.
+const AGENTS_LOOKED: Duration = Duration::from_secs(60);
 /// How many of the agents' latest replies the menu shows.
 const MAX_REPLIES: usize = 8;
 /// How long Measure & Annotate waits for the screenshots before it may ask again.
@@ -103,6 +105,8 @@ enum UserEvent {
     Overlay(OverlayMessage),
     /// The latest note's threads (what agents said about its asides), when they change.
     Threads(PathBuf, Vec<ThreadEvent>),
+    /// The status item was clicked: its menu opens.
+    MenuOpened,
 }
 
 struct Recording {
@@ -236,6 +240,8 @@ struct App {
     sessions_seen: bool,
     /// The coding agents installed (`None` until the login shell has answered).
     agents: Option<Vec<AgentKind>>,
+    /// When the installed agents were last looked for.
+    agents_looked: Option<Instant>,
     /// The shortcut that switches sessions is registered (only while there are sessions).
     next_target_on: bool,
     /// The user declined to put the `asides` command on the PATH (published, so it's asked once).
@@ -289,8 +295,14 @@ fn main() {
     MenuEvent::set_event_handler(Some(move |e| {
         let _ = p.send_event(UserEvent::Menu(e));
     }));
-    // Unused, but without a handler every hover over the icon would queue an event forever.
-    TrayIconEvent::set_event_handler(Some(|_| {}));
+    // Opening the menu looks for agents installed since (only clicks: without a handler, every
+    // hover over the icon would queue an event forever).
+    let p = proxy.clone();
+    TrayIconEvent::set_event_handler(Some(move |e| {
+        if matches!(e, TrayIconEvent::Click { .. }) {
+            let _ = p.send_event(UserEvent::MenuOpened);
+        }
+    }));
 
     let mut app = App::new(mtm, proxy);
     event_loop.run(move |event, _, control_flow| {
@@ -372,6 +384,7 @@ impl App {
             known_sessions: HashSet::new(),
             sessions_seen: false,
             agents: None,
+            agents_looked: None,
             next_target_on: false,
             command_link_declined,
             wispr: None,
@@ -421,10 +434,7 @@ impl App {
         watch::sessions(paths::listeners_dir(), paths::sessions_dir(), move |listeners, sessions| {
             proxy.send_event(UserEvent::Sessions(listeners, sessions)).is_ok()
         });
-        let proxy = self.proxy.clone();
-        std::thread::spawn(move || {
-            let _ = proxy.send_event(UserEvent::Agents(terminal::installed_agents()));
-        });
+        self.look_for_agents();
         self.sync_wispr();
         *self.threads_dir.lock().unwrap() = self.bound.clone();
         let proxy = self.proxy.clone();
@@ -475,6 +485,11 @@ impl App {
             UserEvent::Wispr(Ok(dictation)) => self.add_dictation(dictation),
             UserEvent::Wispr(Err(message)) => self.fail(message),
             UserEvent::Sessions(listeners, sessions) => self.on_sessions(listeners, sessions),
+            UserEvent::MenuOpened => {
+                if self.agents_looked.is_none_or(|at| at.elapsed() >= AGENTS_LOOKED) {
+                    self.look_for_agents();
+                }
+            }
             UserEvent::Agents(agents) => {
                 self.agents = Some(agents);
                 self.refresh();
@@ -1795,6 +1810,16 @@ impl App {
         let agent = self.sessions.iter().find(|s| s.id == id).map(|s| s.agent.clone());
         self.flash(SENT_FLASH, Mark::Ellipsis, agent, status);
         self.refresh();
+    }
+
+    /// Looks for the coding agents installed (in the login shell, which can take a moment), for New
+    /// Agent Session; again when the menu opens, now and then, for ones installed since.
+    fn look_for_agents(&mut self) {
+        self.agents_looked = Some(Instant::now());
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let _ = proxy.send_event(UserEvent::Agents(terminal::installed_agents()));
+        });
     }
 
     /// Starts or stops watching Wispr Flow's history to match the settings.
