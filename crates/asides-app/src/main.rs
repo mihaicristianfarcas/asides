@@ -1,7 +1,8 @@
 //! Asides: menu-bar app that records spoken bug reports and appends them, transcribed locally,
 //! to the latest note in the directory bound with the `asides` CLI. Measure & Annotate freezes the
 //! screen to measure, mark, draw on and talk about it (its overlay is a separate process,
-//! `asides-overlay`); what's marked lands among what was said.
+//! `asides-overlay`); what's marked lands among what was said. Each aside goes to one agent
+//! session, the target (or to the notes only); New Agent Session starts one.
 
 mod audio;
 mod capture;
@@ -13,6 +14,7 @@ mod icons;
 mod macos;
 mod overlay;
 mod stt;
+mod terminal;
 mod tray;
 mod watch;
 mod worker;
@@ -24,19 +26,22 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use asides_core::agents::{self, Listener};
+use asides_core::agents::Listener;
 use asides_core::config::{AgentDelivery, Config};
 use asides_core::helper::{
     Command as OverlayCommand, Event as OverlayEvent, Outcome as OverlayOutcome, Spec, SpecScreen,
 };
 use asides_core::inspect::{PtRect, Screen, Units};
 use asides_core::install;
+use asides_core::launch::AgentKind;
 use asides_core::link::Link;
 use asides_core::models::ModelSpec;
 use asides_core::notes;
 use asides_core::overlay::Saved;
 use asides_core::paths::{self, tilde};
 use asides_core::project;
+use asides_core::routes::Route;
+use asides_core::sessions::{self, Session, SessionState};
 use asides_core::state::{self as app_state, AgentSend, AppState, PendingNew};
 use asides_core::threads::{self, Event as ThreadEvent, Role, Status};
 use asides_core::wispr::{self, Dictation};
@@ -57,7 +62,7 @@ use crate::icons::Icons;
 use crate::macos::{CommandLink, Mic};
 use crate::overlay::{Message as OverlayMessage, Overlay};
 use crate::stt::{ModelManager, ModelState};
-use crate::tray::{MenuAction, Tray, View};
+use crate::tray::{MenuAction, TargetRow, Tray, View};
 use crate::worker::{CapturedImage, DictationJob, ImageJob, Job, Outcome, RecordingJob, ScreenJob};
 
 /// A press shorter than this toggles recording; a longer one is push-to-talk.
@@ -67,8 +72,6 @@ const FLASH: Duration = Duration::from_secs(2);
 const ERROR_ICON: Duration = Duration::from_secs(6);
 /// Recordings shorter than this (without images) are treated as accidental and dropped.
 const MIN_RECORDING_SECS: f32 = 0.3;
-/// An agent that stopped waiting this recently is still listening: it's working on the last asides.
-const LISTENING_GRACE_MS: u64 = 10 * 60 * 1000;
 /// How long the outcome of a Send to Agent stays in the menu bar.
 const SENT_FLASH: Duration = Duration::from_secs(4);
 /// How many of the agents' latest replies the menu shows.
@@ -84,7 +87,12 @@ enum UserEvent {
     Mic(bool),
     ConfigFileChanged,
     Wispr(Result<Dictation, String>),
-    Listeners(Vec<Listener>),
+    /// The processes listening for asides, and the agent sessions.
+    Sessions(Vec<Listener>, Vec<Session>),
+    /// The coding agents installed, as the user's login shell finds them.
+    Agents(Vec<AgentKind>),
+    /// A background session started (what `asides claude --background` said), or why it didn't.
+    Launched(Result<String, String>),
     CommandLinked(CommandLink),
     /// The screens, frozen for Measure & Annotate.
     Captured(Result<Vec<Capture>, String>),
@@ -101,6 +109,9 @@ struct Recording {
     dir: PathBuf,
     new_note: Option<Option<String>>,
     target_label: String,
+    /// The session it's spoken to (written beside the note), and that session's agent.
+    route: Option<Route>,
+    to_agent: Option<String>,
     images: Vec<CapturedImage>,
     /// Measure & Annotate annotations made while recording, as (seconds, Markdown).
     texts: Vec<(f32, String)>,
@@ -147,6 +158,17 @@ struct App {
     /// Send to Agent was chosen while recordings were still being transcribed.
     pending_send: bool,
     listeners: Vec<Listener>,
+    /// The agent sessions listening (`sessions::Session`), oldest first.
+    sessions: Vec<Session>,
+    /// The session the user's asides go to; `None` for Notes Only.
+    target: Option<String>,
+    /// Sessions already seen, so only new ones become the target.
+    known_sessions: HashSet<String>,
+    sessions_seen: bool,
+    /// The coding agents installed (`None` until the login shell has answered).
+    agents: Option<Vec<AgentKind>>,
+    /// The shortcut that switches sessions is registered (only while there are sessions).
+    next_target_on: bool,
     /// The user declined to put the `asides` command on the PATH (published, so it's asked once).
     command_link_declined: bool,
     /// Set to stop watching Wispr Flow's history.
@@ -228,6 +250,7 @@ impl App {
         let bound = previous.bound_dir.filter(|d| d.is_dir());
         let pending_new = bound.as_ref().and(previous.pending_new);
         let agent_sends = previous.agent_sends;
+        let target = previous.target_session;
         let command_link_declined = previous.command_link_declined;
         let overlay_tips_seen = previous.overlay_tips_seen;
         let mut recent_dirs: Vec<PathBuf> = previous.recent_dirs.into_iter().filter(|d| d.is_dir()).collect();
@@ -258,6 +281,12 @@ impl App {
             agent_sends,
             pending_send: false,
             listeners: Vec::new(),
+            sessions: Vec::new(),
+            target,
+            known_sessions: HashSet::new(),
+            sessions_seen: false,
+            agents: None,
+            next_target_on: false,
             command_link_declined,
             wispr: None,
             capturing: None,
@@ -282,7 +311,7 @@ impl App {
             Err(err) => eprintln!("could not create the status item: {err:#}"),
         }
         self.icons = Some(icons);
-        match Hotkeys::new(&self.config.shortcuts, self.config.agent_delivery == AgentDelivery::Batch) {
+        match Hotkeys::new(&self.config.shortcuts, self.config.agent_delivery == AgentDelivery::Batch, false) {
             Ok(hotkeys) => {
                 if let Some(err) = hotkeys.errors.first() {
                     self.error = Some((Instant::now(), err.clone()));
@@ -299,8 +328,12 @@ impl App {
         self.models.ensure(&self.config.model);
         self.watch_config();
         let proxy = self.proxy.clone();
-        watch::listeners(paths::listeners_dir(), move |listeners| {
-            proxy.send_event(UserEvent::Listeners(listeners)).is_ok()
+        watch::sessions(paths::listeners_dir(), paths::sessions_dir(), move |listeners, sessions| {
+            proxy.send_event(UserEvent::Sessions(listeners, sessions)).is_ok()
+        });
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let _ = proxy.send_event(UserEvent::Agents(terminal::installed_agents()));
         });
         self.sync_wispr();
         *self.threads_dir.lock().unwrap() = self.bound.clone();
@@ -351,10 +384,17 @@ impl App {
             UserEvent::ConfigFileChanged => self.reload_config(),
             UserEvent::Wispr(Ok(dictation)) => self.add_dictation(dictation),
             UserEvent::Wispr(Err(message)) => self.fail(message),
-            UserEvent::Listeners(listeners) => {
-                self.listeners = listeners;
+            UserEvent::Sessions(listeners, sessions) => self.on_sessions(listeners, sessions),
+            UserEvent::Agents(agents) => {
+                self.agents = Some(agents);
                 self.refresh();
             }
+            UserEvent::Launched(Ok(said)) => {
+                let status = said.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("Started").to_string();
+                self.flash = Some((Instant::now() + SENT_FLASH, "Started".into(), status));
+                self.refresh();
+            }
+            UserEvent::Launched(Err(message)) => self.fail(format!("Could not start the session: {message}")),
             UserEvent::CommandLinked(CommandLink::Linked) => {
                 let status = format!("You can now run `asides` in any terminal ({})", install::LINK);
                 self.flash = Some((Instant::now() + SENT_FLASH, "asides".into(), status));
@@ -381,7 +421,24 @@ impl App {
         match Link::parse(url) {
             Some(Link::Bind { dir, new_note, title, request }) => {
                 self.last_request = request;
+                // A session there gets what's said there; otherwise it's notes only.
+                self.target = self.sessions.iter().rev().find(|s| s.dir == dir).map(|s| s.id.clone());
                 self.bind(dir, new_note.then_some(PendingNew { title }));
+            }
+            Some(Link::Session { id, request }) => {
+                self.last_request = request;
+                match Session::read(&paths::sessions_dir(), &id) {
+                    Some(session) => {
+                        self.known_sessions.insert(id.clone());
+                        if !self.sessions.iter().any(|s| s.id == id) {
+                            self.sessions.push(session);
+                            self.sync_session_hotkey();
+                        }
+                        self.set_target(Some(id));
+                    }
+                    None => self.fail("An agent session asked for your asides, but it's gone.".into()),
+                }
+                self.publish();
             }
             Some(Link::Quit) => self.request_quit(),
             Some(Link::Send { request }) => {
@@ -441,6 +498,7 @@ impl App {
                     Action::Cancel => self.cancel_recording(),
                     Action::SendToAgent => self.send_to_agent(),
                     Action::Measure => self.measure(),
+                    Action::NextTarget => self.next_target(),
                 }
             }
             HotKeyState::Released => {
@@ -469,6 +527,9 @@ impl App {
             MenuAction::Cancel => self.cancel_recording(),
             MenuAction::SendToAgent => self.send_to_agent(),
             MenuAction::OpenReplies => self.with_latest(macos::open),
+            MenuAction::Target(id) => self.set_target(id),
+            MenuAction::NewSession { agent, dir, background } => self.new_session(agent, dir, background),
+            MenuAction::ShowSession(id) => self.show_session(&id),
             MenuAction::SwitchDirectory(dir) => self.bind_from_menu(&dir),
             MenuAction::ChooseDirectory => {
                 if let Some(dir) = macos::choose_directory(self.mtm, self.bound.as_deref()) {
@@ -591,6 +652,7 @@ impl App {
             eprintln!("could not update .git/info/exclude: {err}");
         }
         let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        self.target = self.sessions.iter().rev().find(|s| s.dir == dir).map(|s| s.id.clone());
         self.bind(dir.clone(), None);
         self.flash = Some((Instant::now() + FLASH, name, format!("Now writing to {}", tilde(&dir))));
         self.refresh();
@@ -628,6 +690,8 @@ impl App {
             (Some(None), _) | (None, None) => "new note".into(),
             (None, Some(latest)) => latest.title.clone(),
         };
+        let route = self.route(&dir);
+        let to_agent = self.target_session().filter(|s| s.dir == dir).map(|s| s.agent.clone());
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -635,6 +699,8 @@ impl App {
             dir,
             new_note,
             target_label,
+            route,
+            to_agent,
             images: Vec::new(),
             texts: Vec::new(),
             environment: environment::capture(self.mtm),
@@ -665,6 +731,7 @@ impl App {
         self.tell_overlay_recording();
         let (samples, sample_rate) = recording.recorder.finish();
         self.sound("Pop");
+        self.sync_session_hotkey();
         let seconds = samples.len() as f32 / sample_rate.max(1) as f32;
         if seconds < MIN_RECORDING_SECS && recording.images.is_empty() && recording.texts.is_empty() {
             self.refresh();
@@ -684,6 +751,7 @@ impl App {
             model: self.config.model.clone(),
             languages: self.config.languages.clone(),
             auto_new_note: self.config.auto_new_note,
+            route: recording.route,
         })));
     }
 
@@ -754,7 +822,9 @@ impl App {
             return self.fail(format!("{} no longer exists. Run `asides` again.", dir.display()));
         }
         let new_note = self.pending_new.take().map(|p| p.title);
+        let route = self.route(&dir);
         self.submit(Job::Dictation(Box::new(DictationJob {
+            route,
             dir,
             text: dictation.text,
             at: dictation.at.with_timezone(&Local),
@@ -1006,7 +1076,9 @@ impl App {
             return self.fail("Not bound to a directory. Run `asides` in a repo first.".into());
         };
         let new_note = self.pending_new.take().map(|p| p.title);
+        let route = self.route(&dir);
         self.submit(Job::Screen(Box::new(ScreenJob {
+            route,
             dir,
             at,
             images: pictures,
@@ -1089,9 +1161,11 @@ impl App {
         }
         self.pending_send = false;
         let Some(dir) = self.bound.clone() else { return };
-        let Some((agents, waiting)) = self.listening() else {
+        let Some(session) = self.target_session().filter(|s| s.dir == dir).cloned() else {
             return self.fail(
-                "No agent is listening. Ask your coding agent to listen to your asides, then send again.".into(),
+                "No agent is listening. Start one (New Agent Session), or ask your coding agent to listen to your \
+                 asides, then send again."
+                    .into(),
             );
         };
         let latest = notes::latest_note(&dir);
@@ -1100,12 +1174,12 @@ impl App {
             entry: latest.as_ref().map_or(0, |n| n.next_entry_number() - 1),
             note: latest.map(|n| n.dir),
             dir,
+            session: Some(session.id.clone()),
         };
         app_state::remember_send(&mut self.agent_sends, send);
-        let (title, status) = if waiting {
-            ("Sent", format!("Sent to {agents}"))
-        } else {
-            ("Queued", format!("Queued: {agents} gets them when it's done with the last ones"))
+        let (title, status) = match session.state(&self.listeners, now_ms()) {
+            SessionState::Listening => ("Sent", format!("Sent to {}", session.agent)),
+            _ => ("Queued", format!("Queued: {} gets them when it's ready", session.agent)),
         };
         self.flash = Some((Instant::now() + SENT_FLASH, title.into(), status));
         self.sound("Glass");
@@ -1113,30 +1187,147 @@ impl App {
         self.publish();
     }
 
-    /// The agents listening in the bound directory, e.g. "Claude Code" or "Claude Code and Codex",
-    /// and whether one of them is waiting for asides right now; otherwise they're all working on
-    /// the last ones they got.
-    fn listening(&self) -> Option<(String, bool)> {
-        let now = now_ms();
-        let mut names: Vec<String> = Vec::new();
-        let mut waiting = false;
-        for listener in &self.listeners {
-            let active = listener.waiting || now.saturating_sub(listener.updated_ms) < LISTENING_GRACE_MS;
-            if !active || Some(&listener.dir) != self.bound.as_ref() {
-                continue;
+    /// The session the user's asides go to, if it's still around.
+    fn target_session(&self) -> Option<&Session> {
+        self.target.as_ref().and_then(|id| self.sessions.iter().find(|s| &s.id == id))
+    }
+
+    /// Where an aside spoken now in `dir` goes, to write beside the note: the target session, or
+    /// nobody (Notes Only) when sessions are listening there. `None` when there's no session to
+    /// tell apart, as before sessions.
+    fn route(&self, dir: &Path) -> Option<Route> {
+        match self.target_session().filter(|s| s.dir == dir) {
+            Some(session) => {
+                Some(Route { entry: 0, session: Some(session.id.clone()), agent: Some(session.agent.clone()) })
             }
-            waiting |= listener.waiting;
-            let name = agents::client_label(&listener.client);
-            if !names.contains(&name) {
-                names.push(name);
-            }
+            None if self.sessions.iter().any(|s| s.dir == dir) => Some(Route::default()),
+            None => None,
         }
-        let names = match names.as_slice() {
-            [] => return None,
-            [one] => one.clone(),
-            [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+
+    /// The agent sessions changed: a new one becomes the target (the user just started it, or
+    /// asked its agent to listen), and when the target ends, the newest other session in its repo
+    /// takes over, or the notes only.
+    fn on_sessions(&mut self, listeners: Vec<Listener>, all: Vec<Session>) {
+        self.listeners = listeners;
+        let live: Vec<Session> = all.into_iter().filter(|s| s.listening).collect();
+        let first = !std::mem::replace(&mut self.sessions_seen, true);
+        let newest = live.iter().rev().find(|s| !self.known_sessions.contains(&s.id)).map(|s| s.id.clone());
+        let ended = self.target_session().filter(|t| !live.iter().any(|s| s.id == t.id)).cloned();
+        self.known_sessions.extend(live.iter().map(|s| s.id.clone()));
+        self.sessions = live;
+        self.sync_session_hotkey();
+        if first {
+            // What was there before the app started: keep the target it had, if it's still around.
+            if self.target_session().is_none() {
+                self.target = None;
+            }
+            self.publish();
+        } else if let Some(id) = newest {
+            return self.set_target(Some(id));
+        } else if let Some(gone) = ended {
+            // Another session in that repo takes over; never one elsewhere, unannounced.
+            let next = self.sessions.iter().rev().find(|s| s.dir == gone.dir).map(|s| s.id.clone());
+            let status = match &next {
+                Some(id) => format!("{} ended: your asides go to {}", gone.agent, self.label_of(id)),
+                None => format!("{} ended: your asides are saved to the notes only", gone.agent),
+            };
+            self.target = next;
+            self.flash = Some((Instant::now() + SENT_FLASH, "Ended".into(), status));
+            self.publish();
+        }
+        self.refresh();
+    }
+
+    /// Registers the shortcut that switches sessions while there are some, and frees it otherwise;
+    /// not mid-recording, where re-registering the shortcuts could lose the record key's release.
+    fn sync_session_hotkey(&mut self) {
+        if self.next_target_on != !self.sessions.is_empty() && self.recording.is_none() {
+            self.apply_hotkeys();
+        }
+    }
+
+    /// Sends the user's asides to session `id` (binding to its repo), or to the notes only.
+    fn set_target(&mut self, id: Option<String>) {
+        let session = id.as_ref().and_then(|id| self.sessions.iter().find(|s| &s.id == id)).cloned();
+        self.target = session.as_ref().map(|s| s.id.clone());
+        let (title, status) = match &session {
+            Some(session) => {
+                if self.bound.as_ref() != Some(&session.dir) {
+                    self.bind(session.dir.clone(), None);
+                }
+                (format!("→ {}", session.agent), format!("Your asides go to {}", self.label_of(&session.id)))
+            }
+            None => ("Notes".to_string(), "Your asides are saved to the notes only".to_string()),
         };
-        Some((names, waiting))
+        self.flash = Some((Instant::now() + SENT_FLASH, title, status));
+        self.refresh();
+        self.publish();
+    }
+
+    /// Switches to the next session, then Notes Only, then the first session again.
+    fn next_target(&mut self) {
+        let mut choices: Vec<Option<String>> = self.sessions.iter().map(|s| Some(s.id.clone())).collect();
+        choices.push(None);
+        let at = choices.iter().position(|c| *c == self.target).unwrap_or(choices.len() - 1);
+        self.set_target(choices[(at + 1) % choices.len()].clone());
+    }
+
+    /// The menu's name for session `id`, telling apart sessions of one agent in one repo.
+    fn label_of(&self, id: &str) -> String {
+        let labels = sessions::labels(&self.sessions);
+        self.sessions.iter().zip(labels).find(|(s, _)| s.id == id).map(|(_, l)| l).unwrap_or_default()
+    }
+
+    /// New Agent Session: `asides <agent>` in a terminal window, or in the background.
+    fn new_session(&mut self, agent: AgentKind, dir: Option<PathBuf>, background: bool) {
+        let chosen = match dir {
+            Some(dir) => dir,
+            None => match macos::choose_directory(self.mtm, self.bound.as_deref()) {
+                Some(dir) => dir,
+                None => return,
+            },
+        };
+        let dir = match project::resolve_bind_dir(&chosen) {
+            Ok(dir) => dir,
+            Err(err) => return self.fail(format!("Cannot use {}: {err}", tilde(&chosen))),
+        };
+        let Some(cli) = terminal::cli() else {
+            return self.fail("The asides command isn't in the app bundle. Reinstall Asides.".into());
+        };
+        let mut command = format!(
+            "{} -C {} {}",
+            terminal::quote(&cli.to_string_lossy()),
+            terminal::quote(&dir.to_string_lossy()),
+            agent.program()
+        );
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if background {
+            command.push_str(" --background");
+        }
+        let command = terminal::from_this_app(&command);
+        if background {
+            let proxy = self.proxy.clone();
+            std::thread::spawn(move || {
+                let result = terminal::run(&command).map_err(|e| format!("{e:#}"));
+                let _ = proxy.send_event(UserEvent::Launched(result));
+            });
+        } else if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &dir, &command) {
+            return self.fail(format!("{err:#}"));
+        }
+        let status = format!("Starting {} in {name}…", agent.name());
+        self.flash = Some((Instant::now() + SENT_FLASH, agent.name().into(), status));
+        self.refresh();
+    }
+
+    /// Opens a background session in a terminal (`claude attach`).
+    fn show_session(&mut self, id: &str) {
+        let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
+        let Some(name) = session.background else { return };
+        let command = format!("claude attach {}", terminal::quote(&name));
+        if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &session.dir, &command) {
+            self.fail(format!("{err:#}"));
+        }
     }
 
     /// Starts or stops watching Wispr Flow's history to match the settings.
@@ -1232,11 +1423,12 @@ impl App {
                 0 => String::new(),
                 n => format!(" · 📎{n}"),
             };
+            let to = recording.to_agent.as_ref().map(|agent| format!(" → {agent}")).unwrap_or_default();
             (
                 "recording",
                 &icons.recording,
-                Some(format!("{clock}{images}")),
-                format!("● Recording {clock} → {}", recording.target_label),
+                Some(format!("{clock}{images}{to}")),
+                format!("● Recording {clock} → {}{}", recording.target_label, to.replacen(" →", " ·", 1)),
             )
         } else if self.in_flight > 0 {
             let status = match downloading {
@@ -1252,10 +1444,13 @@ impl App {
         } else if let Some(p) = downloading {
             ("download", &icons.download, Some(format!("{p}%")), format!("Downloading speech model… {p}%"))
         } else if let Some(dir) = &dir_name {
-            let status = match (&error_text, self.listening()) {
+            let target = self.target_session().map(|s| (s.agent.clone(), s.state(&self.listeners, now_ms())));
+            let status = match (&error_text, target) {
                 (Some(message), _) => format!("⚠ {message}"),
-                (None, Some((agents, true))) => format!("Ready · {dir} · {agents} listening"),
-                (None, Some((agents, false))) => format!("Ready · {dir} · {agents} working on your asides"),
+                (None, Some((agent, SessionState::Listening))) => format!("Ready · {dir} → {agent}, listening"),
+                (None, Some((agent, SessionState::Starting))) => format!("Ready · {dir} → {agent}, starting"),
+                (None, Some((agent, SessionState::Working))) => format!("Ready · {dir} → {agent}, working"),
+                (None, None) if !self.sessions.is_empty() => format!("Ready · {dir} · notes only"),
                 (None, None) => format!("Ready · {dir}"),
             };
             ("idle", &icons.idle, None, status)
@@ -1263,7 +1458,7 @@ impl App {
             // Said up front, in the menu bar itself, not once a recording fails.
             let status = match &self.bound {
                 Some(gone) => format!("{} no longer exists · run `asides` in a repo", tilde(gone)),
-                None => "Not bound · run `asides` in a repo, or choose a Directory below".into(),
+                None => "Not bound · start an agent (New Agent Session), choose a Directory, or run `asides`".into(),
             };
             ("unbound", &icons.unbound, Some("No repo".into()), status)
         };
@@ -1292,15 +1487,38 @@ impl App {
             bound: self.bound.as_deref(),
             note_info,
             has_note: self.latest.is_some(),
-            send_label: match self.listening() {
-                Some((agents, _)) if !agents.contains(" and ") => format!("Send to {agents}"),
-                _ => "Send to Agent".into(),
+            send_label: match self.target_session() {
+                Some(session) => format!("Send to {}", session.agent),
+                None => "Send to Agent".into(),
             },
             send_enabled: self.config.agent_delivery == AgentDelivery::Batch && self.bound.is_some(),
             replies: &self.replies,
         };
+        let labels = sessions::labels(&self.sessions);
+        let mut rows: Vec<TargetRow> = self
+            .sessions
+            .iter()
+            .zip(labels)
+            .map(|(s, label)| TargetRow {
+                id: Some(s.id.clone()),
+                label: format!("{label} — {}", s.state(&self.listeners, now_ms()).as_str()),
+                checked: self.target.as_ref() == Some(&s.id),
+            })
+            .collect();
+        if !rows.is_empty() {
+            rows.push(TargetRow { id: None, label: "Notes Only".into(), checked: self.target_session().is_none() });
+        }
+        let shows: Vec<(String, String)> = self
+            .sessions
+            .iter()
+            .filter(|s| s.background.is_some())
+            .map(|s| (s.id.clone(), self.label_of(&s.id)))
+            .collect();
+        let here = self.bound.clone().filter(|d| d.is_dir());
         if let Some(tray) = &mut self.tray {
             tray.show(&view);
+            tray.set_targets(&rows, &shows);
+            tray.set_new_session(self.agents.as_deref(), here.as_deref(), &self.recent_dirs);
         }
     }
 
@@ -1353,6 +1571,7 @@ impl App {
             last_request: self.last_request.clone(),
             recent_dirs: self.recent_dirs.clone(),
             agent_sends: self.agent_sends.clone(),
+            target_session: self.target_session().map(|s| s.id.clone()),
             command_link_declined: self.command_link_declined,
             overlay_tips_seen: self.overlay_tips_seen,
             updated_ms: now_ms(),
@@ -1444,7 +1663,8 @@ impl App {
 
     fn apply_hotkeys(&mut self) {
         let Some(hotkeys) = &mut self.hotkeys else { return };
-        hotkeys.apply(&self.config.shortcuts, self.config.agent_delivery == AgentDelivery::Batch);
+        self.next_target_on = !self.sessions.is_empty();
+        hotkeys.apply(&self.config.shortcuts, self.config.agent_delivery == AgentDelivery::Batch, self.next_target_on);
         if self.recording.is_some() && self.overlay.is_none() {
             hotkeys.set_cancel_active(true);
         }
@@ -1505,7 +1725,9 @@ impl App {
         };
         let pending = self.pending_new.take();
         let new_note = (new_note || pending.is_some()).then(|| pending.and_then(|p| p.title));
+        let route = self.route(&dir);
         self.submit(Job::Recording(Box::new(RecordingJob {
+            route,
             dir,
             samples,
             sample_rate: spec.sample_rate,

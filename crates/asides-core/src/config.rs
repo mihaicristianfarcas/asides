@@ -23,6 +23,9 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # padding: points of screen kept around what you measured in the screenshot;
 # record: start recording when Measure & Annotate opens, so you can talk while you mark;
 # toolbar: show its toolbar (shift+tab hides and shows it; every action also has a key).
+# [agents] terminal: the app New Session opens agents in ("Ghostty", "iTerm", "Terminal", …; "" picks
+# one); worktrees: a second session in a repo works in its own git worktree; claude, codex, opencode:
+# extra arguments for that agent's sessions, e.g. claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
@@ -57,7 +60,30 @@ pub struct Config {
     /// How much Measure & Annotate puts in an aside.
     pub annotation_detail: Detail,
     pub measure: Measure,
+    /// Agent sessions Asides starts (`asides claude`, New Session in the menu).
+    pub agents: Agents,
     pub shortcuts: Shortcuts,
+}
+
+/// Agent sessions Asides starts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Agents {
+    /// The terminal app New Session opens (its name, as `open -a` takes it); empty picks one that's
+    /// installed.
+    pub terminal: String,
+    /// A second session in a repo works in a git worktree of it, so their edits don't collide.
+    pub worktrees: bool,
+    /// Extra command-line arguments for each agent's sessions.
+    pub claude: Vec<String>,
+    pub codex: Vec<String>,
+    pub opencode: Vec<String>,
+}
+
+impl Default for Agents {
+    fn default() -> Self {
+        Self { terminal: String::new(), worktrees: true, claude: Vec::new(), codex: Vec::new(), opencode: Vec::new() }
+    }
 }
 
 /// Measure & Annotate (the screen overlay).
@@ -189,6 +215,9 @@ pub struct Shortcuts {
     pub send_to_agent: String,
     /// Measure & Annotate: freezes the screen to measure and annotate it.
     pub measure: String,
+    /// Switches the target to the next agent session (then Notes Only). Only registered while a
+    /// session is listening.
+    pub next_target: String,
 }
 
 impl Default for Config {
@@ -207,6 +236,7 @@ impl Default for Config {
             wispr_flow_apps: Vec::new(),
             annotation_detail: Detail::default(),
             measure: Measure::default(),
+            agents: Agents::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -221,6 +251,7 @@ impl Default for Shortcuts {
             cancel: "Escape".into(),
             send_to_agent: "ctrl+alt+Enter".into(),
             measure: "ctrl+alt+KeyM".into(),
+            next_target: "ctrl+alt+Tab".into(),
         }
     }
 }
@@ -267,6 +298,7 @@ pub fn pretty_shortcut(shortcut: &str) -> String {
                 "escape" | "esc" => "Esc".into(),
                 "space" => "Space".into(),
                 "enter" | "return" => "Enter".into(),
+                "tab" => "Tab".into(),
                 _ => last.strip_prefix("Key").or_else(|| last.strip_prefix("Digit")).unwrap_or(last).to_uppercase(),
             };
         }
@@ -286,6 +318,7 @@ mod tests {
         assert_eq!(pretty_shortcut("ctrl+alt+Digit1"), "⌃⌥1");
         assert_eq!(pretty_shortcut("option+F5"), "⌥F5");
         assert_eq!(pretty_shortcut("ctrl+alt+Enter"), "⌃⌥Enter");
+        assert_eq!(pretty_shortcut("ctrl+alt+Tab"), "⌃⌥Tab");
     }
 
     #[test]
@@ -327,6 +360,17 @@ mod tests {
             (Detail::Forensic, Units::Px, 20)
         );
         assert_eq!(measure.measure.color, "#FF2D55");
+        // Nor agent sessions.
+        assert_eq!(
+            (measure.agents.clone(), measure.shortcuts.next_target.as_str()),
+            (Agents::default(), "ctrl+alt+Tab")
+        );
+        fs::write(&path, "[agents]\nterminal = \"Terminal\"\nclaude = [\"--model\", \"opus\"]\n").unwrap();
+        let agents = Config::load(&path).unwrap().agents;
+        assert_eq!(
+            (agents.terminal.as_str(), agents.claude, agents.worktrees),
+            ("Terminal", vec!["--model".into(), "opus".into()], true)
+        );
         assert_eq!((measure.measure.keys.mark.as_str(), measure.measure.keys.draw.as_str()), ("m", "p"));
     }
 }

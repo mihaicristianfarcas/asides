@@ -29,6 +29,11 @@ pub fn listeners_dir() -> PathBuf {
     support_dir().join("listeners")
 }
 
+/// One record per agent session (see `sessions::Session`).
+pub fn sessions_dir() -> PathBuf {
+    support_dir().join("sessions")
+}
+
 /// `/Users/me/code/shop` → `~/code/shop`.
 pub fn tilde(path: &Path) -> String {
     match std::env::home_dir().and_then(|home| path.strip_prefix(&home).ok().map(Path::to_path_buf)) {

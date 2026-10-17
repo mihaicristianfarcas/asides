@@ -5,10 +5,11 @@ use std::str::FromStr;
 
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
 use asides_core::inspect::{Detail, Units};
+use asides_core::launch::AgentKind;
 use asides_core::models::MODELS;
 use asides_core::paths::tilde;
 use tray_icon::menu::accelerator::Accelerator;
-use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+use tray_icon::menu::{CheckMenuItem, IsMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 
 use crate::icons::StatusIcon;
@@ -23,6 +24,16 @@ pub enum MenuAction {
     SendToAgent,
     /// An agent's reply in the Agent Replies menu: opens the note.
     OpenReplies,
+    /// Send asides to this session, or (`None`) to the notes only.
+    Target(Option<String>),
+    /// Start an agent session in `dir` (`None`: choose a directory first).
+    NewSession {
+        agent: AgentKind,
+        dir: Option<PathBuf>,
+        background: bool,
+    },
+    /// Open a background session in a terminal.
+    ShowSession(String),
     SwitchDirectory(PathBuf),
     ChooseDirectory,
     OpenNote,
@@ -47,8 +58,34 @@ pub enum MenuAction {
     Quit,
 }
 
+/// A choice under Asides Go To: an agent session, or Notes Only (`id: None`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetRow {
+    pub id: Option<String>,
+    pub label: String,
+    pub checked: bool,
+}
+
+/// What the session rows show: each choice (id, label), and each Show item (id, label).
+type TargetsShape = (Vec<(Option<String>, String)>, Vec<(String, String)>);
+/// What New Agent Session offers: the agents found, the bound directory, the recent ones.
+type NewSessionShape = (Option<Vec<AgentKind>>, Option<PathBuf>, Vec<PathBuf>);
+
+/// Where the session rows go: after the first separator.
+const SESSIONS_AT: usize = 9;
+
 pub struct Tray {
     icon: TrayIcon,
+    menu: Menu,
+    /// Asides Go To: its title, the choices, and Show items for background sessions.
+    target_rows: Vec<(Option<String>, CheckMenuItem)>,
+    target_extras: Vec<Box<dyn IsMenuItem>>,
+    shows: Vec<(String, MenuItem)>,
+    shown_targets: TargetsShape,
+    new_session: Submenu,
+    new_session_items: Vec<Box<dyn IsMenuItem>>,
+    new_session_actions: Vec<(MenuId, MenuAction)>,
+    shown_new_session: Option<NewSessionShape>,
     shown: Option<(&'static str, Option<String>)>,
     status: MenuItem,
     record: MenuItem,
@@ -116,6 +153,7 @@ impl Tray {
         let replies_menu = Submenu::new("Agent Replies", false);
         let cancel = MenuItem::new(cancel_label(config), false, None);
         let send = MenuItem::new("Send to Agent", false, accelerator(&config.shortcuts.send_to_agent));
+        let new_session = Submenu::new("New Agent Session", true);
         let choose_directory = MenuItem::new("Choose Directory…", true, None);
         let directory_menu = Submenu::new("Directory", true);
         directory_menu.append(&choose_directory)?;
@@ -222,6 +260,8 @@ impl Tray {
             &send,
             &replies_menu,
             &PredefinedMenuItem::separator(),
+            &new_session,
+            &PredefinedMenuItem::separator(),
             &directory_menu,
             &note_info,
             &open,
@@ -233,8 +273,10 @@ impl Tray {
             &quit,
         ])?;
 
-        let builder =
-            TrayIconBuilder::new().with_menu(Box::new(menu)).with_menu_on_left_click(true).with_tooltip("Asides");
+        let builder = TrayIconBuilder::new()
+            .with_menu(Box::new(menu.clone()))
+            .with_menu_on_left_click(true)
+            .with_tooltip("Asides");
         let builder = if icon.template {
             builder.with_icon_templated(icon.icon.clone())
         } else {
@@ -244,6 +286,15 @@ impl Tray {
 
         Ok(Tray {
             icon,
+            menu,
+            target_rows: Vec::new(),
+            target_extras: Vec::new(),
+            shows: Vec::new(),
+            shown_targets: (Vec::new(), Vec::new()),
+            new_session,
+            new_session_items: Vec::new(),
+            new_session_actions: Vec::new(),
+            shown_new_session: None,
             shown: None,
             status,
             record,
@@ -320,6 +371,15 @@ impl Tray {
         if self.replies.iter().any(|item| item.id() == id) {
             return Some(MenuAction::OpenReplies);
         }
+        if let Some((target, _)) = self.target_rows.iter().find(|(_, item)| item.id() == id) {
+            return Some(MenuAction::Target(target.clone()));
+        }
+        if let Some((session, _)) = self.shows.iter().find(|(_, item)| item.id() == id) {
+            return Some(MenuAction::ShowSession(session.clone()));
+        }
+        if let Some((_, action)) = self.new_session_actions.iter().find(|(item, _)| item == id) {
+            return Some(action.clone());
+        }
         if let Some((detail, _)) = self.details.iter().find(|(_, item)| item.id() == id) {
             return Some(MenuAction::AnnotationDetail(*detail));
         }
@@ -385,6 +445,114 @@ impl Tray {
             n => format!("Agent Replies ({n})"),
         });
         self.shown_replies = replies.to_vec();
+    }
+
+    /// Shows where asides go (with sessions around): the sessions and Notes Only, the target
+    /// checked, and a Show item for each background session (`(id, label)`).
+    pub fn set_targets(&mut self, rows: &[TargetRow], shows: &[(String, String)]) {
+        let shape = (rows.iter().map(|r| (r.id.clone(), r.label.clone())).collect::<Vec<_>>(), shows.to_vec());
+        if self.shown_targets != shape {
+            for (_, item) in self.target_rows.drain(..) {
+                let _ = self.menu.remove(&item);
+            }
+            for (_, item) in self.shows.drain(..) {
+                let _ = self.menu.remove(&item);
+            }
+            for item in self.target_extras.drain(..) {
+                let _ = self.menu.remove(item.as_ref());
+            }
+            let mut at = SESSIONS_AT;
+            let mut insert = |menu: &Menu, item: &dyn IsMenuItem| {
+                let _ = menu.insert(item, at);
+                at += 1;
+            };
+            if !rows.is_empty() {
+                let title = MenuItem::new("Asides Go To", false, None);
+                insert(&self.menu, &title);
+                self.target_extras.push(Box::new(title));
+            }
+            for row in rows {
+                let item = CheckMenuItem::new(menu_text(&row.label), true, row.checked, None);
+                insert(&self.menu, &item);
+                self.target_rows.push((row.id.clone(), item));
+            }
+            for (id, label) in shows {
+                let item = MenuItem::new(menu_text(&format!("Show {label}")), true, None);
+                insert(&self.menu, &item);
+                self.shows.push((id.clone(), item));
+            }
+            self.shown_targets = shape;
+        }
+        for ((_, item), row) in self.target_rows.iter().zip(rows) {
+            item.set_checked(row.checked);
+        }
+    }
+
+    /// The New Agent Session submenu: each agent (`None` while still looking for them) in the bound
+    /// directory, in recent ones, or in one to choose.
+    pub fn set_new_session(&mut self, agents: Option<&[AgentKind]>, here: Option<&Path>, recent: &[PathBuf]) {
+        let shape: NewSessionShape = (agents.map(<[AgentKind]>::to_vec), here.map(Path::to_path_buf), recent.to_vec());
+        if self.shown_new_session.as_ref() == Some(&shape) {
+            return;
+        }
+        for item in self.new_session_items.drain(..) {
+            let _ = self.new_session.remove(item.as_ref());
+        }
+        self.new_session_actions.clear();
+        let mut items: Vec<Box<dyn IsMenuItem>> = Vec::new();
+        let mut actions = Vec::new();
+        let agent_items = |dir: Option<&Path>, actions: &mut Vec<(MenuId, MenuAction)>| {
+            let mut items: Vec<MenuItem> = Vec::new();
+            for &agent in agents.unwrap_or_default() {
+                let mut add = |label: String, background: bool| {
+                    let item = MenuItem::new(menu_text(&label), true, None);
+                    let dir = dir.map(Path::to_path_buf);
+                    actions.push((item.id().clone(), MenuAction::NewSession { agent, dir, background }));
+                    items.push(item);
+                };
+                add(agent.name().into(), false);
+                if agent.runs_in_background() {
+                    add(format!("{} in the Background", agent.name()), true);
+                }
+            }
+            items
+        };
+        match agents {
+            None => items.push(Box::new(MenuItem::new("Looking for coding agents…", false, None))),
+            Some([]) => items.push(Box::new(MenuItem::new(
+                "No coding agents found (Claude Code, Codex or OpenCode)",
+                false,
+                None,
+            ))),
+            Some(_) => {
+                if let Some(here) = here {
+                    let name = here.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    items.push(Box::new(MenuItem::new(menu_text(&format!("In {name}")), false, None)));
+                    items.extend(
+                        agent_items(Some(here), &mut actions).into_iter().map(|i| Box::new(i) as Box<dyn IsMenuItem>),
+                    );
+                    items.push(Box::new(PredefinedMenuItem::separator()));
+                }
+                for dir in recent.iter().filter(|d| Some(d.as_path()) != here) {
+                    let menu = Submenu::new(menu_text(&format!("In {}", tilde(dir))), true);
+                    for item in agent_items(Some(dir), &mut actions) {
+                        let _ = menu.append(&item);
+                    }
+                    items.push(Box::new(menu));
+                }
+                let other = Submenu::new("In Another Directory…", true);
+                for item in agent_items(None, &mut actions) {
+                    let _ = other.append(&item);
+                }
+                items.push(Box::new(other));
+            }
+        }
+        for item in &items {
+            let _ = self.new_session.append(item.as_ref());
+        }
+        self.new_session_items = items;
+        self.new_session_actions = actions;
+        self.shown_new_session = Some(shape);
     }
 
     /// Reflects a (re)loaded config in check marks and shortcut hints.

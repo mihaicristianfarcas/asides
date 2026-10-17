@@ -13,6 +13,7 @@ use asides_core::markdown::{self, Attachment};
 use asides_core::notes::{self, Note};
 use asides_core::project;
 use asides_core::resample::resample;
+use asides_core::routes::{self, Route};
 use chrono::{DateTime, Local};
 
 use crate::environment::Environment;
@@ -48,6 +49,8 @@ pub struct RecordingJob {
     pub languages: Vec<String>,
     /// Start a new note when the work moved on (`notes::moved_on`).
     pub auto_new_note: bool,
+    /// The session it was spoken to, written to `routes.jsonl` before the entry.
+    pub route: Option<Route>,
 }
 
 pub struct ImageJob {
@@ -68,6 +71,7 @@ pub struct DictationJob {
     pub new_note: Option<Option<String>>,
     pub environment: Environment,
     pub auto_new_note: bool,
+    pub route: Option<Route>,
 }
 
 /// A Measure & Annotate session outside a recording: an entry of screenshots and text, in the
@@ -81,6 +85,7 @@ pub struct ScreenJob {
     pub environment: Environment,
     pub model: String,
     pub auto_new_note: bool,
+    pub route: Option<Route>,
 }
 
 pub enum Job {
@@ -172,6 +177,7 @@ fn process_recording(
         &segments,
         &attachments,
     );
+    write_route(&note, number, &job.route);
     note.append(&entry).context("could not write the note")?;
     Ok(Outcome::Appended { note: note.title, number })
 }
@@ -190,6 +196,7 @@ fn process_dictation(job: DictationJob) -> Result<Outcome> {
     let note = target_note(&job.dir, &job.new_note, job.auto_new_note, job.at, &job.environment, &transcription)?;
     let number = note.next_entry_number();
     let time = job.at.format("%H:%M").to_string();
+    write_route(&note, number, &job.route);
     note.append(&markdown::compose_dictation_entry(number, &time, job.source, &job.text))
         .context("could not write the note")?;
     Ok(Outcome::Appended { note: note.title, number })
@@ -210,9 +217,20 @@ fn process_screen(job: ScreenJob) -> Result<Outcome> {
     // Stable: what was made at the same moment keeps its order.
     attachments.sort_by(|a, b| a.offset.total_cmp(&b.offset));
     let time = job.at.format("%H:%M").to_string();
+    write_route(&note, number, &job.route);
     note.append(&markdown::compose_attachments_entry(number, &time, SCREEN_SOURCE, &attachments))
         .context("could not write the note")?;
     Ok(Outcome::Appended { note: note.title, number })
+}
+
+/// Says which session entry `number` is for, before the entry is written: an agent that sees the
+/// entry then also sees whether it's its own. If this fails, the entry reaches every agent there.
+fn write_route(note: &Note, number: u32, route: &Option<Route>) {
+    if let Some(route) = route
+        && let Err(err) = routes::append(&note.dir, &Route { entry: number, ..route.clone() })
+    {
+        eprintln!("could not write the route of #{number}: {err}");
+    }
 }
 
 /// How entries made with Measure & Annotate (outside a recording) are marked.
@@ -320,6 +338,7 @@ mod tests {
             new_note,
             environment: Environment::default(),
             auto_new_note: true,
+            route: None,
         };
         match process_dictation(job).unwrap() {
             Outcome::Appended { note, .. } => note,
@@ -361,9 +380,11 @@ mod tests {
             environment: Environment::default(),
             model: "m".into(),
             auto_new_note: true,
+            route: Some(Route { entry: 0, session: Some("s1".into()), agent: Some("Codex".into()) }),
         };
         assert!(matches!(process_screen(job).unwrap(), Outcome::Appended { number: 1, .. }));
         let note = notes::latest_note(tmp.path()).unwrap();
+        assert_eq!(routes::read(&note.dir).get(&1).and_then(|r| r.session.as_deref()), Some("s1"));
         let content = fs::read_to_string(note.file()).unwrap();
         assert!(
             content.ends_with(

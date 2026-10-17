@@ -15,6 +15,12 @@ pub enum Link {
         title: Option<String>,
         request: Option<String>,
     },
+    /// Make the session `id` (`sessions::Session`) the target: the user's asides go to it, and the
+    /// app binds to its repo. Sent when a session is launched or starts listening.
+    Session {
+        id: String,
+        request: Option<String>,
+    },
     Quit,
     /// Send to Agent: hands the entries recorded so far to agents listening in batch mode.
     Send {
@@ -55,6 +61,12 @@ impl Link {
                     if let Some(title) = title {
                         q.append_pair("title", title);
                     }
+                    if let Some(request) = request {
+                        q.append_pair("req", request);
+                    }
+                }
+                Link::Session { id, request } => {
+                    q.append_pair("id", id);
                     if let Some(request) = request {
                         q.append_pair("req", request);
                     }
@@ -108,6 +120,7 @@ impl Link {
                 title: get("title").filter(|t| !t.trim().is_empty()),
                 request: get("req"),
             }),
+            "session" => Some(Link::Session { id: get("id").filter(|id| !id.is_empty())?, request: get("req") }),
             "quit" => Some(Link::Quit),
             "send" => Some(Link::Send { request: get("req") }),
             "simulate" => Some(Link::Simulate {
@@ -130,6 +143,7 @@ impl Link {
     fn action(&self) -> &'static str {
         match self {
             Link::Bind { .. } => "bind",
+            Link::Session { .. } => "session",
             Link::Quit => "quit",
             Link::Send { .. } => "send",
             Link::Simulate { .. } => "simulate",
@@ -157,6 +171,7 @@ mod tests {
             request: Some("r1".into()),
         });
         round_trip(Link::Bind { dir: "/x".into(), new_note: false, title: None, request: None });
+        round_trip(Link::Session { id: "a1b2c3d4".into(), request: Some("r4".into()) });
         round_trip(Link::Quit);
         round_trip(Link::Send { request: Some("r2".into()) });
         round_trip(Link::Send { request: None });
@@ -181,5 +196,6 @@ mod tests {
         assert_eq!(Link::parse(&Url::parse("https://bind?dir=/x").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://nope").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://bind").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://session?id=").unwrap()), None);
     }
 }

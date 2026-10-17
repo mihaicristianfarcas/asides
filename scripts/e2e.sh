@@ -38,6 +38,10 @@ open(path, "w").write(f"{key} = {value}\n" + text)' "$CONFIG" "$1" "$2"
 }
 set_config agent_delivery '"each"'
 set_config annotation_detail '"standard"'
+# Measuring is checked in points, whatever the user's [measure] units.
+/usr/bin/python3 -I -c 'import re, sys
+text = open(sys.argv[1]).read()
+open(sys.argv[1], "w").write(re.sub(r"(?m)^units = .*$", "units = \"pt\"", text))' "$CONFIG"
 
 pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m✗\033[0m %s\n' "$1"; exit 1; }

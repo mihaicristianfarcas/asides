@@ -13,6 +13,10 @@ asides is a macOS menu-bar app plus a CLI.
 - Coding agents can listen through `asides mcp`, an MCP server in the CLI, and get each new
   entry (or a batch, on Send to Agent) as a prompt. They acknowledge, resolve, dismiss or reply to
   asides and their marks (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
+- `asides claude` (or `codex`, `opencode`; New Agent Session in the menu runs it in a terminal)
+  starts an agent already listening, with the MCP server on its command line. Every listening agent
+  is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
+  beside the note. A second session in a repo works in a git worktree.
 - Measure & Annotate (`⌃⌥M`) freezes every screen, in any app, under one toolbar: PixelSnap-style
   measuring (distances, snapped areas, holds, guides), numbered marks on elements and areas,
   drawings (arrows, circles), screenshots of parts, and talking (Space) while doing it. The
@@ -102,12 +106,14 @@ changes.
 - read `~/Library/Application Support/Asides/state.json`
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md), and run Claude Code, Codex or
   OpenCode against it with a one-off MCP config, using `asides simulate` for speech
+- run `asides claude`/`codex`/`opencode` with a fake agent first on `PATH` to see the command line it
+  builds, and check the real agent accepts it without a model call (CONTRIBUTING.md)
 - run `asides listen --timeout N` and read what it prints
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
 
 **You can't:**
 - press global shortcuts
-- click the status item or menus
+- click the status item or menus (New Agent Session, Asides Go To, Show)
 - use the overlay with a real mouse and keyboard, or check that it takes the keyboard without a click
 - speak into the microphone
 - grant permissions (Microphone, Screen Recording, Accessibility)
@@ -213,6 +219,26 @@ The user may record a request and ask you to "implement the note". Find it with
   `~/Applications`, and Launch Services may open it for the CLI's links instead (both may end up
   running). Set `ASIDES_APP=~/Applications/Asides.app` to make the CLI send its links to that copy
   (`open -a`); `make e2e` does.
+
+- `claude`'s `--mcp-config` and `--allowedTools` take every value after them, so the prompt goes
+  first; after them it was read as a config file. A server given with `--mcp-config` replaces a
+  user-scope one of the same name (`"source":"dynamic"` in the init message).
+- OpenCode 2 runs agents and their MCP servers in a shared background service (`opencode serve
+  --service`), which doesn't see a TUI's environment: `OPENCODE_CONFIG_CONTENT` needs
+  `--standalone`, and `opencode debug config` and `mcp list` ask the shared service, not the
+  process you run. 2.0 keeps servers under `mcp.servers.<name>`; 1.x under `mcp.<name>` and has no
+  `--standalone`. That service also starts `asides mcp` for every directory it's used in: those
+  records aren't listening, and the menu ignores them.
+- The app is launched with Launch Services' bare `PATH`, so agents are found and run through the
+  user's login shell (`$SHELL -ilc`); `.command` scripts opened in a terminal get its login shell.
+- Ghostty can't be started from its CLI on macOS (`+new-window` is unsupported), and asks "Allow
+  Ghostty to execute …?" before running a script it's asked to open (`open -a Ghostty x.command`).
+  New Agent Session starts it with `open -na Ghostty --args --initial-command=<script>` instead: a
+  process of its own, no prompt. Pass the script as an option, not a bare path (`-e <path>`):
+  AppKit also opens a bare path argument as a document, which brings the prompt back.
+- Claude Code asks whether to trust a folder the first time it runs there, launched by asides or
+  not. A scratch repo for a live test stalls on it; your own repos are already trusted.
+- macOS has no `timeout` command; scripts wait with a loop and `kill`.
 
 ## Commits
 

@@ -16,6 +16,8 @@ pub enum Action {
     SendToAgent,
     /// Measure & Annotate.
     Measure,
+    /// Switch the target to the next agent session.
+    NextTarget,
 }
 
 pub struct Hotkeys {
@@ -28,7 +30,7 @@ pub struct Hotkeys {
 }
 
 impl Hotkeys {
-    pub fn new(shortcuts: &Shortcuts, send: bool) -> anyhow::Result<Hotkeys> {
+    pub fn new(shortcuts: &Shortcuts, send: bool, sessions: bool) -> anyhow::Result<Hotkeys> {
         let mut hotkeys = Hotkeys {
             manager: GlobalHotKeyManager::new()?,
             bindings: Vec::new(),
@@ -36,20 +38,22 @@ impl Hotkeys {
             cancel_active: false,
             errors: Vec::new(),
         };
-        hotkeys.apply(shortcuts, send);
+        hotkeys.apply(shortcuts, send, sessions);
         Ok(hotkeys)
     }
 
     /// (Re)registers all shortcuts. Cancel is only registered while recording, so Esc keeps
-    /// working normally in other apps the rest of the time, and Send to Agent only with `send`
-    /// (batch delivery), so the shortcut stays free for other apps otherwise.
-    pub fn apply(&mut self, shortcuts: &Shortcuts, send: bool) {
+    /// working normally in other apps the rest of the time, Send to Agent only with `send`
+    /// (batch delivery), and switching sessions only while there are `sessions`, so those
+    /// shortcuts stay free for other apps otherwise.
+    pub fn apply(&mut self, shortcuts: &Shortcuts, send: bool, sessions: bool) {
         for (hotkey, _) in self.bindings.drain(..) {
             let _ = self.manager.unregister(hotkey);
         }
         self.set_cancel_active(false);
         self.errors.clear();
         let send = send.then_some((&shortcuts.send_to_agent, Action::SendToAgent));
+        let next = sessions.then_some((&shortcuts.next_target, Action::NextTarget));
         for (text, action) in [
             (&shortcuts.record, Action::Record),
             (&shortcuts.record_new_note, Action::RecordNewNote),
@@ -58,6 +62,7 @@ impl Hotkeys {
         ]
         .into_iter()
         .chain(send)
+        .chain(next)
         .filter(|(text, _)| !text.trim().is_empty())
         {
             match HotKey::from_str(text) {

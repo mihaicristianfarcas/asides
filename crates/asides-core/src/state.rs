@@ -27,6 +27,8 @@ pub struct AppState {
     /// deliver everything up to the newest; an agent that starts listening in a directory begins
     /// its first batch after that directory's last one.
     pub agent_sends: Vec<AgentSend>,
+    /// The session the user's asides go to (`sessions::Session`); `None` for Notes Only.
+    pub target_session: Option<String>,
     /// The user declined to put the `asides` command in /usr/local/bin; don't ask again.
     pub command_link_declined: bool,
     /// Measure & Annotate showed its keys once, the first time it opened.
@@ -44,6 +46,8 @@ pub struct AgentSend {
     pub dir: PathBuf,
     pub note: Option<PathBuf>,
     pub entry: u32,
+    /// The session it was sent to; `None` (sends from older versions) means every agent there.
+    pub session: Option<String>,
 }
 
 /// How many directories the menu offers for quick switching.
@@ -100,7 +104,14 @@ mod tests {
             status: "idle".into(),
             last_request: Some("abc".into()),
             recent_dirs: vec!["/x".into(), "/y".into()],
-            agent_sends: vec![AgentSend { at_ms: 7, dir: "/x".into(), note: Some("/x/.asides/n".into()), entry: 3 }],
+            agent_sends: vec![AgentSend {
+                at_ms: 7,
+                dir: "/x".into(),
+                note: Some("/x/.asides/n".into()),
+                entry: 3,
+                session: Some("s1".into()),
+            }],
+            target_session: Some("s1".into()),
             ..Default::default()
         };
         state.write(&path).unwrap();

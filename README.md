@@ -24,8 +24,10 @@ A few seconds later the transcript is in the note, and the menu-bar icon shows `
   sentence you were saying.
 - **Context for whoever reads it.** Each new note records the git remote, branch, commit and
   uncommitted changes, plus your macOS version, browser and display.
-- **Straight to your agent.** Claude Code, Codex and OpenCode can listen through `asides mcp`, and
-  get each aside as soon as it's transcribed, or a batch when you send it.
+- **Straight to your agent.** `asides claude` (or Codex, OpenCode, or New Agent Session in the
+  menu) starts an agent that's already listening: each aside you record goes to it as soon as it's
+  transcribed, or in a batch when you send it. Run several, in one repo or many, and switch which
+  one you're talking to with `⌃⌥Tab`.
 - **Measure & Annotate, while you talk.** `⌃⌥M` freezes every screen, in any app. One toolbar:
   measure it like with PixelSnap (distances between edges, the size of anything, guides), mark
   elements and areas, draw arrows and circles, take screenshots of parts. Hold `Space` and talk
@@ -106,14 +108,15 @@ self-signed identity in your login keychain and asks for your password.
 | Command | |
 |---|---|
 | `asides` | Bind the repo you're in (its git root, or the current directory if it isn't a repo) and start the menu-bar app. Recordings append to the latest note there. |
+| `asides claude` | Start Claude Code here, already listening: each aside you record goes to it. `asides codex` and `asides opencode` do the same for those. Arguments go to the agent (`asides claude --model opus`). `--background` (Claude Code) runs it without a terminal; `--no-worktree` keeps a second session in the repo itself. See [Coding agents](#coding-agents). |
 | `asides new [TITLE]` | The next recording starts a new note, titled TITLE or "Untitled". |
 | `asides path` | Print the latest note's path, e.g. `claude "fix the bugs in $(asides path)"`. |
 | `asides open` | Open the latest note in your Markdown editor. |
-| `asides status` | Show what the app is doing and where it's bound. |
+| `asides status` | Show what the app is doing, where it's bound, and the agent sessions (which one your asides go to). |
 | `asides export [--out FILE]` | Zip the latest note (text, screenshots, audio) to share it. |
 | `asides send` | Send to Agent: hand what you've recorded to agents listening in batch mode. |
 | `asides mcp` | The MCP server for coding agents. Agents start it themselves; see [Coding agents](#coding-agents). |
-| `asides listen` | Print your asides as they reach agents. Claude Code runs it in the background while it listens. |
+| `asides listen` | Print your asides as they reach an agent session. Claude Code runs it in the background while it listens. |
 | `asides annotate` | Open Measure & Annotate, like `⌃⌥M`. Run again while it's open, adds what's there to the aside. |
 | `asides measure IMAGE X,Y` | Measure a screenshot (PNG): the distances from a point to the nearest edges. `X,Y,W,H` finds the object inside an area and the space around it. `--scale 2` adds points for Retina screenshots; `--tolerance N` looks through shadows. |
 | `asides quit` | Quit the app, after it finishes any queued transcriptions. |
@@ -129,6 +132,7 @@ self-signed identity in your login keychain and asks for your password.
 | `⌃⌥V` | Attach the image on the clipboard: inline if you're recording, otherwise at the end of the note. |
 | `Esc` | Cancel the recording; nothing is written. Only captured while recording. |
 | `⌃⌥Enter` | Send to Agent. Only registered while agents get asides in batches. |
+| `⌃⌥Tab` | Switch which agent session your asides go to (then Notes Only). Only registered while a session is listening. |
 | `⌃⌥M` | Measure & Annotate the screen (see [below](#measure--annotate)). Pressed again, adds what's there to the aside. |
 
 Images you copy while recording are attached automatically. You can change any shortcut in
@@ -141,13 +145,17 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
 
 - start, stop or cancel recordings, attach the clipboard image, or measure and annotate the screen
 - send what you've recorded to your coding agent (in batch mode)
+- choose which agent session your asides go to, or Notes Only (**Asides Go To**, once one is
+  listening), and open a background session (**Show**)
+- start Claude Code, Codex or OpenCode in this repo, a recent one or another, in a terminal or in
+  the background (**New Agent Session**)
 - read what agents said about your asides (**Agent Replies**: resolved, dismissed, questions)
 - switch between recently used repos, or choose another one (**Directory** submenu)
 - open, reveal or copy the path of the latest note
 - change preferences: hold to talk, auto-attaching images, sounds, keeping audio clips, Wispr Flow
   dictations, Measure & Annotate, the speech model, the microphone, and how agents get asides
 
-The status line shows when an agent is listening, e.g. `Ready · shop · Claude Code listening`.
+The status line shows where your asides go, e.g. `Ready · shop → Claude Code, listening`.
 When an agent resolves or replies to an aside, the menu bar says so for a moment (`✓ #3`), and the
 note line shows how many asides are still open.
 
@@ -294,6 +302,41 @@ And on mobile the button text wraps.
 
 ## Coding agents
 
+Start the agent from Asides. In your repo:
+
+```bash
+asides claude          # or: asides codex, asides opencode
+```
+
+Or, from the menu, **New Agent Session ▸ Claude Code** (in the repo Asides is bound to, a recent one,
+or another): it opens your terminal there (Ghostty, iTerm or Terminal; `[agents] terminal` picks
+another). In Ghostty, each session opens as a Ghostty window of its own, which closes with it. Either way the agent starts already listening, with Asides' MCP server on its command
+line, so there's nothing to set up first, and its asides tools allowed. Each aside you record from
+then on goes to it as a prompt; you can still type to it as usual. Your own arguments go along
+(`asides claude --model opus`), and `[agents]` in the settings can add some to every session.
+Agents ask before editing or running things as they normally do.
+
+### Several sessions
+
+Each aside goes to one session: the one you're talking to, the target. A new session becomes the
+target. **Asides Go To** in the menu lists the sessions, what each is doing (starting, listening,
+working), and **Notes Only**, which saves your asides without handing them to an agent; `⌃⌥Tab`
+switches to the next. While you record, the menu bar shows where it's going (`0:04 → Codex`).
+
+- **In different repos:** start one in each. Switching to a session also switches the repo your
+  notes go to.
+- **In the same repo:** a second session works in a git worktree of the repo, so the two don't edit
+  the same files. Claude Code and Codex make the worktree; for OpenCode, Asides makes it in
+  `.asides/worktrees/`, and removes it after the session if nothing was done in it. Your notes stay
+  in the repo. `--no-worktree` (or `worktrees = false`) keeps the session in the repo itself.
+- **In the background:** **Claude Code in the Background** (or `asides claude --background`) starts a
+  Claude Code session without a terminal; **Show** in the menu opens it (`claude attach`).
+
+When the session you're talking to ends, your asides go to the newest other session in that repo,
+or to the notes only. Every aside is still written to the note, whichever session gets it.
+
+### An agent you started yourself
+
 `asides mcp` is an [MCP](https://modelcontextprotocol.io) server. Add it to your agent once:
 
 ```bash
@@ -303,9 +346,9 @@ opencode mcp add --global asides -- asides mcp        # OpenCode
 ```
 
 Then, in a session in your repo, ask the agent to **listen to your asides** (in Claude Code,
-`/asides:listen` says the same). It acts on each aside as a prompt, until you tell it to stop. If
-Asides is bound to another repo, or not running, the agent binds it to its own (it may ask you to
-allow that once).
+`/asides:listen` says the same). It acts on each aside as a prompt, until you tell it to stop.
+Listening makes it a session like the others, and the target: Asides starts if it isn't running,
+and binds to the agent's repo.
 
 How the agent listens depends on what it can do:
 
@@ -316,24 +359,27 @@ How the agent listens depends on what it can do:
   then wait again. Asides that arrive while the agent works wait for it. Most agents hide tool
   results, so the agent first lists the asides it got, one line each.
 
+### Each aside, or in batches
+
 How asides reach the agent is a preference (**Preferences → Agents Get Asides**, or
 `agent_delivery`):
 
-- **Each aside as it's transcribed** (`each`, the default): every recording made after the agent
-  starts listening becomes a prompt a few seconds after you stop talking.
+- **Each aside as it's transcribed** (`each`, the default): every recording becomes a prompt a few
+  seconds after you stop talking.
 - **In batches** (`batch`): recordings wait until you choose **Send to Agent** (`⌃⌥Enter`, the menu,
-  or `asides send`). A batch holds everything recorded since the last one, including recordings
-  made before the agent started listening. A recording in progress is stopped and included.
+  or `asides send`), which hands everything recorded since the last send to the session you're
+  talking to, including recordings made before it started listening. A recording in progress is
+  stopped and included.
 
-The menu shows where things stand. Its status line says `Claude Code listening` while the agent
-waits for asides, and `Claude Code working on your asides` while it acts on them. Send to Agent
-shows **Sent** when an agent is waiting, and **Queued** when it's busy: it gets the batch when it's
-done. With no agent listening, nothing is sent; the menu says so, and the batch waits for your next
-Send to Agent.
+The menu shows where things stand. Its status line says `→ Claude Code, listening` while the agent
+waits for asides, and `working` while it acts on them. Send to Agent shows **Sent** when the agent is
+waiting, and **Queued** when it's busy: it gets the batch when it's done. With no agent session to
+send to, nothing is sent; the menu says so, and the batch waits for your next Send to Agent.
 
 The agent gets the transcript, the note's path and your screenshots (as images through
 `wait_for_asides`, as file paths through both). It can also read the whole latest note on request
-("work through my asides", or `/asides:asides` in Claude Code).
+("work through my asides", or `/asides:asides` in Claude Code); asides you spoke to another session
+are marked as such.
 
 ### Closing the loop
 
@@ -362,8 +408,9 @@ note:
 Codex asks before each call to these tools, since they aren't read-only.
 
 Agents give up on a tool call after a while: Codex and most others after 60 s, Claude Code much
-later. So the agent's wait ends after 50 s (25 min in Claude Code), and the agent calls again. To
-wait longer in Codex, raise its `tool_timeout_sec` for the server and pass the same wait to asides:
+later. So the agent's wait ends after 50 s (25 min in Claude Code), and the agent calls again.
+Codex sessions started by `asides codex` wait 50 minutes at a time. To wait longer in a Codex you
+started yourself, raise its `tool_timeout_sec` for the server and pass the same wait to asides:
 `codex mcp add asides -- asides mcp --timeout 3000`, then set `tool_timeout_sec = 3600` under
 `[mcp_servers.asides]` in `~/.codex/config.toml`. Claude Code's monitors last at most 30 minutes,
 so `asides listen` stops after 29 and prints the command that carries on where it stopped; the
@@ -409,6 +456,13 @@ wispr_flow = false           # add Wispr Flow dictations to the note
 wispr_flow_apps = []         # e.g. ["Safari"] to add only dictations made there; [] means any app
 annotation_detail = "standard"  # "compact", "standard", "detailed" or "forensic"
 
+[agents]                     # sessions started by `asides claude` and New Agent Session
+terminal = ""                # the terminal app they open in, e.g. "Terminal"; "" picks Ghostty, iTerm or Terminal
+worktrees = true             # a second session in a repo works in a git worktree of it
+claude = []                  # extra arguments for each agent, e.g. ["--model", "opus"]
+codex = []
+opencode = []
+
 [measure]
 color = "#FF2D55"            # lines and labels
 units = "pt"                 # or "px"
@@ -453,6 +507,7 @@ attach_image = "ctrl+alt+KeyV"
 cancel = "Escape"
 send_to_agent = "ctrl+alt+Enter"   # only registered with agent_delivery = "batch"
 measure = "ctrl+alt+KeyM"
+next_target = "ctrl+alt+Tab"       # switch agent session; only registered while one is listening
 ```
 
 An empty shortcut (`""`) turns that shortcut off.
@@ -468,7 +523,8 @@ more reliable; a single entry skips detection altogether.
   first time (or when you switch models).
 - **Agents** talk to `asides mcp` on your Mac, over standard input and output. It reads your notes
   and passes them to the agent, which may send them on to its model provider, like anything else you
-  give it.
+  give it. New Agent Session opens your terminal with a script, as if you had double-clicked it: no
+  Automation permission. The agents run with their own permission settings.
 - **Wispr Flow** transcribes with its own service, under its own terms. Asides only reads the
   history Wispr Flow keeps on your Mac, and only when you turn the integration on.
 - **Microphone** access is required.
@@ -497,11 +553,14 @@ more reliable; a single entry skips detection altogether.
 - **The text came out in the wrong language.** Set `languages` in `config.toml`.
 - **Esc doesn't reach other apps while recording.** That's intentional: Esc cancels the recording.
   It's released again as soon as you stop.
-- **The agent doesn't get my asides.** Check the status line in the menu: it says which agent is
-  listening, or working on your last asides. If none is, ask the agent to listen to your asides. In
-  batch mode, choose Send to Agent; it says whether the batch was sent, queued, or had no agent to
-  go to. If the agent works in another repo than the one Asides is bound to, recordings go to the
-  bound one.
+- **The agent doesn't get my asides.** Check the status line in the menu: it says which session your
+  asides go to, and whether it's listening or working on your last asides. If it names another
+  session, switch with `⌃⌥Tab` or Asides Go To; if it says notes only, start one (New Agent Session)
+  or ask your agent to listen to your asides. In batch mode, choose Send to Agent; it says whether
+  the batch was sent, queued, or had no session to go to.
+- **New Agent Session opens the wrong terminal, or none.** Set `terminal` under `[agents]` to the
+  app's name, as `open -a` takes it. The agent must be installed for your login shell (`which
+  claude` in a terminal).
 - **Wispr Flow dictations don't show up.** Check that Wispr Flow keeps history on this Mac, and that
   the app you dictate in matches `wispr_flow_apps`.
 - **Measure & Annotate says it can't see the screen.** Allow Asides in System Settings → Privacy &
@@ -520,8 +579,8 @@ more reliable; a single entry skips detection altogether.
 ## How it works
 
 - **Two parts.** A menu-bar app, `Asides.app`, does the recording and transcription. The
-  `asides` command tells it which repo to use, through `asides://` links opened with
-  `open -g`, and reads the state the app publishes in `state.json`. The app is never started as a
+  `asides` command tells it which repo to use, and which agent session your asides go to, through
+  `asides://` links opened with `open -g`, and reads the state the app publishes in `state.json`. The app is never started as a
   child of your terminal: it keeps running when the terminal closes, and macOS asks for the
   microphone on behalf of Asides rather than your terminal.
 - **Recording.** Audio is captured with CoreAudio (cpal), resampled to 16 kHz, and transcribed in
@@ -538,6 +597,9 @@ more reliable; a single entry skips detection altogether.
   that drew them. Edges are where a pixel differs from where the scan started by more than the
   tolerance. An area snaps to the bounds of whatever differs from the color most of its outline
   has. The same Rust code measures in the overlay, in `asides measure` and in `measure_image`.
+- **Sessions.** Each agent session has a small record in `~/Library/Application Support/Asides/sessions/`.
+  The app writes which session each aside went to in `routes.jsonl` beside the note, just before the
+  aside itself; each agent's `asides mcp` or `asides listen` hands it only its own.
 - **The overlay.** Measure & Annotate is drawn with [GPUI](https://gpui.rs), Zed's GPU-accelerated
   UI framework, in a process of its own (`asides-overlay`), since GPUI runs its own event loop. The
   app freezes the screens, hands it their pixels, answers what's under a mark, records you, and

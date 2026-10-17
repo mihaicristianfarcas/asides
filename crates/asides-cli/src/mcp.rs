@@ -11,9 +11,12 @@
 //! `get_pending_asides` lists what's still open, and `measure_image` measures a screenshot the way
 //! Measure & Annotate measures the screen.
 //!
+//! Each server is one session (`sessions::Session`): `asides claude` and the like give it one, and
+//! otherwise it makes its own. Listening (the first wait, or `asides listen` with its session)
+//! makes it the session the user's asides go to, so they reach this agent without binding.
+//!
 //! Reading tools only read notes and the app's published state, so they're marked read-only
-//! (agents such as Codex run those without asking). The others append to the aside's thread, or
-//! (`bind_asides`) bind the app to this repo like running `asides` here.
+//! (agents such as Codex run those without asking). The others append to the aside's thread.
 
 use std::collections::HashMap;
 use std::fs;
@@ -26,14 +29,17 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use asides_core::agents::{self, Cursor, Item, Listener, Listening};
 use asides_core::config::{AgentDelivery, Config};
-use asides_core::link::Link;
+use asides_core::launch::{self, Via};
 use asides_core::measure::{Rect, Tolerance};
 use asides_core::notes::{self, Note};
 use asides_core::paths::{self, tilde};
-use asides_core::project;
+use asides_core::routes;
+use asides_core::sessions::{self, Session as SessionRecord};
 use asides_core::state::AppState;
 use asides_core::threads::{self, AsideId, Event, Role, Status};
 use serde_json::{Value, json};
+
+use crate::session;
 
 /// Protocol revisions this server speaks, oldest first; a client asking for another gets the newest.
 const PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
@@ -48,34 +54,43 @@ const MAX_WAIT_SECS: u64 = 3600;
 const MAX_INLINE_IMAGE: u64 = 3_750_000;
 const MAX_INLINE_IMAGES: usize = 6;
 
-const INSTRUCTIONS: &str = "Asides lets the user talk while they test their app: they press a shortcut, \
-speak (a bug, a request, an idea), and Asides transcribes it on their Mac and appends it to a Markdown \
-note in this repo (.asides/<date title>/notes.md), with screenshots inline. Each aside is a request from \
-the user. When the user asks you to listen to their asides and you can watch a command's output in the \
-background (Claude Code's Monitor tool), run `asides listen` that way: each aside arrives as an event. \
-Otherwise call wait_for_asides, act on what you get, then call it again; the user can't see its results, \
-so first list the asides you got, one short line each. Keep listening until they tell you to stop. If \
-Asides is bound to \
-another directory or isn't running, call bind_asides so recordings come to this repo. When they ask you \
-to work through their notes, call get_asides (or get_pending_asides for what's still open). Transcripts \
-are verbatim speech-to-text: expect misheard words, especially names of projects, files and libraries. \
-Measure & Annotate shows up in entries as an annotated screenshot with what the user measured (sizes \
-and distances in points, guides) and numbered marks (### 1., ### 2.): an element, an area, or a drawing \
-(an arrow from one thing to another, a circled or underlined part), with the app and window, the \
-element's location (for web pages the URL and a CSS-like selector) and any typed feedback. In a recorded \
-entry, each mark sits where the user was speaking when they made it, so what they said around it is \
-about it; entries marked `Screen` were made without speaking. An aside is #N (entry N of the note) or \
-#N.M (mark M of entry N). When you've handled one, call resolve_aside with a short summary; \
-dismiss_aside with a reason if you won't act on it; reply_to_aside to ask the user something. The user \
-sees these in the Asides menu. measure_image measures a screenshot (distances between edges, the \
-bounds of an object).";
+/// What the server tells the agent about asides when it connects; `listen` is how this session
+/// listens with Claude Code's Monitor tool.
+fn instructions(listen: &str) -> String {
+    format!(
+        "Asides lets the user talk while they test their app: they press a shortcut, speak (a bug, a request, \
+         an idea), and Asides transcribes it on their Mac and appends it to a Markdown note in this repo \
+         (.asides/<date title>/notes.md), with screenshots inline. Each aside is a request from the user. When \
+         the user asks you to listen to their asides and you can watch a command's output in the background \
+         (Claude Code's Monitor tool), run `{listen}` that way: each aside arrives as an event. Otherwise call \
+         wait_for_asides, act on what you get, then call it again; the user can't see its results, so first list \
+         the asides you got, one short line each. Keep listening until they tell you to stop. Listening makes \
+         this session the one the user's asides go to; if they switch to another session, asides wait until they \
+         switch back. When they ask you to work through their notes, call get_asides (or get_pending_asides for \
+         what's still open). Transcripts are verbatim speech-to-text: expect misheard words, especially names of \
+         projects, files and libraries. Measure & Annotate shows up in entries as an annotated screenshot with \
+         what the user measured (sizes and distances in points, guides) and numbered marks (### 1., ### 2.): an \
+         element, an area, or a drawing (an arrow from one thing to another, a circled or underlined part), with \
+         the app and window, the element's location (for web pages the URL and a CSS-like selector) and any typed \
+         feedback. In a recorded entry, each mark sits where the user was speaking when they made it, so what \
+         they said around it is about it; entries marked `Screen` were made without speaking. An aside is #N \
+         (entry N of the note) or #N.M (mark M of entry N). When you've handled one, call resolve_aside with a \
+         short summary; dismiss_aside with a reason if you won't act on it; reply_to_aside to ask the user \
+         something. The user sees these in the Asides menu. measure_image measures a screenshot (distances \
+         between edges, the bounds of an object)."
+    )
+}
 
 /// How long one `asides listen` runs when an agent starts it, just under the Monitor tool's 30 min.
-const LISTEN_SECS: u64 = 29 * 60;
+pub(crate) const LISTEN_SECS: u64 = 29 * 60;
 
 /// Where the server stands: what this agent has been given so far.
 struct Session {
     dir: PathBuf,
+    /// The session this agent is (`sessions::Session`).
+    id: String,
+    /// This server made the session's record (the agent wasn't started by `asides <agent>`).
+    made: bool,
     /// The client's name, as the agent introduced itself.
     client: String,
     /// Wait in seconds when a call doesn't say; `None` picks one for the client.
@@ -101,9 +116,18 @@ struct Server {
     running: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
-pub fn run(dir: PathBuf, timeout: Option<u64>) -> Result<()> {
+pub fn run(dir: PathBuf, timeout: Option<u64>, id: Option<String>) -> Result<()> {
+    let id = id.unwrap_or_else(sessions::new_id);
     let server = Arc::new(Server {
-        session: Mutex::new(Session { dir, client: String::new(), timeout, listening: None, waits: 0 }),
+        session: Mutex::new(Session {
+            dir,
+            id,
+            made: false,
+            client: String::new(),
+            timeout,
+            listening: None,
+            waits: 0,
+        }),
         out: Mutex::new(io::stdout()),
         running: Mutex::new(HashMap::new()),
     });
@@ -125,6 +149,8 @@ pub fn run(dir: PathBuf, timeout: Option<u64>) -> Result<()> {
         cancel.store(true, Ordering::Relaxed);
     }
     let _ = fs::remove_file(Listener::file(&paths::listeners_dir(), std::process::id()));
+    let session = server.session.lock().unwrap();
+    session::leave(&session.id, session.made);
     Ok(())
 }
 
@@ -174,12 +200,16 @@ impl Server {
         let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or_default();
         let version = PROTOCOL_VERSIONS.iter().find(|v| **v == asked).unwrap_or(PROTOCOL_VERSIONS.last().unwrap());
         let client = params.pointer("/clientInfo/name").and_then(Value::as_str).unwrap_or_default();
-        self.session.lock().unwrap().client = client.to_string();
+        let mut session = self.session.lock().unwrap();
+        session.client = client.to_string();
+        // The agent is here: its session's record, which counts once it listens.
+        session.made |= session::connect(&session.dir, &session.id, &agents::client_label(client));
+        let listen = crate::listen::command(&session.dir, None, None, Some(&session.id));
         json!({
             "protocolVersion": version,
             "capabilities": { "tools": {}, "prompts": {} },
             "serverInfo": { "name": "asides", "title": "Asides", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": INSTRUCTIONS,
+            "instructions": instructions(&listen),
         })
     }
 
@@ -188,7 +218,7 @@ impl Server {
         let text = match name {
             "listen" => {
                 let session = self.session.lock().unwrap();
-                listen_prompt(&session.client, &session.dir)
+                listen_prompt(&session.client, &session.dir, &session.id)
             }
             "asides" => {
                 let mut session = self.session.lock().unwrap();
@@ -227,35 +257,15 @@ impl Server {
                     Some(name) => find_note(&dir, Some(name)).map(Some),
                     None => Ok(None),
                 };
-                let read = found.and_then(|note| read_note_at(&dir, note, after, session.read_cursor(&mut scratch)));
+                let me = session.id.clone();
+                let read = found
+                    .and_then(|note| read_note_at(&dir, note, after, session.read_cursor(&mut scratch), Some(&me)));
                 let result = match read {
                     Ok(text) => tool_text(text, false),
                     Err(err) => tool_text(err, true),
                 };
                 drop(session);
                 self.reply(&id, Ok(result));
-            }
-            "bind_asides" => {
-                // Binding waits for the app to answer (up to 15 s): not on the thread reading requests.
-                let server = self.clone();
-                std::thread::spawn(move || {
-                    let dir = server.session.lock().unwrap().dir.clone();
-                    let result = match bind_here(&dir) {
-                        Ok(true) => tool_text(
-                            format!("Asides is now bound to {}: the user's recordings go to this repo.", tilde(&dir)),
-                            false,
-                        ),
-                        Ok(false) => tool_text(format!("Asides was already bound to {}.", tilde(&dir)), false),
-                        Err(err) => tool_text(
-                            format!(
-                                "Could not bind Asides: {err:#}. The user can run `asides` in {} instead.",
-                                tilde(&dir)
-                            ),
-                            true,
-                        ),
-                    };
-                    server.reply(&id, Ok(result));
-                });
             }
             "wait_for_asides" => {
                 let cancel = Arc::new(AtomicBool::new(false));
@@ -311,26 +321,21 @@ impl Server {
 
     /// Waits until there's something to deliver or the time is up; `None` when cancelled.
     fn wait(&self, timeout: Option<u64>, progress: Option<Value>, cancel: &AtomicBool) -> Option<Value> {
-        let dir = self.session.lock().unwrap().dir.clone();
-        // No point waiting for recordings that can't come here.
-        if let Some(problem) = binding_problem(&dir) {
-            return Some(tool_text(
-                format!(
-                    "{problem} If the user wants to record asides for this repo, call bind_asides (or ask them \
-                     to run `asides` in {}), then call wait_for_asides again.",
-                    tilde(&dir)
-                ),
-                false,
-            ));
+        let (dir, id, client, started) = {
+            let session = self.session.lock().unwrap();
+            let client = agents::client_label(&session.client);
+            (session.dir.clone(), session.id.clone(), client, session.listening.is_some())
+        };
+        // The first wait: this session listens, and the user's asides come to it.
+        if !started {
+            let (listening, made) = session::listen(&dir, &id, &client);
+            let mut session = self.session.lock().unwrap();
+            session.made |= made;
+            session.listening.get_or_insert(listening);
         }
         self.set_waiting(1);
         let limit = {
-            let mut session = self.session.lock().unwrap();
-            if session.listening.is_none() {
-                let delivery = Config::load(&paths::config_path()).unwrap_or_default().agent_delivery;
-                let sends = AppState::read(&paths::state_path()).map(|s| s.agent_sends).unwrap_or_default();
-                session.listening = Some(Listening::start(&dir, delivery, &sends));
-            }
+            let session = self.session.lock().unwrap();
             let default = match session.timeout {
                 Some(secs) => Duration::from_secs(secs),
                 None if session.client.to_ascii_lowercase().contains("claude") => CLAUDE_CODE_WAIT,
@@ -354,7 +359,7 @@ impl Server {
                     "No new asides yet (waited {} s). Call wait_for_asides again to keep listening.",
                     limit.as_secs()
                 );
-                for notice in app_notices(&dir) {
+                for notice in app_notices(&id) {
                     text.push_str(&format!("\n\n{notice}"));
                 }
                 break Some(tool_text(text, false));
@@ -383,6 +388,7 @@ impl Server {
         let listener = Listener {
             pid: std::process::id(),
             client: agents::client_label(&session.client),
+            session: session.id.clone(),
             dir: session.dir.clone(),
             waiting: session.waits > 0,
             updated_ms: crate::now_ms(),
@@ -401,63 +407,20 @@ impl Server {
 
 /// The listen prompt. Claude Code can watch `asides listen` with its Monitor tool and stay free in
 /// between; other agents wait in a tool call.
-fn listen_prompt(client: &str, dir: &Path) -> String {
-    let wait = "call the wait_for_asides tool; whenever it returns asides, list them for me in one short line \
-                each (#N and a few words, since I can't see tool results), act on each one, then call \
-                wait_for_asides again. If it returns none, call it again straight away.";
-    let mut text = "Listen to my asides: things I say while I test, transcribed on my Mac. Each one is a request \
-                    from me."
-        .to_string();
-    if client.to_ascii_lowercase().contains("claude") {
-        let command = crate::listen::command(dir, Some(LISTEN_SECS), None);
-        text.push_str(&format!(
-            "\n\nStart a background monitor (the Monitor tool) with the description \"asides\" and timeout_ms \
-             1800000 that runs:\n\n{command}\n\nEach event is an aside or a batch of them, which I see in the chat \
-             too: act on it, no need to repeat it. Between asides, you're free: I may ask you other things. When the monitor's \
-             last event says it stopped, start a new monitor with the command it gives, to keep listening. If you \
-             don't have the Monitor tool, {wait}"
-        ));
+fn listen_prompt(client: &str, dir: &Path, id: &str) -> String {
+    let via = if client.to_ascii_lowercase().contains("claude") {
+        Via::Monitor(crate::listen::command(dir, Some(LISTEN_SECS), None, Some(id)))
     } else {
-        text.push_str(&format!("\n\nTo listen, {wait}"));
-    }
-    text.push_str(
-        "\n\nWhen you've handled an aside, call resolve_aside with its number and a short summary of what you \
-         did (dismiss_aside with a reason if you won't act on it, reply_to_aside to ask me something); I see \
-         those in the Asides menu.\n\nKeep listening until I tell you to stop.",
-    );
-    text
-}
-
-/// Binds the app to `dir` unless it's already bound there. `Ok(true)` when it bound it.
-fn bind_here(dir: &Path) -> Result<bool> {
-    if crate::running_state().is_some_and(|s| s.bound_dir.as_deref() == Some(dir)) {
-        return Ok(false);
-    }
-    let _ = project::ensure_git_exclude(dir);
-    let request = crate::request_id();
-    crate::send(&Link::Bind { dir: dir.to_path_buf(), new_note: false, title: None, request: Some(request.clone()) })?;
-    crate::wait_for_ack(&request)?;
-    Ok(true)
-}
-
-/// Why the user's recordings wouldn't reach this repo, if they wouldn't.
-pub(crate) fn binding_problem(dir: &Path) -> Option<String> {
-    let Some(state) = crate::running_state() else {
-        return Some("Asides isn't running, so nothing can be recorded yet.".into());
+        Via::Wait
     };
-    match &state.bound_dir {
-        Some(bound) if bound == dir => None,
-        Some(bound) => {
-            Some(format!("Asides is bound to {}, so the user's recordings go there, not to this repo.", tilde(bound)))
-        }
-        None => Some("Asides isn't bound to a directory yet.".into()),
-    }
+    let worktree = SessionRecord::read(&paths::sessions_dir(), id).and_then(|s| s.worktree).map(|_| dir);
+    launch::listen_prompt(&via, worktree)
 }
 
 /// Why asides might not be arriving, for the agent to pass on.
-fn app_notices(dir: &Path) -> Vec<String> {
-    if let Some(problem) = binding_problem(dir) {
-        return vec![format!("{problem} Call bind_asides to bind it to this repo.")];
+fn app_notices(id: &str) -> Vec<String> {
+    if let Some(problem) = session::target_problem(id) {
+        return vec![problem];
     }
     let Some(state) = crate::running_state() else { return Vec::new() };
     let mut notices = Vec::new();
@@ -522,12 +485,18 @@ pub(crate) fn asides_text(items: &[Item]) -> (String, Vec<PathBuf>) {
 
 /// The latest note with absolute links, or only its entries after `after`; moves `cursor` past them.
 fn read_note(dir: &Path, after: Option<u32>, cursor: &mut Cursor) -> Result<String, String> {
-    read_note_at(dir, None, after, cursor)
+    read_note_at(dir, None, after, cursor, None)
 }
 
 /// Like [`read_note`], for `note` (`None`: the latest note). Each entry is followed by what
 /// happened to it since (its thread: status changes and replies).
-fn read_note_at(dir: &Path, note: Option<Note>, after: Option<u32>, cursor: &mut Cursor) -> Result<String, String> {
+fn read_note_at(
+    dir: &Path,
+    note: Option<Note>,
+    after: Option<u32>,
+    cursor: &mut Cursor,
+    me: Option<&str>,
+) -> Result<String, String> {
     let latest = notes::latest_note(dir);
     let note = note.or(latest.clone()).ok_or_else(|| format!("There are no asides in {} yet.", tilde(dir)))?;
     let content =
@@ -535,6 +504,7 @@ fn read_note_at(dir: &Path, note: Option<Note>, after: Option<u32>, cursor: &mut
     let entries: Vec<_> =
         notes::parse_entries(&content).into_iter().filter(|e| after.is_none_or(|after| e.number > after)).collect();
     let threads = threads::fold(&threads::read(&note.dir));
+    let routes = routes::read(&note.dir);
     let mut text = format!("Note \"{}\" ({})", note.title, note.file().display());
     if let Some(meta) = notes::front_matter(&content) {
         text.push_str(&format!("\n\n---\n{meta}\n---"));
@@ -545,6 +515,10 @@ fn read_note_at(dir: &Path, note: Option<Note>, after: Option<u32>, cursor: &mut
     for entry in &entries {
         let heading = agents::absolute_links(&note.dir, &entry.heading);
         text.push_str(&format!("\n\n## {heading}\n\n{}", agents::absolute_links(&note.dir, &entry.body)));
+        if let Some(route) = routes.get(&entry.number).filter(|r| r.session.is_some() && r.session.as_deref() != me) {
+            let agent = route.agent.as_deref().unwrap_or("another agent");
+            text.push_str(&format!("\n\n> The user said this to another session ({agent})."));
+        }
         text.push_str(&thread_text(&threads, entry));
     }
     if content.contains("](images/") {
@@ -863,21 +837,6 @@ fn tools() -> Value {
                 "required": ["path"]
             },
             "annotations": { "title": "Measure a screenshot", "readOnlyHint": true, "openWorldHint": false }
-        },
-        {
-            "name": "bind_asides",
-            "title": "Bind Asides to this repo",
-            "description": "Point the Asides app at this repo, so the user's recordings go to its notes and \
-                wait_for_asides can return them. Starts the app if it isn't running. Same as the user running \
-                `asides` here. Call it when wait_for_asides says Asides is bound elsewhere or isn't running.",
-            "inputSchema": { "type": "object", "properties": {} },
-            "annotations": {
-                "title": "Bind Asides to this repo",
-                "readOnlyHint": false,
-                "destructiveHint": false,
-                "idempotentHint": true,
-                "openWorldHint": false
-            }
         }
     ])
 }

@@ -1,19 +1,24 @@
-"""Drives `asides mcp` the way a coding agent does, for scripts/e2e.sh.
+"""Drives `asides mcp` the way a coding agent does, for scripts/e2e.sh, and starts agent sessions
+with `asides claude`, `codex` and `opencode` (fake agents that record how they were started).
 
 Usage: e2e-mcp.py <asides CLI> <repo> <fixtures dir> <config.toml> <listeners dir> <another repo>
 """
 
+import glob
 import json
 import os
 import queue
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-import urllib.request
 
 cli, repo, fixtures, config_path, listeners, other = sys.argv[1:7]
+sessions_dir = os.path.join(os.path.dirname(listeners), "sessions")
+repo_name = os.path.basename(repo)
 
 
 def passed(what):
@@ -32,7 +37,8 @@ def check(what, ok, detail=""):
 
 
 class Client:
-    def __init__(self):
+    def __init__(self, name="e2e-agent"):
+        self.name = name
         self.proc = subprocess.Popen(
             [cli, "-C", repo, "mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1
         )
@@ -83,6 +89,38 @@ def simulate(wav):
     subprocess.run([cli, "-C", repo, "simulate", os.path.join(fixtures, wav)], check=True, capture_output=True)
 
 
+def status():
+    return subprocess.run([cli, "-C", repo, "status"], check=True, capture_output=True, text=True).stdout
+
+
+def session_of(pid):
+    for path in glob.glob(os.path.join(sessions_dir, "*.json")):
+        with open(path) as f:
+            record = json.load(f)
+        if record.get("pid") == pid:
+            return record
+    return None
+
+
+def wait_until(what, test, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if test():
+            return
+        time.sleep(0.3)
+    failed(what, status())
+
+
+def connect(client):
+    init = client.call("initialize", {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": client.name, "version": "1"},
+    })
+    client.send({"method": "notifications/initialized"})
+    return init
+
+
 def entries():
     note = subprocess.run([cli, "-C", repo, "path"], check=True, capture_output=True, text=True).stdout.strip()
     with open(note) as f:
@@ -98,16 +136,16 @@ def wait_for_entries(count):
 
 
 client = Client()
-init = client.call("initialize", {
-    "protocolVersion": "2025-06-18",
-    "capabilities": {},
-    "clientInfo": {"name": "e2e-agent", "version": "1"},
-})
-client.send({"method": "notifications/initialized"})
+init = connect(client)
 check("initialize: server info and protocol version",
       init["serverInfo"]["name"] == "asides" and init["protocolVersion"] == "2025-06-18", init)
+mine = session_of(client.proc.pid)
+check("the agent's session is recorded, not listening yet", mine and not mine["listening"], mine)
+check("its instructions name its listen command",
+      f"listen --session {mine['id']}" in init["instructions"] and "bind_asides" not in init["instructions"],
+      init["instructions"])
 tools = {t["name"]: t for t in client.call("tools/list")["tools"]}
-expected = ["acknowledge_aside", "bind_asides", "dismiss_aside", "get_asides", "get_pending_asides",
+expected = ["acknowledge_aside", "dismiss_aside", "get_asides", "get_pending_asides",
             "list_asides_notes", "measure_image", "reply_to_aside", "resolve_aside", "wait_for_asides"]
 check("tools: listening, reading, the feedback loop, measuring", sorted(tools) == expected, sorted(tools))
 check("reading tools are read-only, the feedback loop's aren't",
@@ -149,17 +187,15 @@ measured = text(client.call("tools/call", tool("measure_image", path=os.environ[
                                               area={"x": 100, "y": 320, "width": 240, "height": 100})))
 check("measure_image: the object inside an area", "(120, 340), 200 px wide × 48 px high" in measured, measured)
 
-# Bound elsewhere: the wait says so at once, and bind_asides points the app here.
+# Bound elsewhere: listening makes this agent's session the one the user's asides go to, and binds
+# the app to its repo. No binding step.
 subprocess.run([cli, "-C", other], check=True, capture_output=True)
-started = time.time()
-elsewhere = text(client.call("tools/call", tool("wait_for_asides", timeout_seconds=60), timeout=10))
-check("waiting while Asides is bound elsewhere returns at once",
-      time.time() - started < 5 and "bind_asides" in elsewhere and os.path.basename(other) in elsewhere, elsewhere)
-bound = text(client.call("tools/call", tool("bind_asides"), timeout=30))
-check("bind_asides binds the app to the agent's repo", bound.startswith("Asides is now bound to"), bound)
-status = subprocess.run([cli, "-C", repo, "status"], check=True, capture_output=True, text=True).stdout
-check("as the app confirms", re.search(rf"bound to .*/{re.escape(os.path.basename(repo))}$", status, re.M), status)
-check("binding again is a no-op", "already bound" in text(client.call("tools/call", tool("bind_asides"), timeout=30)))
+first = text(client.call("tools/call", tool("wait_for_asides", timeout_seconds=2), timeout=30))
+check("the first wait listens", "No new asides yet" in first, first)
+now = status()
+check("listening binds the app to the agent's repo", re.search(rf"bound to .*/{re.escape(repo_name)}$", now, re.M), now)
+check("and sends the user's asides to its session", f"asides go to e2e-agent · {repo_name}" in now, now)
+check("its record says it listens", session_of(client.proc.pid)["listening"])
 
 # Each aside, as soon as it's transcribed.
 before = entries()
@@ -168,7 +204,8 @@ time.sleep(1.5)
 record = os.path.join(listeners, f"{client.proc.pid}.json")
 with open(record) as f:
     listener = json.load(f)
-check("listening shows in the app's listener records", listener["waiting"] and listener["client"] == "e2e-agent", listener)
+check("listening shows in the app's listener records",
+      listener["waiting"] and listener["client"] == "e2e-agent" and listener["session"] == mine["id"], listener)
 simulate("en_bug.wav")
 answer = client.response(waiting, 180)
 result = answer and answer["result"]
@@ -177,6 +214,40 @@ check("a new recording reaches the waiting agent", result and "padding on the su
 check("as one new aside", text(result).startswith("A new aside from the user."), text(result))
 check("nothing is delivered twice",
       "No new asides yet" in text(client.call("tools/call", tool("wait_for_asides", timeout_seconds=2), timeout=10)))
+note_dir = os.path.dirname(subprocess.run([cli, "-C", repo, "path"], check=True, capture_output=True, text=True).stdout.strip())
+
+
+def routes():
+    with open(os.path.join(note_dir, "routes.jsonl")) as f:
+        return [json.loads(line) for line in f]
+
+
+check("the entry's route names the session", routes()[-1]["session"] == mine["id"], routes())
+
+# A second agent in the same repo: once it listens, the asides go to it, and only to it.
+second = Client("second-agent")
+connect(second)
+theirs = session_of(second.proc.pid)
+waiting_second = second.request("tools/call", tool("wait_for_asides", timeout_seconds=120))
+wait_until("the second session becomes the target", lambda: f"asides go to second-agent · {repo_name}" in status(), 20)
+waiting_first = client.request("tools/call", tool("wait_for_asides", timeout_seconds=25))
+before = entries()
+simulate("en_bug.wav")
+answer = second.response(waiting_second, 180)
+check("the aside reaches the session it was spoken to", answer and "padding on the summary card" in text(answer["result"]),
+      answer)
+answer = client.response(waiting_first, 40)
+result = answer and text(answer["result"])
+check("not the other one, which is told where asides go",
+      result and "No new asides yet" in result and "another session" in result, result)
+check("the route says which", routes()[-1]["session"] == theirs["id"], routes())
+got = text(client.call("tools/call", tool("get_asides", after_entry=before), timeout=10))
+check("reading the note, the other session sees who it was for", "said this to another session (second-agent)" in got, got)
+second.proc.stdin.close()
+second.proc.wait(timeout=10)
+wait_until("when it hangs up, the asides go back to the first session",
+           lambda: f"asides go to e2e-agent · {repo_name}" in status(), 15)
+check("and its record is gone", session_of(second.proc.pid) is None)
 
 # Batches: held until Send to Agent.
 with open(config_path) as f:
@@ -202,6 +273,7 @@ check("and the server keeps serving", client.call("ping") == {})
 client.proc.stdin.close()
 client.proc.wait(timeout=10)
 check("hanging up removes the listener record", not os.path.exists(record))
+check("and the session's", session_of(client.proc.pid) is None)
 
 # asides listen: the same asides on standard output, for agents that watch a command in the background.
 env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -231,6 +303,7 @@ with open(os.path.join(listeners, f"{listen.pid}.json")) as f:
     listener = json.load(f)
 check("it shows as a listener, named after the agent running it",
       listener["waiting"] and listener["client"] == "Codex", listener)
+wait_until("listening makes its session the target", lambda: f"asides go to Codex · {repo_name}" in status(), 15)
 before = entries()
 simulate("en_bug.wav")
 wait_for_entries(before + 1)
@@ -248,3 +321,70 @@ time.sleep(2.5)
 nobody = subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True)
 check("with no agent listening, Send to Agent says so and sends nothing",
       nobody.returncode != 0 and "No agent is listening" in nobody.stderr, nobody.stdout + nobody.stderr)
+
+# asides claude, codex, opencode: sessions started from the command line. Fake agents record their
+# arguments, environment and directory, then wait while FAKE_SLEEP says.
+fakes = tempfile.mkdtemp()
+for name in ["claude", "codex", "opencode"]:
+    with open(os.path.join(fakes, name), "w") as f:
+        f.write(f"""#!/bin/sh
+[ "$1" = --version ] && echo "{name} 2.0.0" && exit 0
+printf '%s\\0' "$@" > "{fakes}/{name}.args"
+env | grep -E '^(ASIDES_|OPENCODE_CONFIG_CONTENT)' > "{fakes}/{name}.env"
+pwd -P > "{fakes}/{name}.pwd"
+sleep "${{FAKE_SLEEP:-0}}"
+""")
+    os.chmod(os.path.join(fakes, name), 0o755)
+
+
+def start(agent, sleep, *args):
+    env = {**os.environ, "PATH": fakes + ":" + os.environ["PATH"], "FAKE_SLEEP": str(sleep)}
+    env.pop("CLAUDECODE", None)
+    proc = subprocess.Popen([cli, "-C", repo, agent, *args], stdout=subprocess.PIPE, text=True, env=env)
+    wait_until(f"asides {agent} starts the agent", lambda: os.path.exists(os.path.join(fakes, agent + ".pwd")), 20)
+    with open(os.path.join(fakes, agent + ".args")) as f:
+        argv = f.read().rstrip("\0").split("\0")
+    with open(os.path.join(fakes, agent + ".env")) as f:
+        env = dict(line.split("=", 1) for line in f.read().splitlines() if "=" in line)
+    with open(os.path.join(fakes, agent + ".pwd")) as f:
+        cwd = f.read().strip()
+    for name in ["args", "env", "pwd"]:
+        os.remove(os.path.join(fakes, f"{agent}.{name}"))
+    return proc, argv, env, cwd
+
+
+claude, argv, env, cwd = start("claude", 30, "--model", "opus")
+session = env.get("ASIDES_SESSION", "")
+check("asides claude starts Claude Code in the repo, listening as a new session",
+      cwd == os.path.realpath(repo) and argv[0].startswith("Listen to my asides") and f"--session {session}" in argv[0]
+      and session, (cwd, argv[:1], env))
+config = json.loads(argv[argv.index("--mcp-config") + 1])
+check("with asides' MCP server on its command line, for that session",
+      config["mcpServers"]["asides"]["args"] == ["-C", os.path.realpath(repo), "mcp", "--session", session], config)
+check("its tools pre-approved, and the user's own arguments passed on",
+      "mcp__asides" in argv and argv[-2:] == ["--model", "opus"], argv)
+wait_until("the app sends the user's asides to it", lambda: f"asides go to Claude Code · {repo_name}" in status(), 15)
+check("it shows as starting until it listens", f"Claude Code · {repo_name}: starting" in status(), status())
+
+codex, argv, env, cwd = start("codex", 0)
+check("a second session in the repo gets its own worktree (Codex makes it)",
+      "--worktree" in argv and "worktree of" in argv[-1] and any("mcp_servers.asides.args=" in a for a in argv), argv)
+codex.wait(timeout=10)
+opencode, argv, env, cwd = start("opencode", 0)
+tree = os.path.join(os.path.realpath(repo), ".asides", "worktrees")
+opencode_config = json.loads(env.get("OPENCODE_CONFIG_CONTENT", "{}"))
+check("for OpenCode, asides makes the worktree, in the notes folder",
+      cwd.startswith(tree + "/asides-") and "--standalone" in argv
+      and "--session" in opencode_config["mcp"]["servers"]["asides"]["command"], (cwd, argv, env))
+opencode.wait(timeout=10)
+wait_until("ended sessions leave the target to the one still running",
+           lambda: f"asides go to Claude Code · {repo_name}" in status() and "Codex" not in status(), 15)
+opencode, argv, env, cwd = start("opencode", 0, "--no-worktree")
+check("--no-worktree shares the repo", cwd == os.path.realpath(repo), cwd)
+check("and the next start removes the worktrees of ended sessions with nothing done in them",
+      not os.listdir(tree), os.listdir(tree))
+opencode.wait(timeout=10)
+claude.terminate()
+claude.wait(timeout=10)
+wait_until("when the last session ends, asides go to the notes only", lambda: "asides go to notes only" in status(), 15)
+shutil.rmtree(fakes)

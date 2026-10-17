@@ -1,6 +1,6 @@
-//! Background polling: Wispr Flow's dictation history, the agents listening through `asides mcp`,
-//! and what agents say about the user's asides (`threads.jsonl`). Like the config watcher, these
-//! threads only report back; the main thread acts.
+//! Background polling: Wispr Flow's dictation history, the agent sessions and the processes
+//! listening for them, and what agents say about the user's asides (`threads.jsonl`). Like the
+//! config watcher, these threads only report back; the main thread acts.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use asides_core::agents::Listener;
 use asides_core::notes;
+use asides_core::sessions::Session;
 use asides_core::threads::{self, Event, THREADS_FILE};
 use asides_core::wispr::{Dictation, History};
 use chrono::Utc;
@@ -52,32 +53,47 @@ pub fn wispr_flow(db: PathBuf, report: impl Fn(Result<Dictation, String>) -> boo
     stop
 }
 
-/// Reports the agents listening through `asides mcp` whenever that changes. Records left behind
-/// by sessions that ended without cleaning up are removed.
-pub fn listeners(dir: PathBuf, report: impl Fn(Vec<Listener>) -> bool + Send + 'static) {
+/// Reports the agent sessions and the processes listening for them (`asides mcp`, `asides
+/// listen`) every couple of seconds, so the app also notices a session that came and went between
+/// two looks (an agent that failed to start). Records left behind by processes and sessions that
+/// ended without cleaning up are removed.
+pub fn sessions(
+    listeners_dir: PathBuf,
+    sessions_dir: PathBuf,
+    report: impl Fn(Vec<Listener>, Vec<Session>) -> bool + Send + 'static,
+) {
     std::thread::Builder::new()
-        .name("asides-listeners".into())
+        .name("asides-sessions".into())
         .spawn(move || {
-            let mut last: Option<Vec<Listener>> = None;
             loop {
-                let mut alive = Vec::new();
-                for listener in Listener::read_all(&dir) {
+                let mut listeners = Vec::new();
+                for listener in Listener::read_all(&listeners_dir) {
                     if is_running(listener.pid) {
-                        alive.push(listener);
+                        listeners.push(listener);
                     } else {
-                        let _ = std::fs::remove_file(Listener::file(&dir, listener.pid));
+                        let _ = std::fs::remove_file(Listener::file(&listeners_dir, listener.pid));
                     }
                 }
-                if last.as_ref() != Some(&alive) {
-                    last = Some(alive.clone());
-                    if !report(alive) {
-                        return;
+                let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
+                let mut sessions = Vec::new();
+                for session in Session::read_all(&sessions_dir) {
+                    let ended = match session.pid {
+                        0 => session.expired(&listeners, now),
+                        pid => !is_running(pid),
+                    };
+                    if ended {
+                        Session::remove(&sessions_dir, &session.id);
+                    } else {
+                        sessions.push(session);
                     }
+                }
+                if !report(listeners, sessions) {
+                    return;
                 }
                 std::thread::sleep(LISTENERS_POLL);
             }
         })
-        .expect("spawn listeners thread");
+        .expect("spawn sessions thread");
 }
 
 /// Reports the events of the latest note in the directory `bound` holds whenever they change (an

@@ -72,6 +72,52 @@ pub fn ensure_git_exclude(dir: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
+/// Whether `dir` is in a git work tree with a commit to branch from.
+pub fn can_branch(dir: &Path) -> bool {
+    git(dir, &["rev-parse", "--verify", "-q", "HEAD"]).is_some()
+}
+
+/// Where asides makes a worktree for a session of an agent that can't make its own: in the notes
+/// folder, which git already ignores locally, so it stays with the repo and out of `git status`.
+pub fn worktree_path(repo: &Path, name: &str) -> PathBuf {
+    repo.join(NOTES_DIR).join("worktrees").join(name)
+}
+
+/// Adds a worktree of `repo` at `path`, on a new branch `branch` from HEAD.
+pub fn add_worktree(repo: &Path, path: &Path, branch: &str) -> io::Result<()> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "add", "-q", "-b", branch])
+        .arg(path)
+        .arg("HEAD")
+        .output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(())
+}
+
+/// Removes the worktree at `path` and its branch when nothing was changed or committed there: its
+/// files are as checked out, and the branch has moved no further than where it was made (its
+/// reflog has one entry). Returns whether it did; a worktree with work in it is left for the user.
+pub fn remove_worktree_if_unchanged(repo: &Path, path: &Path, branch: &str) -> bool {
+    let clean = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["status", "--porcelain"])
+        .output()
+        .is_ok_and(|out| out.status.success() && out.stdout.is_empty());
+    let reflog = git(repo, &["reflog", "show", "--format=%H", &format!("refs/heads/{branch}")]);
+    if !clean || reflog.is_none_or(|log| log.lines().count() != 1) {
+        return false;
+    }
+    let path = path.to_string_lossy();
+    git(repo, &["worktree", "remove", &path]);
+    git(repo, &["branch", "-D", branch]);
+    git(repo, &["worktree", "list", "--porcelain"]).is_none_or(|list| !list.contains(path.as_ref()))
+}
+
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
     if !out.status.success() {
@@ -139,6 +185,28 @@ mod tests {
         let info = git_info(tmp.path()).unwrap();
         assert_eq!(info.branch.as_deref(), Some("trunk"));
         assert_eq!((info.commit, info.commit_subject, info.uncommitted_files), (None, None, 1));
+    }
+
+    #[test]
+    fn makes_and_removes_worktrees() {
+        let tmp = repo();
+        assert!(can_branch(tmp.path()) && !can_branch(&tmp.path().join("nope")));
+        ensure_git_exclude(tmp.path()).unwrap();
+        let path = worktree_path(tmp.path(), "s1");
+        add_worktree(tmp.path(), &path, "asides/s1").unwrap();
+        assert!(path.join("a.txt").is_file());
+        assert_eq!(git_info(tmp.path()).unwrap().uncommitted_files, 0, "the worktree stays out of git status");
+        assert!(remove_worktree_if_unchanged(tmp.path(), &path, "asides/s1"));
+        assert!(!path.exists());
+
+        let kept = worktree_path(tmp.path(), "s2");
+        add_worktree(tmp.path(), &kept, "asides/s2").unwrap();
+        fs::write(kept.join("a.txt"), "work").unwrap();
+        assert!(!remove_worktree_if_unchanged(tmp.path(), &kept, "asides/s2"));
+        run(&kept, &["commit", "-qam", "Work"]);
+        assert!(!remove_worktree_if_unchanged(tmp.path(), &kept, "asides/s2"), "committed work is kept too");
+        assert!(kept.join("a.txt").is_file());
+        assert!(add_worktree(tmp.path(), &worktree_path(tmp.path(), "s3"), "asides/s2").is_err(), "branch taken");
     }
 
     #[test]

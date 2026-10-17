@@ -35,6 +35,7 @@ make fixtures    # once: test audio generated with the macOS voices
 | `asides-core` | `cargo test -p asides-core` |
 | the CLI | `cargo run -p asides-cli -- status` (and the other subcommands) |
 | `asides mcp` | pipe JSON-RPC lines into `cargo run -p asides-cli -- mcp` (example below), then try it in an agent |
+| `asides claude` and the like | put a fake `claude` (a script that prints its arguments) first on `PATH`, as `scripts/e2e-mcp.py` does; then start the real one |
 | the app | `make install`, then `asides` in a scratch repo and try it for real |
 
 `make install` quits the running Asides and replaces it.
@@ -47,10 +48,11 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
   | cargo run -q -p asides-cli -- mcp
 ```
 
-To try it in an agent without changing its settings, start Claude Code with
-`--mcp-config '{"mcpServers":{"asides":{"command":"asides","args":["mcp"]}}}'`, or Codex with
-`-c 'mcp_servers.asides.command="asides"' -c 'mcp_servers.asides.args=["mcp"]'`. With a dev-hooks
-build installed, `asides simulate <wav>` stands in for speaking.
+To try it in an agent without changing its settings, run `asides claude` (or `asides codex`,
+`asides opencode`) in a scratch repo: it passes the server on the agent's command line. To check
+the command line itself without a model call, add `-p --output-format stream-json --verbose` for
+Claude Code and read the `init` message's `mcp_servers`, or run `codex -c … mcp get asides` with the
+same `-c` options. With a dev-hooks build installed, `asides simulate <wav>` stands in for speaking.
 
 The app's output (`eprintln!`) is discarded when it's launched normally. To see it, quit the app
 (`asides quit`) and run the binary from a terminal:
@@ -76,7 +78,7 @@ deleted.
 |---|---|---|
 | Unit | `make test` | notes, metadata, Markdown, git info, links, state, config, resampling, language choice, icon rendering, measuring (edges, snapping, guides, colors), the Measure & Annotate session (measuring, holds, guides, marks, drawings, screenshots, restore) and its Markdown, the overlay's keys and protocol, rendering a session's screenshot offscreen, threads, the MCP feedback-loop tools, `asides measure` |
 | Speech | `make test-speech` | transcription of the fixtures (needs the model) and a real model download with checksum check (190 MB) |
-| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a scripted Measure & Annotate session on a drawn screen instead of the real one (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (each and batch delivery, Send to Agent, cancelling, `asides listen`, sending with no agent listening, resolving, dismissing and replying to marks, `measure_image`). It restores your `config.toml` afterwards |
+| End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command in a throwaway git repo, feeding WAV files instead of the microphone (`asides simulate`), a scripted Measure & Annotate session on a drawn screen instead of the real one (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), a database of its own instead of Wispr Flow's history, and `scripts/e2e-mcp.py` as a coding agent (listening making its session the target, each and batch delivery, two sessions in one repo each getting only their own asides, Send to Agent, cancelling, `asides listen`, sending with no agent listening, resolving, dismissing and replying to marks, `measure_image`), plus fake agents for `asides claude`, `codex` and `opencode` (their command lines, worktrees for a second session, pruning them). It restores your `config.toml` afterwards |
 | Overlay replay | below | the real overlay windows, driven by AppKit mouse and key events, captured to PNGs you look at |
 | Manual | checklist below | everything a script can't do: the microphone, shortcuts, menus, your own hand on the overlay, and permissions |
 
@@ -150,12 +152,20 @@ in your pull request what you tried.
   - the bound directory deleted while the app runs
 - [ ] **CLI:** closing the terminal after `asides` leaves the app running; `asides quit`
   finishes queued transcriptions first.
-- [ ] **Agents:** with an agent listening, the status line names it (`listening`, or `working on
-  your asides` while it acts); a recording reaches it a few seconds after you stop. In Claude Code,
+- [ ] **Agents:** with an agent listening, the status line names it (`→ Claude Code, listening`, or
+  `working` while it acts); a recording reaches it a few seconds after you stop. In Claude Code,
   `/asides:listen` starts a monitor and each aside shows in the chat. In batch mode, `⌃⌥Enter` and
   Send to Agent in the menu deliver everything recorded since the last send, including a recording
   still in progress, and the menu bar shows Sent or Queued; with no agent listening, it says so and
   sends nothing. In each mode the item is disabled and `⌃⌥Enter` stays free for other apps.
+- [ ] **Agent sessions:** New Agent Session ▸ Claude Code opens the terminal in the repo with Claude
+  Code already listening (no approval asked for the monitor or the asides tools), and becomes the
+  target under Asides Go To; Codex and OpenCode the same, waiting in `wait_for_asides`. A second
+  session in the repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the menu bar
+  saying where asides go, and a recording shows `→ <agent>` while it runs and reaches only that
+  session. Claude Code in the Background starts without a window; Show opens it. Quitting the
+  target agent hands asides to another session in the repo, or Notes Only. From Spotlight, with
+  Asides not bound: New Agent Session ▸ In Another Directory… starts one after choosing a folder.
 - [ ] **Installed by hand:** with no `asides` command anywhere, opening `/Applications/Asides.app`
   links `/usr/local/bin/asides` (asking for a password if root owns the folder); after Cancel it
   isn't asked again. The app icon shows in Spotlight and Finder.
@@ -220,8 +230,8 @@ in your pull request what you tried.
   - Replies go through `state.json`: add a field to `AppState` with a serde default.
 - **An MCP tool or prompt:** add it to `tools()` or `prompts()` in `asides-cli/src/mcp.rs` and handle
   it in `call_tool` or `prompt`. Keep tools read-only (and annotated `readOnlyHint`) unless they
-  must change something, like `bind_asides` or the feedback-loop tools (which only append to
-  `threads.jsonl`), and stdout for JSON-RPC only. Cover it in
+  must change something, like the feedback-loop tools (which only append to `threads.jsonl`), and
+  stdout for JSON-RPC only. Cover it in
   `scripts/e2e-mcp.py`, and try it in Claude Code and one other agent: clients differ in timeouts
   and in what content they accept.
 - **A model:** add it to `MODELS` in `models.rs` with the exact size and SHA-256 from the Hugging

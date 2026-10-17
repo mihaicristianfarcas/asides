@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AgentDelivery;
 use crate::notes::{self, Entry, Note};
+use crate::routes::{self, Route};
 use crate::state::AgentSend;
 
 /// How far an agent has read: entry `entry` of `note` (a note folder), of which the first `len`
@@ -70,6 +71,8 @@ impl Cursor {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listening {
     pub dir: PathBuf,
+    /// The session it listens as (`sessions::Session`): it gets the entries routed to it.
+    pub session: Option<String>,
     pub cursor: Cursor,
     /// Sends up to this one (`AgentSend::at_ms`) aren't for this agent: they came before it
     /// started listening, or it already has them.
@@ -82,7 +85,7 @@ impl Listening {
     /// they would have carried isn't lost, though: in batch mode the next send includes everything
     /// since the last send in `dir` (or, without one, the latest note). In each mode, only asides
     /// recorded from now on are new.
-    pub fn start(dir: &Path, delivery: AgentDelivery, sends: &[AgentSend]) -> Listening {
+    pub fn start(dir: &Path, session: Option<&str>, delivery: AgentDelivery, sends: &[AgentSend]) -> Listening {
         let cursor = match delivery {
             AgentDelivery::Each => Cursor::at_end(dir),
             AgentDelivery::Batch => match sends.iter().find(|s| s.dir == dir) {
@@ -90,29 +93,62 @@ impl Listening {
                 _ => Cursor::at_start(dir),
             },
         };
-        Listening { dir: dir.to_path_buf(), cursor, last_send: sends.first().map_or(0, |s| s.at_ms) }
+        Listening {
+            dir: dir.to_path_buf(),
+            session: session.map(Into::into),
+            cursor,
+            last_send: sends.first().map_or(0, |s| s.at_ms),
+        }
     }
 
-    /// What's ready for the agent now, and moves past it: in each mode, everything new; in batch
-    /// mode, the entries up to a Send to Agent made since the last one it acted on.
+    /// What's ready for the agent now, and moves past it: in each mode, everything new that was
+    /// spoken to its session (`routes`); in batch mode, the entries up to a Send to Agent made
+    /// since the last one it acted on, when that send was to its session. Either way it moves past
+    /// what went to other sessions, so it never gets those later.
     pub fn take(&mut self, delivery: AgentDelivery, send: Option<&AgentSend>) -> Vec<Item> {
-        let items = match delivery {
-            AgentDelivery::Each => collect(&self.dir, &self.cursor, None),
+        let (items, mine) = match delivery {
+            AgentDelivery::Each => (collect(&self.dir, &self.cursor, None), None),
             AgentDelivery::Batch => match send.filter(|s| s.at_ms > self.last_send && s.dir == self.dir) {
                 Some(send) => {
                     self.last_send = send.at_ms;
-                    match &send.note {
+                    let items = match &send.note {
                         Some(note) => collect(&self.dir, &self.cursor, Some((note, send.entry))),
                         None => Vec::new(),
-                    }
+                    };
+                    // A batch goes to the session it was sent to, whoever each aside was spoken to.
+                    let mine = send.session.is_none() || send.session == self.session;
+                    (items, Some(mine))
                 }
-                None => Vec::new(),
+                None => (Vec::new(), None),
             },
         };
         for item in &items {
             self.cursor.advance(item);
         }
+        match mine {
+            Some(true) => items,
+            Some(false) => Vec::new(),
+            None => self.routed_here(items),
+        }
+    }
+
+    /// The items spoken to this agent's session (or to nobody in particular).
+    fn routed_here(&self, items: Vec<Item>) -> Vec<Item> {
+        let mut routes: Vec<(PathBuf, std::collections::BTreeMap<u32, Route>)> = Vec::new();
         items
+            .into_iter()
+            .filter(|item| {
+                let (note, number) = match item {
+                    Item::Entry { note, entry } => (note, entry.number),
+                    Item::Addition { note, number, .. } => (note, *number),
+                };
+                if !routes.iter().any(|(dir, _)| *dir == note.dir) {
+                    routes.push((note.dir.clone(), routes::read(&note.dir)));
+                }
+                let found = routes.iter().find(|(dir, _)| *dir == note.dir).and_then(|(_, r)| r.get(&number));
+                Route::reaches(found, self.session.as_deref())
+            })
+            .collect()
     }
 
     /// Where this agent is, as text, to carry on later with `resume` (`asides listen --after`).
@@ -121,15 +157,20 @@ impl Listening {
         format!("{}:{}:{}:{}", self.last_send, self.cursor.entry, self.cursor.len, note.unwrap_or_default())
     }
 
-    /// Listening in `dir` from where `token` left off; `None` if it isn't a token.
-    pub fn resume(dir: &Path, token: &str) -> Option<Listening> {
+    /// Listening in `dir` as `session` from where `token` left off; `None` if it isn't a token.
+    pub fn resume(dir: &Path, session: Option<&str>, token: &str) -> Option<Listening> {
         let mut parts = token.splitn(4, ':');
         let last_send = parts.next()?.parse().ok()?;
         let entry = parts.next()?.parse().ok()?;
         let len = parts.next()?.parse().ok()?;
         let note = parts.next()?;
         let note = (!note.is_empty()).then(|| notes::notes_root(dir).join(note));
-        Some(Listening { dir: dir.to_path_buf(), cursor: Cursor { note, entry, len }, last_send })
+        Some(Listening {
+            dir: dir.to_path_buf(),
+            session: session.map(Into::into),
+            cursor: Cursor { note, entry, len },
+            last_send,
+        })
     }
 }
 
@@ -218,6 +259,8 @@ pub struct Listener {
     pub pid: u32,
     /// The agent's name, e.g. "Claude Code".
     pub client: String,
+    /// The session it delivers to (`sessions::Session`).
+    pub session: String,
     /// The bound directory it listens in.
     pub dir: PathBuf,
     /// Waiting for asides right now; otherwise working on the last ones it got.
@@ -328,7 +371,7 @@ mod tests {
     }
 
     fn send(at_ms: u64, dir: &Path, note: &Note, entry: u32) -> AgentSend {
-        AgentSend { at_ms, dir: dir.to_path_buf(), note: Some(note.dir.clone()), entry }
+        AgentSend { at_ms, dir: dir.to_path_buf(), note: Some(note.dir.clone()), entry, session: None }
     }
 
     #[test]
@@ -338,17 +381,17 @@ mod tests {
         a.append("## 1 · 14:30\n\nOne.").unwrap();
         a.append("## 2 · 14:31\n\nTwo.").unwrap();
         let early = send(100, tmp.path(), &a, 2);
-        let mut listening = Listening::start(tmp.path(), AgentDelivery::Batch, std::slice::from_ref(&early));
+        let mut listening = Listening::start(tmp.path(), None, AgentDelivery::Batch, std::slice::from_ref(&early));
         assert!(listening.take(AgentDelivery::Batch, Some(&early)).is_empty());
         // Without an earlier send here, the next one carries the latest note so far, even when the
         // newest send was made elsewhere.
         let elsewhere = AgentSend { at_ms: 50, dir: "/elsewhere".into(), ..early.clone() };
-        let mut fresh = Listening::start(tmp.path(), AgentDelivery::Batch, std::slice::from_ref(&elsewhere));
+        let mut fresh = Listening::start(tmp.path(), None, AgentDelivery::Batch, std::slice::from_ref(&elsewhere));
         assert_eq!(numbers(&fresh.take(AgentDelivery::Batch, Some(&early))), ["A #1", "A #2"]);
         // With one here, after it, even when a send elsewhere is newer.
         a.append("## 3 · 14:32\n\nThree.").unwrap();
         let newer_elsewhere = AgentSend { at_ms: 150, ..elsewhere.clone() };
-        let mut back = Listening::start(tmp.path(), AgentDelivery::Batch, &[newer_elsewhere, early.clone()]);
+        let mut back = Listening::start(tmp.path(), None, AgentDelivery::Batch, &[newer_elsewhere, early.clone()]);
         assert_eq!(numbers(&back.take(AgentDelivery::Batch, Some(&send(160, tmp.path(), &a, 3)))), ["A #3"]);
 
         let later = send(200, tmp.path(), &a, 3);
@@ -364,18 +407,63 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let a = note(tmp.path(), 30, "A");
         a.append("## 1 · 14:30\n\nBefore.").unwrap();
-        let mut listening = Listening::start(tmp.path(), AgentDelivery::Each, &[]);
+        let mut listening = Listening::start(tmp.path(), None, AgentDelivery::Each, &[]);
         assert!(listening.take(AgentDelivery::Each, None).is_empty());
         a.append("## 2 · 14:31\n\nAfter.").unwrap();
         assert_eq!(numbers(&listening.take(AgentDelivery::Each, None)), ["A #2"]);
 
         a.append("## 3 · 14:32\n\nWhile away.").unwrap();
-        let resumed = Listening::resume(tmp.path(), &listening.token()).unwrap();
+        let resumed = Listening::resume(tmp.path(), None, &listening.token()).unwrap();
         assert_eq!(resumed, listening);
         assert_eq!(numbers(&listening.take(AgentDelivery::Each, None)), ["A #3"]);
-        let empty = Listening::resume(tmp.path(), &Listening::start(tmp.path(), AgentDelivery::Batch, &[]).token());
+        let empty =
+            Listening::resume(tmp.path(), None, &Listening::start(tmp.path(), None, AgentDelivery::Batch, &[]).token());
         assert!(empty.is_some());
-        assert_eq!(Listening::resume(tmp.path(), "nonsense"), None);
+        assert_eq!(Listening::resume(tmp.path(), None, "nonsense"), None);
+    }
+
+    #[test]
+    fn each_session_gets_the_asides_spoken_to_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = note(tmp.path(), 30, "A");
+        let mut claude = Listening::start(tmp.path(), Some("claude"), AgentDelivery::Each, &[]);
+        let mut codex = Listening::start(tmp.path(), Some("codex"), AgentDelivery::Each, &[]);
+        let to = |entry, session: Option<&str>| Route { entry, session: session.map(Into::into), agent: None };
+        let say = |n: u32, session: Option<&str>| {
+            routes::append(&a.dir, &to(n, session)).unwrap();
+            a.append(&format!("## {n} · 14:3{n}\n\nAside {n}.")).unwrap();
+        };
+        say(1, Some("claude"));
+        say(2, Some("codex"));
+        say(3, None);
+        a.append("![x](images/02-143200.png)").unwrap();
+        // Written before routes existed (or while no session was around): everyone gets it.
+        a.append("## 4 · 14:34\n\nUnrouted.").unwrap();
+        assert_eq!(numbers(&claude.take(AgentDelivery::Each, None)), ["A #1", "A #4"]);
+        assert_eq!(numbers(&codex.take(AgentDelivery::Each, None)), ["A #2", "A #4"]);
+        // An image added to an aside reaches whoever got the aside.
+        a.append("![y](images/04-143500.png)").unwrap();
+        assert_eq!(numbers(&claude.take(AgentDelivery::Each, None)), ["A #4 +![y](images/04-143500.png)"]);
+        say(5, Some("codex"));
+        assert!(claude.take(AgentDelivery::Each, None).is_empty());
+        assert_eq!(numbers(&codex.take(AgentDelivery::Each, None)), ["A #4 +![y](images/04-143500.png)", "A #5"]);
+    }
+
+    #[test]
+    fn a_batch_goes_to_the_session_it_was_sent_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = note(tmp.path(), 30, "A");
+        let mut claude = Listening::start(tmp.path(), Some("claude"), AgentDelivery::Batch, &[]);
+        let mut codex = Listening::start(tmp.path(), Some("codex"), AgentDelivery::Batch, &[]);
+        a.append("## 1 · 14:30\n\nOne.").unwrap();
+        a.append("## 2 · 14:31\n\nTwo.").unwrap();
+        let first = AgentSend { session: Some("claude".into()), ..send(10, tmp.path(), &a, 2) };
+        assert_eq!(numbers(&claude.take(AgentDelivery::Batch, Some(&first))), ["A #1", "A #2"]);
+        assert!(codex.take(AgentDelivery::Batch, Some(&first)).is_empty());
+        a.append("## 3 · 14:32\n\nThree.").unwrap();
+        let second = AgentSend { session: Some("codex".into()), ..send(20, tmp.path(), &a, 3) };
+        assert!(claude.take(AgentDelivery::Batch, Some(&second)).is_empty());
+        assert_eq!(numbers(&codex.take(AgentDelivery::Batch, Some(&second))), ["A #3"], "not the first batch again");
     }
 
     #[test]
@@ -399,7 +487,14 @@ mod tests {
     fn listener_records_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(Listener::read_all(&tmp.path().join("none")).is_empty());
-        let listener = Listener { pid: 42, client: "Codex".into(), dir: "/r".into(), waiting: true, updated_ms: 1 };
+        let listener = Listener {
+            pid: 42,
+            client: "Codex".into(),
+            dir: "/r".into(),
+            waiting: true,
+            updated_ms: 1,
+            ..Default::default()
+        };
         listener.write(tmp.path()).unwrap();
         assert_eq!(Listener::read_all(tmp.path()), [listener]);
         fs::remove_file(Listener::file(tmp.path(), 42)).unwrap();

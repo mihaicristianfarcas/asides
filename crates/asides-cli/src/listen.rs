@@ -2,8 +2,10 @@
 //! command in the background instead of waiting in a tool call (Claude Code's Monitor tool turns
 //! each burst of output into a notification in the chat). The agent stays free between asides.
 //!
-//! Delivery follows `agent_delivery` like `asides mcp` does. With `--timeout` it stops by itself and
-//! prints the command that carries on from there (`--after`), so nothing recorded in between is lost.
+//! It listens as a session (`--session`, which `asides mcp` gives in its instructions), and gets
+//! the asides the user speaks to that session. Delivery follows `agent_delivery` like `asides mcp`
+//! does. With `--timeout` it stops by itself and prints the command that carries on from there
+//! (`--after`), so nothing recorded in between is lost.
 
 use std::fs;
 use std::io::{self, Write};
@@ -15,13 +17,14 @@ use anyhow::{Context, Result};
 use asides_core::agents::{self, Listener, Listening};
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
 use asides_core::paths::{self, tilde};
+use asides_core::sessions;
 use asides_core::state::AppState;
 
-use crate::mcp;
+use crate::{mcp, session};
 
 const POLL: Duration = Duration::from_millis(400);
-/// Checking the app's binding starts a process, so it's checked less often than the notes.
-const CHECK_BINDING: Duration = Duration::from_secs(10);
+/// Checking where the user's asides go starts a process, so it's checked less often than the notes.
+const CHECK_TARGET: Duration = Duration::from_secs(10);
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -29,20 +32,26 @@ extern "C" fn stop(_: libc::c_int) {
     STOP.store(true, Ordering::Relaxed);
 }
 
-pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>) -> Result<()> {
+pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>, id: Option<String>) -> Result<()> {
     // Stopped by the agent (or Ctrl-C): finish the poll, then remove the listener record.
     for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
         unsafe { libc::signal(signal, stop as *const () as libc::sighandler_t) };
     }
     let delivery = || Config::load(&paths::config_path()).unwrap_or_default().agent_delivery;
     let sends = || AppState::read(&paths::state_path()).map(|s| s.agent_sends).unwrap_or_default();
+    let id = id.unwrap_or_else(sessions::new_id);
+    let client = client();
+    let (started_at, made) = session::listen(&dir, &id, &client);
     let mut listening = match &after {
-        Some(token) => Listening::resume(&dir, token).context("--after takes the token `asides listen` printed")?,
-        None => Listening::start(&dir, delivery(), &sends()),
+        Some(token) => {
+            Listening::resume(&dir, Some(&id), token).context("--after takes the token `asides listen` printed")?
+        }
+        None => started_at,
     };
     let record = Listener {
         pid: std::process::id(),
-        client: client(),
+        client,
+        session: id.clone(),
         dir: dir.clone(),
         waiting: true,
         updated_ms: crate::now_ms(),
@@ -66,17 +75,17 @@ pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>) -> Result<
         if timeout.is_some_and(|secs| started.elapsed() >= Duration::from_secs(secs)) {
             let secs = started.elapsed().as_secs();
             let took = if secs < 60 { format!("{secs} s") } else { format!("{} min", (secs + 30) / 60) };
-            let command = command(&dir, timeout, Some(&listening.token()));
+            let command = command(&dir, timeout, Some(&listening.token()), Some(&id));
             say(&format!("Stopped listening after {took}. To keep listening, run:\n\n{command}"));
             break;
         }
         if Instant::now() >= next_check {
-            next_check += CHECK_BINDING;
-            let now = mcp::binding_problem(&dir);
+            next_check += CHECK_TARGET;
+            let now = session::target_problem(&id);
             if now != problem {
                 match &now {
-                    Some(text) => say(&format!("{text} Run `asides` in {} to record asides here.", tilde(&dir))),
-                    None if problem.is_some() => say(&format!("Asides is bound to {} again.", tilde(&dir))),
+                    Some(text) => say(text),
+                    None if problem.is_some() => say("The user's asides come to this session again."),
                     None => {}
                 }
                 problem = now;
@@ -89,6 +98,7 @@ pub fn run(dir: PathBuf, timeout: Option<u64>, after: Option<String>) -> Result<
         std::thread::sleep(POLL);
     }
     let _ = fs::remove_file(Listener::file(&paths::listeners_dir(), std::process::id()));
+    session::leave(&id, made);
     Ok(())
 }
 
@@ -107,18 +117,25 @@ fn client() -> String {
     agents::client_label(&std::env::var("AI_AGENT").unwrap_or_default())
 }
 
-/// The command line for `asides listen` in `dir`: `asides` when that's this program on the PATH,
-/// otherwise its full path.
-pub fn command(dir: &Path, timeout: Option<u64>, after: Option<&str>) -> String {
+/// How agents should run this program: `asides` when that's this program on the PATH, otherwise
+/// its full path.
+pub fn program() -> String {
     let exe = std::env::current_exe().and_then(fs::canonicalize).ok();
     let on_path = std::env::var_os("PATH").is_some_and(|path| {
         std::env::split_paths(&path).any(|d| fs::canonicalize(d.join("asides")).ok().is_some_and(|p| Some(p) == exe))
     });
-    let program = match (&exe, on_path) {
+    match (&exe, on_path) {
         (Some(exe), false) => quote(&exe.to_string_lossy()),
         _ => "asides".into(),
-    };
-    let mut command = format!("{program} -C {} listen", quote(&dir.to_string_lossy()));
+    }
+}
+
+/// The command line for `asides listen` in `dir`, as session `id`.
+pub fn command(dir: &Path, timeout: Option<u64>, after: Option<&str>, id: Option<&str>) -> String {
+    let mut command = format!("{} -C {} listen", program(), quote(&dir.to_string_lossy()));
+    if let Some(id) = id {
+        command.push_str(&format!(" --session {id}"));
+    }
     if let Some(secs) = timeout {
         command.push_str(&format!(" --timeout {secs}"));
     }
@@ -129,7 +146,7 @@ pub fn command(dir: &Path, timeout: Option<u64>, after: Option<&str>) -> String 
 }
 
 /// `text` as one shell word.
-fn quote(text: &str) -> String {
+pub fn quote(text: &str) -> String {
     if !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+@%=:,".contains(c)) {
         text.to_string()
     } else {
@@ -147,5 +164,14 @@ mod tests {
         assert_eq!(quote("/Users/sam/My Repo"), "'/Users/sam/My Repo'");
         assert_eq!(quote("0:2:14:2026-10-16-0800 Sam's note"), r"'0:2:14:2026-10-16-0800 Sam'\''s note'");
         assert_eq!(quote(""), "''");
+    }
+
+    #[test]
+    fn the_command_names_the_session() {
+        let command = command(Path::new("/r/my shop"), Some(1740), Some("1:2:3:n"), Some("a1b2"));
+        assert!(
+            command.ends_with(" -C '/r/my shop' listen --session a1b2 --timeout 1740 --after 1:2:3:n"),
+            "{command}"
+        );
     }
 }

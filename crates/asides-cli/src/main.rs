@@ -1,24 +1,30 @@
 mod listen;
 mod mcp;
 mod measure;
+mod session;
+mod start;
 
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use asides_core::agents::Listener;
 use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
+use asides_core::launch::{self, AgentKind};
 use asides_core::link::Link;
 use asides_core::notes::{self, Note};
 use asides_core::paths::{self, BUNDLE_ID, tilde};
 use asides_core::project;
+use asides_core::sessions::{self, Session};
 use asides_core::state::AppState;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 /// Talk through bugs while you test; Asides appends what you said to a Markdown note in this repo.
 ///
 /// Run `asides` in a repo (or any directory) to bind the menu-bar app to it, then use the
-/// global shortcuts while testing. Notes live in `<repo>/.asides/`.
+/// global shortcuts while testing. Notes live in `<repo>/.asides/`. Run `asides claude` (or
+/// `codex`, `opencode`) to start a coding agent there that acts on each aside.
 #[derive(Parser)]
 #[command(name = "asides", version)]
 struct Cli {
@@ -31,6 +37,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Start Claude Code here, listening for your asides: each one you record goes to it.
+    Claude(StartArgs),
+    /// Start Codex here, listening for your asides: each one you record goes to it.
+    Codex(StartArgs),
+    /// Start OpenCode here, listening for your asides: each one you record goes to it.
+    Opencode(StartArgs),
     /// Bind this directory; the next recording starts a new note, titled TITLE or "Untitled".
     New { title: Vec<String> },
     /// Print the path of the latest note in this directory.
@@ -57,6 +69,9 @@ enum Command {
         /// (default: 25 min for Claude Code, 50 s for other agents).
         #[arg(long, value_name = "SECONDS")]
         timeout: Option<u64>,
+        /// The session this agent is (set by `asides claude` and the like); a new one otherwise.
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
     },
     /// Print your asides as they arrive, for an agent watching this command in the background.
     ///
@@ -69,6 +84,9 @@ enum Command {
         /// Carry on from where an earlier `asides listen` stopped (the token it printed).
         #[arg(long, value_name = "TOKEN")]
         after: Option<String>,
+        /// The session to listen as (`asides mcp` gives it in its instructions).
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
     },
     /// Freeze the screen to measure and annotate it (Measure & Annotate), as the shortcut does.
     Annotate,
@@ -101,6 +119,19 @@ enum Command {
     SimulateMeasure { image: PathBuf, script: PathBuf },
 }
 
+#[derive(Args)]
+struct StartArgs {
+    /// Run in the background, without a terminal (Claude Code); `claude attach` opens it.
+    #[arg(long)]
+    background: bool,
+    /// Work in the repo itself even when another session already does (no git worktree).
+    #[arg(long)]
+    no_worktree: bool,
+    /// Arguments for the agent, e.g. `asides claude --model opus`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "AGENT ARGS")]
+    args: Vec<String>,
+}
+
 fn main() {
     // Rust ignores SIGPIPE, which turns `asides status | head -1` into a panic. Behave like other
     // command-line tools instead: exit quietly when the reader goes away.
@@ -112,13 +143,31 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let start = match &cli.dir {
-        Some(dir) => dir.clone(),
-        None => std::env::current_dir()?,
+    // Inside a session `asides <agent>` started, `asides` means the session's repo, even from the
+    // worktree the agent works in.
+    let session_repo = std::env::var_os(launch::REPO_VAR).map(PathBuf::from).filter(|d| d.is_dir());
+    let start = match (&cli.dir, session_repo) {
+        (Some(dir), _) => dir.clone(),
+        (None, Some(repo)) => repo,
+        (None, None) => std::env::current_dir()?,
     };
     let dir = || project::resolve_bind_dir(&start).with_context(|| format!("cannot use {}", start.display()));
+    let session = |given: Option<String>| -> Result<Option<String>> {
+        let id = given.or_else(|| std::env::var(launch::SESSION_VAR).ok()).filter(|id| !id.is_empty());
+        match id {
+            Some(id) if !sessions::valid_id(&id) => bail!("\"{id}\" isn't a session id"),
+            id => Ok(id),
+        }
+    };
+    let agent = |kind: AgentKind, args: StartArgs| {
+        let options = start::Options { background: args.background, no_worktree: args.no_worktree, args: args.args };
+        start::run(kind, &start, options)
+    };
     match cli.command {
         None => bind(&dir()?, false, None),
+        Some(Command::Claude(args)) => agent(AgentKind::Claude, args),
+        Some(Command::Codex(args)) => agent(AgentKind::Codex, args),
+        Some(Command::Opencode(args)) => agent(AgentKind::OpenCode, args),
         Some(Command::New { title }) => {
             let title = Some(title.join(" ")).filter(|t| !t.trim().is_empty());
             bind(&dir()?, true, title)
@@ -141,8 +190,8 @@ fn run(cli: Cli) -> Result<()> {
             send(&Link::Quit)
         }
         Some(Command::Send) => send_batch(),
-        Some(Command::Mcp { timeout }) => mcp::run(dir()?, timeout),
-        Some(Command::Listen { timeout, after }) => listen::run(dir()?, timeout, after),
+        Some(Command::Mcp { timeout, session: id }) => mcp::run(dir()?, timeout, session(id)?),
+        Some(Command::Listen { timeout, after, session: id }) => listen::run(dir()?, timeout, after, session(id)?),
         Some(Command::Annotate) => {
             if running_state().is_none() {
                 bail!("Asides is not running. Run `asides` in a repo to start it.");
@@ -208,6 +257,10 @@ fn bind(dir: &Path, new_note: bool, title: Option<String>) -> Result<()> {
     };
     println!("Asides ready in {}", tilde(dir));
     println!("  → {target}");
+    match state.target_session.as_deref().and_then(|id| Session::read(&paths::sessions_dir(), id)) {
+        Some(session) => println!("  → your asides go to {}", session.label()),
+        None => println!("  → notes only: `asides claude` (or codex, opencode) starts an agent that gets each aside"),
+    }
     println!(
         "  {} record · {} record into a new note · {} attach clipboard image · {} cancel",
         pretty_shortcut(&config.shortcuts.record),
@@ -263,6 +316,16 @@ fn status(dir: &Path) -> Result<()> {
                 Some(bound) => println!("  bound to {}", tilde(bound)),
                 None => println!("  not bound to a directory"),
             }
+            let live = live_sessions();
+            let listeners = Listener::read_all(&paths::listeners_dir());
+            let labels = sessions::labels(&live);
+            match state.target_session.as_ref().and_then(|id| live.iter().position(|s| &s.id == id)) {
+                Some(i) => println!("  asides go to {}", labels[i]),
+                None => println!("  asides go to notes only"),
+            }
+            for (session, label) in live.iter().zip(&labels) {
+                println!("  session {label}: {}", session.state(&listeners, now_ms()).as_str());
+            }
             if let Some(pending) = &state.pending_new {
                 let title = pending.title.as_deref().map(|t| format!(" \"{t}\"")).unwrap_or_default();
                 println!("  next recording starts a new note{title}");
@@ -295,10 +358,25 @@ fn latest(dir: &Path) -> Result<Note> {
     notes::latest_note(dir).with_context(|| format!("no notes in {} yet", tilde(dir)))
 }
 
+/// The agent sessions that are listening and still running, oldest first.
+pub(crate) fn live_sessions() -> Vec<Session> {
+    let listeners = Listener::read_all(&paths::listeners_dir());
+    let now = now_ms();
+    Session::read_all(&paths::sessions_dir())
+        .into_iter()
+        .filter(|s| s.listening)
+        .filter(|s| if s.pid == 0 { !s.expired(&listeners, now) } else { is_running(s.pid) })
+        .collect()
+}
+
+pub(crate) fn is_running(pid: u32) -> bool {
+    pid != 0 && Process::new("kill").args(["-0", &pid.to_string()]).output().is_ok_and(|o| o.status.success())
+}
+
 /// Hands the link to the app via Launch Services (launching it if needed, without stealing focus).
 /// `ASIDES_APP` names the copy to use, when several are installed: Launch Services picks one by
 /// bundle ID otherwise (the end-to-end test points it at the build under test).
-fn send(link: &Link) -> Result<()> {
+pub(crate) fn send(link: &Link) -> Result<()> {
     let mut open = Process::new("open");
     open.arg("-g");
     match std::env::var_os("ASIDES_APP") {
@@ -315,7 +393,7 @@ fn send(link: &Link) -> Result<()> {
     Ok(())
 }
 
-fn wait_for_ack(request: &str) -> Result<AppState> {
+pub(crate) fn wait_for_ack(request: &str) -> Result<AppState> {
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         if let Some(state) = AppState::read(&paths::state_path())
@@ -329,10 +407,9 @@ fn wait_for_ack(request: &str) -> Result<AppState> {
 }
 
 /// The published state, if the app that wrote it is still alive.
-fn running_state() -> Option<AppState> {
+pub(crate) fn running_state() -> Option<AppState> {
     let state = AppState::read(&paths::state_path())?;
-    let alive = Process::new("kill").args(["-0", &state.pid.to_string()]).output().ok()?.status.success();
-    (state.pid != 0 && alive).then_some(state)
+    is_running(state.pid).then_some(state)
 }
 
 fn check(cmd: &mut Process, what: &str) -> Result<()> {
@@ -343,15 +420,44 @@ fn check(cmd: &mut Process, what: &str) -> Result<()> {
     Ok(())
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-fn request_id() -> String {
+pub(crate) fn request_id() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     format!("{}-{nanos}", std::process::id())
 }
 
 fn entries(n: u32) -> String {
     if n == 1 { "1 entry".into() } else { format!("{n} entries") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn start_args(line: &[&str]) -> (bool, bool, Vec<String>) {
+        match Cli::try_parse_from(line).unwrap().command {
+            Some(Command::Claude(a) | Command::Codex(a) | Command::Opencode(a)) => {
+                (a.background, a.no_worktree, a.args)
+            }
+            _ => panic!("not an agent command"),
+        }
+    }
+
+    #[test]
+    fn agent_commands_pass_the_agents_own_arguments_through() {
+        assert_eq!(start_args(&["asides", "claude"]), (false, false, vec![]));
+        assert_eq!(
+            start_args(&["asides", "claude", "--model", "opus"]),
+            (false, false, vec!["--model".into(), "opus".into()])
+        );
+        assert_eq!(
+            start_args(&["asides", "-C", "/r", "claude", "--background", "--no-worktree", "--effort", "high"]),
+            (true, true, vec!["--effort".into(), "high".into()])
+        );
+        assert_eq!(start_args(&["asides", "codex", "-m", "o3"]).2, ["-m", "o3"]);
+        assert_eq!(start_args(&["asides", "opencode", "--", "--agent", "plan"]).2, ["--agent", "plan"]);
+    }
 }

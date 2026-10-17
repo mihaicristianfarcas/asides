@@ -20,11 +20,12 @@ How asides fits together, for anyone about to change it. User-facing behavior is
             <repo>/.asides/<YYYY-MM-DD-HHMM Title>/notes.md, images/, audio/
       ▲
       │ reads entries; state.json (batch sends), config.toml (delivery mode)
-┌─────────────┐  stdio JSON-RPC   ┌────────────────────────────┐
-│ asides mcp  │ ◀───────────────▶ │ coding agent (Claude Code, │
-│   (CLI)     │                   │ Codex, OpenCode, …)        │
+┌─────────────┐  stdio JSON-RPC   ┌────────────────────────────┐   asides claude|codex|opencode
+│ asides mcp  │ ◀───────────────▶ │ coding agent (Claude Code, │ ◀── (in a terminal the menu's New
+│   (CLI)     │                   │ Codex, OpenCode, …)        │     Agent Session opens, or --bg)
 └─────────────┘                   └────────────────────────────┘
-   writes listeners/<pid>.json, which the app shows in its menu
+   writes sessions/<id>.json and listeners/<pid>.json, which the app shows in its menu;
+   reads routes.jsonl (which session each entry is for), written by the app's worker
 ```
 
 - **The CLI is a remote control.** It works out which directory to bind, then hands the app a link
@@ -37,10 +38,15 @@ How asides fits together, for anyone about to change it. User-facing behavior is
 - **Agents read, the app writes.** `asides mcp` is started by a coding agent, one per agent
   session. It reads notes and the app's published state, and hands new entries to the agent.
   Claude Code also runs `asides listen` in the background, which prints the same deliveries. The
-  app never talks to either directly: it publishes batch sends in `state.json`, and shows the
-  listener records they write. The one thing agents write is what they did with an aside
-  (acknowledged, resolved, dismissed, a reply), appended to `threads.jsonl` beside the note; the
-  app watches it and shows it.
+  app never talks to either directly: it publishes batch sends and the target in `state.json`, and
+  shows the session and listener records they write. The one thing agents write is what they did
+  with an aside (acknowledged, resolved, dismissed, a reply), appended to `threads.jsonl` beside the
+  note; the app watches it and shows it.
+- **Each aside goes to one session.** Every agent listening is a session (`sessions.rs`); the app
+  sends the user's asides to one of them, the target, and binds to its repo. Its worker writes each
+  entry's session in `routes.jsonl` before the entry, and each `asides mcp`/`asides listen` hands
+  its agent only its own. `asides claude` (and the menu's New Agent Session, which runs it in a
+  terminal) starts an agent already listening, with the MCP server on the agent's command line.
 - **Measure & Annotate is an overlay on frozen screens, in its own process.** The shortcut captures
   every display (ScreenCaptureKit), and the app starts `asides-overlay`, which shows the screenshots
   in borderless GPUI windows above everything. GPUI runs its own event loop, so it can't share the
@@ -59,8 +65,11 @@ crates/
     markdown.rs       entry composition: segments → paragraphs, image placement by timestamp
     project.rs        bind rules (git root or the current directory), git facts, .git/info/exclude
     link.rs           asides:// link format (the CLI → app protocol)
-    state.rs          state.json (the app → CLI protocol), recent directories, batch sends
+    state.rs          state.json (the app → CLI protocol), recent directories, batch sends, the target
     agents.rs         what a listening agent has seen and what's new (Cursor, Listening), listener records
+    sessions.rs       agent sessions (sessions/<id>.json): records, labels, what each is doing
+    routes.rs         routes.jsonl: which session each entry was spoken to
+    launch.rs         starting an agent: Claude Code, Codex, OpenCode command lines with the MCP server; the listen prompt
     threads.rs        threads.jsonl: what agents (and the user) did with each aside; aside ids (3, 3.2)
     measure.rs        PixelSnap-style measuring on a frame: distances to edges, snapping areas and guides, objects, colors
     inspect.rs        a Measure & Annotate result (measurements, guides, marks, drawings, elements) and its Markdown
@@ -76,6 +85,9 @@ crates/
     paths.rs          bundle ID, URL scheme, Application Support paths, tilde()
   asides-cli/      shipped inside the bundle as Asides.app/Contents/Helpers/asides
     main.rs           clap subcommands, `open -g -b <bundle id> <link>`, waits for the app to acknowledge
+    start.rs          `asides claude|codex|opencode`: a session record, a worktree when another session
+                      works in the repo, then `exec` of the agent (or `claude --bg`)
+    session.rs        the session `asides mcp`/`asides listen` deliver to: its record, listening, the target
     mcp.rs            `asides mcp`: the MCP server (waiting, reading, the feedback loop, measure_image; prompts)
     listen.rs         `asides listen`: deliveries on stdout, for agents watching it in the background
     measure.rs        `asides measure` and measure_image: PNG decoding and the measurement as text
@@ -97,8 +109,9 @@ crates/
     icons.rs          SF Symbols rendered to RGBA for tray-icon
     hotkeys.rs        global shortcuts (Carbon hot keys); Esc registered only while recording
     audio.rs          cpal microphone capture → mono f32 at the device rate
-    worker.rs         Job queue: transcription, note creation, images, audio, Wispr Flow dictations, append
-    watch.rs          polling threads: Wispr Flow's history, the agents listening, the latest note's threads
+    worker.rs         Job queue: transcription, note creation, images, audio, Wispr Flow dictations, routes, append
+    watch.rs          polling threads: Wispr Flow's history, agent sessions and listeners, the latest note's threads
+    terminal.rs       New Agent Session: a .command script for the terminal app, the login shell (PATH, agents)
     capture.rs        ScreenCaptureKit screenshots (sRGB) → frames; the Screen Recording permission; displays
     overlay.rs        starts asides-overlay with a session directory, relays its messages, reads its result
     elements.rs       what's under a mark: the window list, and the accessibility tree (AXUIElement)
@@ -129,7 +142,9 @@ Casks/asides.rb       the Homebrew cask; the repository doubles as a tap
 | Model download (one per model) | the `.part` file | `UserEvent::Model(id, ModelState)`, plus a `Condvar` for the worker |
 | Config watcher | polls `config.toml`'s modification time every 2 s | `UserEvent::ConfigFileChanged` |
 | Wispr Flow watcher (while on) | a `wispr::History`; queries only after `flow.sqlite` changes | `UserEvent::Wispr` |
-| Listeners watcher | reads `listeners/` every 2 s, removes records of dead processes | `UserEvent::Listeners` |
+| Sessions watcher | reads `listeners/` and `sessions/` every 2 s, removes records of ended processes | `UserEvent::Sessions` |
+| Agent finder (once, at launch) | asks the login shell which agents are installed | `UserEvent::Agents` |
+| Background launch (per launch) | runs `asides claude --background` in the login shell | `UserEvent::Launched` |
 | Threads watcher | checks the bound directory's latest `threads.jsonl` every second | `UserEvent::Threads` |
 | ScreenCaptureKit queues | turn each display's screenshot into a frame | `UserEvent::Captured` |
 | Overlay reader (while it's open) | reads `asides-overlay`'s standard output | `UserEvent::Overlay` |
@@ -235,35 +250,58 @@ checks `wispr_flow_apps` and the binding, consumes a pending "new note" request 
 would, and submits a `Job::Dictation`. The worker appends `## N · HH:MM · Wispr Flow` and the text,
 as Wispr Flow typed it.
 
-### Agents (`asides mcp`, `asides listen`)
+### Agent sessions (`asides claude`, `asides mcp`, `asides listen`)
 
-1. The agent starts `asides mcp` in its working directory, which resolves to the repo like
-   `asides` does. When the user asks it to listen, the `listen` prompt tells Claude Code to run
-   `asides listen` with its Monitor tool, and other agents to call `wait_for_asides` in a loop.
-2. Listening starts with the first wait (or with `asides listen`), as an `agents::Listening`:
+1. **A session starts** one of two ways:
+   - `asides claude` (or `codex`, `opencode`; the menu's New Agent Session runs it in a terminal
+     through a `.command` script, or in the login shell with `--background`) resolves the repo,
+     writes `sessions/<id>.json` (listening, with where its asides start: a `Listening` token),
+     sends `asides://session?id=…` so the app makes it the target, and `exec`s the agent: from then
+     on the record's process is the agent. The agent's command line (`launch.rs`) carries the MCP
+     server (`asides -C <repo> mcp --session <id>`; Claude Code's `--mcp-config`, Codex's `-c
+     mcp_servers.asides.*`, OpenCode's `OPENCODE_CONFIG_CONTENT` with `--standalone`), the listen
+     prompt as its first message, and for Claude Code its asides tools pre-approved. When another
+     session is alive in the repo, the new one works in a git worktree: Claude Code and Codex make
+     it (`--worktree`); for OpenCode, `start.rs` makes it in `.asides/worktrees/` and removes it at a
+     later start if nothing was done in it.
+   - An agent the user started connects to `asides mcp`, which writes a record that isn't
+     listening yet (and removes it when the agent hangs up). When the user asks it to listen (the
+     `listen` prompt, its first `wait_for_asides`, or `asides listen --session <id>`, the command
+     its instructions give), it's marked listening and sends the same link.
+2. **The target.** The app reads both directories (`watch::sessions`). A session it hasn't seen
+   before becomes the target, which binds the app to its repo; the menu lists the sessions under
+   Asides Go To with Notes Only, and `⌃⌥Tab` (registered while there are sessions) cycles through
+   them. When the target ends, the newest other session in its repo takes over, or Notes Only.
+   `asides` (bind) and the Directory menu pick the newest session in the directory they bind.
+3. **Routes.** A recording (or dictation, or Screen entry) takes the target when it starts. The
+   worker appends `{entry, session, agent}` to `routes.jsonl`, then the entry: an agent that sees the
+   entry sees its route too. With no session in the repo nothing is written (entries without a
+   route reach every listener there); Notes Only writes a route with no session.
+4. **Listening** (`agents::Listening`, as its session): it starts where the launch recorded, or at
+   the first wait:
    - `each`: the cursor starts at the end of the notes; only entries written from then on are new.
    - `batch`: the cursor starts after the last Send to Agent in this directory (or at the start of
      the latest note), so the next batch includes asides recorded before the agent listened.
    - Sends made before listening started are ignored: the user chose them with nobody listening.
-3. If the app isn't running or is bound elsewhere, `wait_for_asides` returns at once and says so;
-   the agent then calls `bind_asides`, which binds the app like `asides` does. Otherwise the server
-   writes `listeners/<pid>.json` (`waiting: true` during a wait). `asides listen` writes its own,
-   always waiting, and prints a notice instead.
-4. Both poll every 400 ms, reading `config.toml` for `agent_delivery`:
-   - `each`: any entry after the cursor, plus text added to the last delivered entry (an image
-     attached after it).
+5. Both poll every 400 ms, reading `config.toml` for `agent_delivery`:
+   - `each`: any entry after the cursor routed to this session (or to nobody in particular), plus
+     text added to it later (an image attached after it). The cursor moves past other sessions'
+     entries.
    - `batch`: only once the newest of `state.json`'s `agent_sends` is newer than the last one acted
-     on and names this directory; then the entries up to its note and entry number. The app
-     publishes a send after Send to Agent, once queued recordings are transcribed, and only when an
-     agent is listening there; otherwise it says no agent is listening and sends nothing.
-5. The server returns the entries (text with absolute links, then the screenshots as images) and
+     on and names this directory; then the entries up to its note and entry number, when the send
+     names this session (the target when the user sent it). Otherwise the cursor moves past them.
+     The app publishes a send after Send to Agent, once queued recordings are transcribed, and only
+     to a target session; otherwise it says no agent is listening and sends nothing.
+6. The server returns the entries (text with absolute links, then the screenshots as images) and
    moves the cursor past them. With nothing new by the deadline (50 s, or 25 min for Claude Code,
-   whose tool calls may last longer), it says so and the agent calls again. Progress notifications
-   every 20 s keep the call alive in clients that time out idle calls. `asides listen` prints each
-   delivery as one block; with `--timeout` it stops and prints the command that carries on, its
-   position in an `--after` token.
-6. When the agent hangs up (stdin closes), or `asides listen` is stopped, the listener record is
-   removed.
+   whose tool calls may last longer; launched Codex sessions wait 50 min, with the tool timeout
+   raised to match), it says so, and why asides may not be coming (another session is the target,
+   Notes Only), and the agent calls again. Progress notifications every 20 s keep the call alive in
+   clients that time out idle calls. `asides listen` prints each delivery as one block; with
+   `--timeout` it stops and prints the command that carries on, its position in an `--after` token.
+7. When the agent hangs up (stdin closes), or `asides listen` is stopped, the listener record is
+   removed, and the session record when that process made it. Records of processes that died are
+   removed by the app.
 
 ## Invariants
 
@@ -276,8 +314,9 @@ Break these only on purpose, and update this document when you do.
 3. **Only the worker writes note files** (`notes.md`, images, audio), one job at a time, in the
    order submitted. That keeps entries ordered and numbered correctly even when recordings queue up,
    and holds for entries from Measure & Annotate too (the overlay writes only to its session
-   directory). The exception is `threads.jsonl`, which `asides mcp` appends to directly: one event
-   per `write`, append-only, never rewritten.
+   directory). `routes.jsonl` is the worker's too, written just before each entry. The exception is
+   `threads.jsonl`, which `asides mcp` appends to directly: one event per `write`, append-only,
+   never rewritten.
 4. **Notes are append-only.** Entries are added with a single append; existing content is never
    rewritten. Editors and agents can keep the file open, and users can edit notes freely.
 5. **Metadata is written once,** when a note is created. Entries carry only `## N · HH:MM`, plus
@@ -287,7 +326,8 @@ Break these only on purpose, and update this document when you do.
    are Wispr Flow's text as it typed it, marked with their source, and not changed either.
 7. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together. New
    `state.json` and `config.toml` fields need serde defaults, so files written by older versions
-   still load. `asides mcp` uses the same files, plus the listener records in `agents.rs`.
+   still load. `asides mcp` uses the same files, plus the listener records in `agents.rs` and the
+   session records in `sessions.rs` (also with serde defaults).
 8. **The app is launched by Launch Services, never as a child of a terminal.** Otherwise macOS
    attributes the microphone permission to the terminal, and the app dies with the terminal.
 9. **Binary names must differ by more than letter case.** On case-insensitive APFS,
@@ -302,10 +342,10 @@ Break these only on purpose, and update this document when you do.
     users must trust, so discuss it first.
 12. **`asides mcp` writes nothing to stdout but JSON-RPC.** Anything else breaks the agent's
     connection. `asides listen` writes only deliveries and notices: each burst of output is a
-    notification in the agent's chat. Neither writes notes. `bind_asides` is the only tool that
-    affects the app, and the feedback-loop tools only append to `threads.jsonl`. Every other tool
-    stays read-only (and marked so), because agents like Codex ask before every call to a tool
-    that isn't.
+    notification in the agent's chat. Neither writes notes. Listening (the first wait) makes the
+    agent's session the target, since the user asked it to listen; nothing else an agent does
+    changes the app. The feedback-loop tools only append to `threads.jsonl`. Every other tool stays
+    read-only (and marked so), because agents like Codex ask before every call to a tool that isn't.
 13. **The overlay needs no permission of its own.** Screenshots (Screen Recording) and naming
     elements (Accessibility) stay in the app, which hands the overlay pixels and answers `identify`.
     Its standard output carries only protocol lines (`helper::Event`); diagnostics go to standard
@@ -316,6 +356,9 @@ Break these only on purpose, and update this document when you do.
 15. **The overlay's UI is GPUI.** New on-screen UI for Measure & Annotate is built with GPUI in
     `asides-overlay`. The exported images are drawn with AppKit only because GPUI can't render
     offscreen; they follow `style.rs`.
+16. **Each aside goes to one session.** Routes are written before their entry, and a listener moves
+    past what isn't its own, so two agents never act on the same aside. Notes are written whatever
+    the target; a session only decides who gets the prompt.
 
 ## Persistent state
 
@@ -326,7 +369,11 @@ Break these only on purpose, and update this document when you do.
 | `~/Library/Application Support/Asides/state.json` | app | binding, pending new note, status, recent directories, last acknowledged request, last Send to Agent, whether the user declined the command link |
 | `/usr/local/bin/asides` | app | for a copy installed by hand: a link to the CLI in the bundle, made on first launch |
 | `~/Library/Application Support/Asides/models/` | download thread | `.part` while downloading, renamed after the SHA-256 check |
-| `~/Library/Application Support/Asides/listeners/<pid>.json` | `asides mcp`, `asides listen` | one per agent session listening; stale ones removed by the app |
+| `~/Library/Application Support/Asides/listeners/<pid>.json` | `asides mcp`, `asides listen` | one per process listening, naming its session; stale ones removed by the app |
+| `~/Library/Application Support/Asides/sessions/<id>.json` | `asides <agent>`, `asides mcp`, `asides listen` | one per agent session (listening or not yet); removed when it ends, or by the app once its process is gone |
+| `<dir>/.asides/<note>/routes.jsonl` | worker | which session each entry was spoken to; one JSON line per entry, append-only |
+| `<dir>/.asides/worktrees/<name>/` | `asides opencode` | a git worktree for a second OpenCode session in the repo; removed at a later start if nothing was done in it |
+| `$TMPDIR/asides-sessions/*.command` | app | New Agent Session's (and Show's) script for the terminal; deletes itself when it runs |
 | `<dir>/.asides/<note>/threads.jsonl` | `asides mcp` | what happened to each aside since; one JSON event per line, append-only |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, `asides-overlay` | a Measure & Annotate session: the screens' pixels, `session.json`, `result.json`, images; removed when the overlay exits |
 | `~/Library/Application Support/Wispr Flow/flow.sqlite` | Wispr Flow | read-only, only with `wispr_flow` on. Dev-hooks builds read `Asides/test-wispr-flow.sqlite` instead when it exists (end-to-end test) |
@@ -361,6 +408,25 @@ Break these only on purpose, and update this document when you do.
   DOM, component names) and PixelSnap hands off to CleanShot and design apps. Asides keeps what
   works on any app: measuring pixels, marking elements found through accessibility, drawing,
   screenshots, and the agent's feedback loop through MCP.
+- **Sessions and one target.** The user talks to one agent at a time, so each aside goes to one
+  session, picked in the menu or with `⌃⌥Tab`, and a new session (just started, or just asked to
+  listen) becomes it: no binding step, no bind tool. Broadcasting to every agent in a repo had two
+  agents in one repo act on the same request.
+- **Routes in a sidecar, written before the entry.** The note stays a plain record of what was said
+  (invariant 5), and an agent polling it can't see an entry before its route.
+- **Agents started with their own command lines.** Each agent can take an MCP server on its command
+  line (Claude Code's `--mcp-config` overrides a user-scope server of the same name; Codex's `-c`;
+  OpenCode's inline config, read by a `--standalone` server since OpenCode 2's shared service
+  wouldn't see it), so `asides claude` needs no `mcp add` and ties the server to its session. `exec`
+  keeps the agent in charge of the terminal (Ctrl-Z, signals, exit code).
+- **Terminals through scripts, without Automation.** Terminal and iTerm run a `.command` script
+  they're asked to open (`open -a`). Ghostty asks before running a script it's asked to open, so
+  it's started as a process of its own (`open -na`) with the script as `--initial-command`, quitting
+  when that window closes. The script runs the command in the user's login shell (their PATH).
+  AppleScript would reuse a terminal's window, but needs the Automation permission.
+- **A worktree for a second session in a repo.** Two agents editing one working tree collide.
+  Claude Code and Codex manage their own worktrees (and offer to clean them up); OpenCode can't, so
+  asides makes one inside `.asides/`, which git already ignores locally.
 - **Threads in a sidecar, append-only.** Agentation keeps annotation status and replies in its
   server's store. Asides keeps notes append-only and readable by anyone, so status and replies
   go in `threads.jsonl` next to `notes.md`. Several agent sessions write to it with single appends,
