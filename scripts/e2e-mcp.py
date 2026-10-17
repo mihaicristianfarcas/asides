@@ -340,7 +340,9 @@ sleep "${{FAKE_SLEEP:-0}}"
 """)
     os.chmod(os.path.join(fakes, name), 0o755)
 # Codex also has a daemon, reached through `codex app-server proxy` (JSON-RPC over WebSocket), and
-# `codex queue`: the fake records the requests and the queued messages.
+# `codex queue`: the fake records the requests and the queued messages. Its first thread is busy
+# (asides are queued for it); the second isn't loaded until asides loads it again, then idle (asides
+# start turns in it).
 with open(os.path.join(fakes, "codex"), "w") as f:
     f.write(f"""#!/usr/bin/python3 -I
 import json, os, struct, sys, time
@@ -374,13 +376,23 @@ elif args[:2] == ["app-server", "proxy"]:
         method = message.get("method")
         if "id" not in message:
             continue
+        reply = {{"jsonrpc": "2.0", "id": message["id"], "result": {{}}}}
         if method == "thread/start":
             count = sum(1 for _ in open(os.path.join(fakes, "codex-daemon.jsonl"))
                         if '"thread/start"' in _)
-            result = {{"thread": {{"id": f"fake-thread-{{count}}"}}}}
-        else:
-            result = {{}}
-        data = json.dumps({{"jsonrpc": "2.0", "id": message["id"], "result": result}}).encode()
+            reply["result"] = {{"thread": {{"id": f"fake-thread-{{count}}"}}}}
+        elif method == "thread/read":
+            thread = message["params"]["threadId"]
+            resumed = any(m.get("method") == "thread/resume" and m["params"]["threadId"] == thread
+                          for m in map(json.loads, open(os.path.join(fakes, "codex-daemon.jsonl"))))
+            if thread == "fake-thread-1":
+                reply["result"] = {{"thread": {{"status": {{"type": "active", "activeFlags": []}}}}}}
+            elif resumed:
+                reply["result"] = {{"thread": {{"status": {{"type": "idle"}}}}}}
+            else:
+                reply = {{"jsonrpc": "2.0", "id": message["id"],
+                          "error": {{"code": -32600, "message": f"thread not loaded: {{thread}}"}}}}
+        data = json.dumps(reply).encode()
         out.write(bytes([0x81]) + (bytes([len(data)]) if len(data) < 126 else bytes([126]) + struct.pack(">H", len(data))) + data)
         out.flush()
 elif args[:1] == ["queue"]:
@@ -512,7 +524,7 @@ wait_for_entries(before + 1)
 time.sleep(2.5)  # the app reads the session records every 2 s
 sent = subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True).stdout
 check("in batch mode, Send to Agent sends the batch to the Codex session", sent.startswith("Sent"), sent)
-wait_until("the batch is pushed into the thread (codex queue)",
+wait_until("the batch is queued for the busy thread (codex queue)",
            lambda: any(q["thread"] == "fake-thread-1" and "padding on the summary card" in q["message"] for q in queued()), 120)
 check("as a message that says how to resolve it", "resolve_aside" in queued()[-1]["message"])
 codex.terminate()
@@ -535,8 +547,12 @@ simulate("ro_bug.wav")
 wait_for_entries(before + 1)
 time.sleep(2.5)
 subprocess.run([cli, "-C", repo, "send"], capture_output=True, text=True)
-wait_until("asides reach the thread with no Codex window open",
-           lambda: any(q["thread"] == "fake-thread-2" and "Butonul" in q["message"] for q in queued()), 120)
+wait_until("asides reach the thread with no Codex window open, as a turn",
+           lambda: any(t["threadId"] == "fake-thread-2" and "Butonul" in t["input"][0]["text"]
+                       for t in daemon_calls("turn/start")), 120)
+resumed = [r for r in daemon_calls("thread/resume") if r["threadId"] == "fake-thread-2"]
+check("the daemon had let the thread go: it's loaded again with the session's MCP server",
+      resumed and resumed[0]["config"]["mcp_servers"]["asides"]["args"][-1] == record["id"], resumed)
 os.kill(record["pid"], 15)  # Stop, from the menu
 wait_until("stopping it ends the session", lambda: f"asides go to Claude Code · {repo_name}" in status(), 15)
 

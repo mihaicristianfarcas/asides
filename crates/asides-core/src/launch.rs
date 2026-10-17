@@ -62,7 +62,7 @@ impl AgentKind {
         self == AgentKind::Claude
     }
 
-    /// Asides can hand Codex and OpenCode each aside as a message (`codex queue`, a prompt to
+    /// Asides can hand Codex and OpenCode each aside as a message (a turn in Codex's daemon, a prompt to
     /// OpenCode's service), so they don't have to wait for them in a tool call. Both run sessions
     /// in a background process of their own, so these can also run with no window open, as Claude
     /// Code's can (`claude --bg`).

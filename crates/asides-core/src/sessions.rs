@@ -40,7 +40,7 @@ pub struct Session {
     pub background: Option<String>,
     /// The Codex thread it runs in, which `codex resume` takes.
     pub thread: Option<String>,
-    /// Asides sends its asides to the agent as messages (`codex queue`): the agent doesn't wait
+    /// Asides sends its asides to the agent as messages (a Codex turn, an OpenCode prompt): the agent doesn't wait
     /// for them in a tool call.
     pub pushed: bool,
     /// The agent listens for asides (it was launched to, or asked to).
@@ -60,6 +60,8 @@ pub enum SessionState {
     Listening,
     /// Working on the last ones it got.
     Working,
+    /// Asides can't hand it its asides (they're kept until they get through).
+    Unreachable,
 }
 
 impl SessionState {
@@ -68,6 +70,7 @@ impl SessionState {
             SessionState::Starting => "starting",
             SessionState::Listening => "listening",
             SessionState::Working => "working",
+            SessionState::Unreachable => "not getting asides",
         }
     }
 }
@@ -123,7 +126,9 @@ impl Session {
     /// What it's doing, from the listener records of the processes delivering to it.
     pub fn state(&self, listeners: &[Listener], now_ms: u64) -> SessionState {
         let mine: Vec<&Listener> = listeners.iter().filter(|l| l.session == self.id).collect();
-        if mine.iter().any(|l| l.waiting) {
+        if mine.iter().any(|l| l.problem.is_some()) {
+            SessionState::Unreachable
+        } else if mine.iter().any(|l| l.waiting) {
             SessionState::Listening
         } else if mine.is_empty() && now_ms.saturating_sub(self.started_ms) < STARTING_MS {
             SessionState::Starting
@@ -220,6 +225,8 @@ mod tests {
         assert_eq!(s.state(&[], 1_000 + STARTING_MS), SessionState::Working);
         assert_eq!(s.state(&[listener("s1", true)], 2_000), SessionState::Listening);
         assert_eq!(s.state(&[listener("s1", false), listener("other", true)], 2_000), SessionState::Working);
+        let failing = Listener { problem: Some("codex queue failed".into()), ..listener("s1", true) };
+        assert_eq!(s.state(&[failing], 2_000), SessionState::Unreachable);
         assert!(!s.expired(&[], 2_000));
         assert!(s.expired(&[], 1_000 + UNKNOWN_PID_MS));
         assert!(!s.expired(&[listener("s1", false)], 1_000 + UNKNOWN_PID_MS));

@@ -1578,7 +1578,18 @@ impl App {
     /// asked its agent to listen), and when the target ends, the newest other session in its repo
     /// takes over, or the notes only.
     fn on_sessions(&mut self, listeners: Vec<Listener>, all: Vec<Session>) {
+        // A session whose asides stopped getting through: said once, when it starts.
+        let stuck = listeners
+            .iter()
+            .filter_map(|l| Some((l, l.problem.as_ref()?)))
+            .find(|(l, problem)| {
+                !self.listeners.iter().any(|old| old.pid == l.pid && old.problem.as_ref() == Some(problem))
+            })
+            .map(|(l, problem)| format!("{} isn't getting your asides (kept until it does): {problem}", l.client));
         self.listeners = listeners;
+        if let Some(message) = stuck {
+            self.fail(message);
+        }
         let live: Vec<Session> = all.into_iter().filter(|s| s.listening).collect();
         let first = !std::mem::replace(&mut self.sessions_seen, true);
         let newest = live.iter().rev().find(|s| !self.known_sessions.contains(&s.id)).map(|s| s.id.clone());
@@ -1891,9 +1902,7 @@ impl App {
             let target = self.target_session().map(|s| (s.agent.clone(), s.state(&self.listeners, now_ms())));
             let status = match (&error_text, target) {
                 (Some(message), _) => format!("⚠ {message}"),
-                (None, Some((agent, SessionState::Listening))) => format!("Ready · {dir} → {agent}, listening"),
-                (None, Some((agent, SessionState::Starting))) => format!("Ready · {dir} → {agent}, starting"),
-                (None, Some((agent, SessionState::Working))) => format!("Ready · {dir} → {agent}, working"),
+                (None, Some((agent, state))) => format!("Ready · {dir} → {agent}, {}", state.as_str()),
                 (None, None) if !self.sessions.is_empty() => format!("Ready · {dir} · notes only"),
                 (None, None) => format!("Ready · {dir}"),
             };

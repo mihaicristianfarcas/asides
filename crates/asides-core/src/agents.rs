@@ -266,6 +266,8 @@ pub struct Listener {
     /// Waiting for asides right now; otherwise working on the last ones it got.
     pub waiting: bool,
     pub updated_ms: u64,
+    /// Why the agent isn't getting its asides (a push that keeps failing), until one gets through.
+    pub problem: Option<String>,
 }
 
 impl Listener {

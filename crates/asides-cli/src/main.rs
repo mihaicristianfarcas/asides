@@ -206,9 +206,15 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Send) => send_batch(),
         Some(Command::Mcp { timeout, session: id }) => mcp::run(dir()?, timeout, session(id)?),
         Some(Command::Listen { timeout, after, session: id, codex_thread, opencode_session, while_pid }) => {
-            let to = codex_thread.map(listen::PushTo::Codex).or(opencode_session.map(listen::PushTo::OpenCode));
-            let push = to.map(|to| listen::Push { to, while_pid });
-            listen::run(dir()?, timeout, after, session(id)?, push)
+            let (dir, id) = (dir()?, session(id)?);
+            let codex = codex_thread.map(|thread| {
+                // Loaded again after the daemon restarts, the thread gets its asides server back.
+                let config = launch::codex_thread_config(&listen::program(), &dir, id.as_deref().unwrap_or_default());
+                listen::PushTo::Codex(thread, config)
+            });
+            let push =
+                codex.or(opencode_session.map(listen::PushTo::OpenCode)).map(|to| listen::Push { to, while_pid });
+            listen::run(dir, timeout, after, id, push)
         }
         Some(Command::Annotate) => {
             if running_state().is_none() {

@@ -402,6 +402,7 @@ impl Server {
             dir: session.dir.clone(),
             waiting: session.waits > 0,
             updated_ms: crate::now_ms(),
+            problem: None,
         };
         let _ = listener.write(&paths::listeners_dir());
     }

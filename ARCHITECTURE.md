@@ -92,7 +92,7 @@ crates/
                       works in the repo, then `exec` of the agent (or `claude --bg`, or a Codex
                       thread or OpenCode session it pushes into)
     codex.rs          Codex sessions: a thread in its app-server daemon (WebSocket JSON-RPC through
-                      `codex app-server proxy`), and `codex queue` to push each aside into it
+                      `codex app-server proxy`); each aside a turn there (or `codex queue` while busy)
     opencode.rs       OpenCode sessions: a session in its background service (HTTP on localhost), its
                       MCP server for that directory, and a prompt per aside
     session.rs        the session `asides mcp`/`asides listen` deliver to: its record, listening, the target
@@ -322,8 +322,12 @@ as Wispr Flow typed it.
    - `asides codex` starts the session as a thread in Codex's app-server daemon instead
      (`codex.rs`: `thread/start` with the MCP server in its config, `thread/name/set`, the first
      prompt with `turn/start`), and a process of `asides listen --codex-thread` that pushes each
-     delivery into it with `codex queue` (the session is `pushed`: `wait_for_asides` returns at
-     once). In a terminal, the agent `exec`d is `codex resume <thread>`, and the pusher stops with
+     delivery into it (the session is `pushed`: `wait_for_asides` returns at once): a `turn/start`
+     with the screenshots attached when the thread is idle (loaded again with its MCP server, with
+     `thread/resume`, when the daemon has let it go), `codex queue` when it's busy (which takes no
+     images: the text names them). A push that fails is retried, less and less often, and the
+     pusher's listener record says why (`problem`), which the menu shows (`not getting asides`).
+     In a terminal, the agent `exec`d is `codex resume <thread>`, and the pusher stops with
      it; in the background, the pusher is the session's process, and Stop ends it. Without the
      daemon, Codex waits in `wait_for_asides` like other agents.
    - `asides opencode` (OpenCode 2) does the same in OpenCode's background service (`opencode.rs`,
@@ -527,8 +531,9 @@ Break these only on purpose, and update this document when you do.
   asides passes it `worktree.baseRef = "head"` with `--settings`, for that session only.
 - **Codex pushed, not polled.** In `wait_for_asides`, Codex is busy in a tool call that times out
   every 50 minutes, and you can't type to it. Its daemon runs threads whether or not a window has
-  them open, and `codex queue` adds a message to one, so asides starts the thread there and pushes
-  each aside: Codex is idle between asides, in a window or in the background. OpenCode 2 has the
+  them open, and a client can start a turn in one (a window that has it open shows it), or queue a
+  message for after the turn in progress (`codex queue`), so asides starts the thread there and
+  pushes each aside: Codex is idle between asides, in a window or in the background. OpenCode 2 has the
   same shape: its TUI is a client of a background service that runs the sessions, so asides talks
   to that service as the TUI does. (`opencode run` would be simpler, but OpenCode's free models
   refuse it; they answer the service.) The service runs MCP servers per directory, not per session,

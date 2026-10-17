@@ -1,8 +1,10 @@
 //! Codex sessions asides pushes asides into. The session is a thread in Codex's app-server daemon,
-//! which runs it whether or not a Codex window has it open; `codex queue` hands it each aside as a
+//! which runs it whether or not a Codex window has it open; asides hands it each aside as a
 //! message, so Codex never waits in a tool call. The thread is started through the daemon's
 //! protocol (JSON-RPC over WebSocket, on the socket `codex app-server proxy` connects stdio to):
-//! `thread/start` with the session's MCP server, `thread/name/set`, and the first prompt.
+//! `thread/start` with the session's MCP server, `thread/name/set`, and the first prompt. Each aside
+//! is a turn started the same way when Codex is idle (its screenshots attached), or queued with
+//! `codex queue` while it's busy.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -53,18 +55,60 @@ fn talk_to_daemon(new: &NewThread) -> Result<String> {
     Ok(thread)
 }
 
-/// Hands `thread` a message, with screenshots: Codex runs it as its next turn.
-pub fn queue(thread: &str, text: &str, images: &[PathBuf]) -> Result<()> {
-    let mut command = Command::new("codex");
-    command.args(["queue", "--thread", thread, "--message", text]);
-    for image in images.iter().filter(|i| i.is_file()).take(MAX_IMAGES) {
-        command.arg("--image").arg(image);
+/// Hands `thread` an aside. Idle, Codex starts on it at once with its screenshots attached (a turn
+/// started through the daemon, which a window that has the thread open shows too); busy, it's
+/// queued for after the turn in progress (`codex queue`, which takes no images, so the text says
+/// where they are). A thread the daemon has let go of (no window has it open) is loaded again
+/// first, with `config`: its asides MCP server.
+pub fn push(thread: &str, text: &str, images: &[PathBuf], config: &Value) -> Result<()> {
+    let previous = unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+    let pushed = push_to_daemon(thread, text, images, config);
+    unsafe { libc::signal(libc::SIGPIPE, previous) };
+    pushed
+}
+
+fn push_to_daemon(thread: &str, text: &str, images: &[PathBuf], config: &Value) -> Result<()> {
+    let images: Vec<&PathBuf> = images.iter().filter(|i| i.is_file()).take(MAX_IMAGES).collect();
+    let mut daemon = Daemon::connect()?;
+    daemon.call("initialize", json!({ "clientInfo": { "name": "asides", "version": env!("CARGO_PKG_VERSION") } }))?;
+    daemon.notify("initialized")?;
+    // The daemon lets a thread go once no client has it open (and asks for it to be loaded again).
+    let status = match daemon.call("thread/read", json!({ "threadId": thread })) {
+        Ok(read) => read.pointer("/thread/status/type").and_then(Value::as_str).unwrap_or_default().to_string(),
+        Err(err) if format!("{err:#}").contains("not loaded") => "notLoaded".into(),
+        Err(err) => return Err(err),
+    };
+    match status.as_str() {
+        "active" => return queue(thread, &with_image_paths(text, &images)),
+        "notLoaded" => drop(daemon.call("thread/resume", json!({ "threadId": thread, "config": config }))?),
+        _ => {}
     }
-    let out = command.stdin(Stdio::null()).output().context("could not run codex")?;
+    let mut input = vec![json!({ "type": "text", "text": text })];
+    input.extend(images.iter().map(|path| json!({ "type": "localImage", "path": path })));
+    daemon.call("turn/start", json!({ "threadId": thread, "input": input }))?;
+    Ok(())
+}
+
+/// Queues a message for `thread`'s next turn.
+fn queue(thread: &str, text: &str) -> Result<()> {
+    let out = Command::new("codex")
+        .args(["queue", "--thread", thread, "--message", text])
+        .stdin(Stdio::null())
+        .output()
+        .context("could not run codex")?;
     if !out.status.success() {
         bail!("codex queue failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok(())
+}
+
+/// `text`, saying which files are its screenshots, for a message that can't attach them.
+fn with_image_paths(text: &str, images: &[&PathBuf]) -> String {
+    if images.is_empty() {
+        return text.to_string();
+    }
+    let paths: Vec<String> = images.iter().map(|p| format!("- {}", p.display())).collect();
+    format!("{text}\n\nIts screenshots (open them with view_image):\n{}", paths.join("\n"))
 }
 
 /// A connection to the daemon: `codex app-server proxy`'s stdio, spoken as a WebSocket client.
@@ -242,5 +286,13 @@ mod tests {
         let mut long = Vec::new();
         write_frame(&mut long, 0x1, &[b'x'; 300]).unwrap();
         assert_eq!((long[1], u16::from_be_bytes([long[2], long[3]])), (0x80 | 126, 300));
+    }
+
+    #[test]
+    fn a_queued_aside_says_where_its_screenshots_are() {
+        assert_eq!(with_image_paths("An aside.", &[]), "An aside.");
+        let shot = PathBuf::from("/r/.asides/n/images/1.png");
+        let text = with_image_paths("An aside.", &[&shot]);
+        assert!(text.starts_with("An aside.\n\n") && text.ends_with("view_image):\n- /r/.asides/n/images/1.png"));
     }
 }

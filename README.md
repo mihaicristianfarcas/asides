@@ -403,11 +403,12 @@ How the agent gets your asides depends on what it can do:
 - **Claude Code** runs `asides listen` in the background, with its Monitor tool. Each aside shows
   up in the chat as it reaches the agent, and the agent acts on it. In between, the agent is free:
   you can ask it other things.
-- **Codex, started by Asides,** gets each aside as a message, like one you typed. Asides starts the
-  session as a thread in Codex's app server (the daemon Codex keeps running), hands it each aside
-  with `codex queue`, and the window opens that thread (`codex resume`). Codex never sits waiting
-  for asides, and one that arrives while it works runs next. Without the app server (older Codex),
-  it waits like the agents below.
+- **Codex, started by Asides,** gets each aside as a message, like one you typed, with its
+  screenshots. Asides starts the session as a thread in Codex's app server (the daemon Codex keeps
+  running), hands it each aside, and the window opens that thread (`codex resume`). Codex never
+  sits waiting for asides, and one that arrives while it works is queued for when it's done. If an
+  aside can't reach it, the menu says so, and Asides keeps trying. Without the app server (older
+  Codex), it waits like the agents below.
 - **OpenCode, started by Asides,** gets each aside as a message too. OpenCode 2 runs its sessions
   in a background service; Asides starts the session there, with Asides' tools for it, adds each
   aside as the session's next message, and the terminal opens it (`opencode --session`). OpenCode 1

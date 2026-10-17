@@ -314,6 +314,12 @@ The user may record a request and ask you to "implement the note". Find it with
 - Codex's app-server daemon speaks JSON-RPC over WebSocket; `codex app-server proxy` connects stdio
   to its socket, so a client sends the HTTP upgrade first and masked frames after. Threads started
   by `codex exec` run in that process, not the daemon: `codex queue` messages for them wait.
+- `codex queue` refuses images ("does not support image attachments", though `--help` lists
+  `--image`): every aside with a screenshot failed, retried every 400 ms. A `turn/start` with
+  `localImage` inputs takes them, but on an active thread it joins the turn in progress (steers):
+  `thread/read`'s `status.type` says `idle` or `active`. The daemon lets a thread go once no client
+  has it open, and `thread/read` then fails ("thread not loaded"): `thread/resume` (with its
+  `config`) loads it again. `codex app-server generate-json-schema --out DIR` writes the protocol.
 - A Codex window given `-c` options runs a server of its own, which a thread the daemon holds is
   locked against ("This conversation is open in another app"). `codex resume <thread>` for a
   thread asides started passes no `-c`; the thread already has its configuration.

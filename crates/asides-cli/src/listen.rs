@@ -4,7 +4,7 @@
 //!
 //! It listens as a session (`--session`, which `asides mcp` gives in its instructions), and gets
 //! the asides the user speaks to that session. With `--codex-thread` it pushes them into a Codex
-//! thread instead (`codex queue`), for a session `asides codex` started, and with
+//! thread instead (`codex.rs`), for a session `asides codex` started, and with
 //! `--opencode-session` into an OpenCode session `asides opencode` started. Delivery follows
 //! `agent_delivery` like `asides mcp` does. With `--timeout` it stops by itself and prints the command that carries on from there
 //! (`--after`), so nothing recorded in between is lost.
@@ -25,6 +25,9 @@ use asides_core::state::AppState;
 use crate::{codex, mcp, opencode, session};
 
 const POLL: Duration = Duration::from_millis(400);
+/// After a push fails, the wait before the next try, doubling up to the longest.
+const RETRY_FIRST: Duration = Duration::from_secs(2);
+const RETRY_LONGEST: Duration = Duration::from_secs(60);
 /// Checking where the user's asides go starts a process, so it's checked less often than the notes.
 const CHECK_TARGET: Duration = Duration::from_secs(10);
 
@@ -42,21 +45,22 @@ pub struct Push {
 }
 
 pub enum PushTo {
-    Codex(String),
+    /// A thread, and the configuration it gets when it's loaded again (its MCP server).
+    Codex(String, serde_json::Value),
     OpenCode(String),
 }
 
 impl PushTo {
     fn agent(&self) -> &'static str {
         match self {
-            PushTo::Codex(_) => "Codex",
+            PushTo::Codex(..) => "Codex",
             PushTo::OpenCode(_) => "OpenCode",
         }
     }
 
     fn send(&self, text: &str, images: &[PathBuf]) -> Result<()> {
         match self {
-            PushTo::Codex(thread) => codex::queue(thread, text, images),
+            PushTo::Codex(thread, config) => codex::push(thread, text, images, config),
             PushTo::OpenCode(session) => opencode::prompt(session, text, images),
         }
     }
@@ -84,13 +88,14 @@ pub fn run(
         }
         None => started_at,
     };
-    let record = Listener {
+    let mut record = Listener {
         pid: std::process::id(),
         client,
         session: id.clone(),
         dir: dir.clone(),
         waiting: true,
         updated_ms: crate::now_ms(),
+        problem: None,
     };
     let _ = record.write(&paths::listeners_dir());
 
@@ -107,8 +112,10 @@ pub fn run(
     let started = Instant::now();
     let mut problem: Option<String> = None;
     let mut next_check = started;
-    // Pushes not made yet (the agent wasn't reachable): retried, in order, before anything newer.
+    // Pushes not made yet (the agent wasn't reachable): retried, in order, before anything newer,
+    // less often the longer it fails. Meanwhile the record says why, for the app's menu.
     let mut unpushed: Vec<(String, Vec<PathBuf>)> = Vec::new();
+    let mut retry: Option<(Instant, Duration)> = None;
     while !STOP.load(Ordering::Relaxed) {
         if let Some(push) = &push {
             if push.while_pid.is_some_and(|pid| !crate::is_running(pid)) {
@@ -124,10 +131,26 @@ pub fn run(
                 unpushed.push((text, images));
             }
             while let Some((text, images)) = unpushed.first() {
+                if retry.is_some_and(|(at, _)| Instant::now() < at) {
+                    break;
+                }
                 match push.to.send(text, images) {
-                    Ok(()) => drop(unpushed.remove(0)),
+                    Ok(()) => {
+                        unpushed.remove(0);
+                        retry = None;
+                        if record.problem.take().is_some() {
+                            let _ = record.write(&paths::listeners_dir());
+                        }
+                    }
                     Err(err) => {
-                        eprintln!("asides: {err:#}");
+                        let wait = retry.map_or(RETRY_FIRST, |(_, wait)| (wait * 2).min(RETRY_LONGEST));
+                        retry = Some((Instant::now() + wait, wait));
+                        let problem = format!("{err:#}");
+                        if record.problem.as_ref() != Some(&problem) {
+                            eprintln!("asides: {problem}");
+                            record.problem = Some(problem);
+                            let _ = record.write(&paths::listeners_dir());
+                        }
                         break;
                     }
                 }
