@@ -72,7 +72,7 @@ fn push_to_daemon(thread: &str, text: &str, images: &[PathBuf], config: &Value) 
     let mut daemon = Daemon::connect()?;
     daemon.call("initialize", json!({ "clientInfo": { "name": "asides", "version": env!("CARGO_PKG_VERSION") } }))?;
     daemon.notify("initialized")?;
-    // The daemon lets a thread go once no client has it open (and asks for it to be loaded again).
+    // The daemon lets a thread go once no client has it open; reading it fails until it's loaded.
     let status = match daemon.call("thread/read", json!({ "threadId": thread })) {
         Ok(read) => read.pointer("/thread/status/type").and_then(Value::as_str).unwrap_or_default().to_string(),
         Err(err) if format!("{err:#}").contains("not loaded") => "notLoaded".into(),
