@@ -86,7 +86,8 @@ changes.
   `Asides`.
 - **Don't add permissions** without the maintainer's agreement. Measure & Annotate uses Screen
   Recording (asked on first use) and Accessibility (only with `identify_elements`); recording
-  itself must keep working without either. Input Monitoring is not used.
+  itself must keep working without either. New Agent Session uses Automation for Ghostty only (a
+  tab per session; declined, a window of its own). Input Monitoring is not used.
 - **Keep the docs in sync.** Update the README (user-facing), ARCHITECTURE.md (structure,
   invariants) and CONTRIBUTING.md (workflow) when your change affects them. The website
   (`docs/index.html`) repeats the shortcuts, requirements and install steps.
@@ -257,6 +258,14 @@ The user may record a request and ask you to "implement the note". Find it with
   off — inherited CLAUDE_CODE_CHILD_SESSION marker" and ran at the first session's effort. The app
   and `asides <agent>` drop them (`launch::session_markers`). `ps eww` shows the environment a
   process was started with, not what it removed since: check a child's.
+- Terminal's AppleScript can't make a tab (only ⌘T through System Events, which needs
+  Accessibility), and "Prefer tabs when opening documents" doesn't apply to scripts it's asked to
+  open (tested). Ghostty 1.3's dictionary has `new tab … with configuration`; `osacompile` checks a
+  script against it without sending Ghostty anything.
+- The Automation prompt holds the AppleScript until the user answers, and the script fails after
+  the Apple event timeout (2 minutes) if they don't: run it off the main thread. Under the hardened
+  runtime it needs the `automation.apple-events` entitlement, and the prompt shows
+  `NSAppleEventsUsageDescription`.
 - With the Accessibility permission (your terminal may have it: `AXIsProcessTrusted`), the real
   status menu can be driven: a synthetic click at the frame of the app's `AXExtrasMenuBar` child
   opens it (`AXPress` doesn't open tray-icon's menu), then its items read and press through

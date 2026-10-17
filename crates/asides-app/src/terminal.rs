@@ -3,9 +3,12 @@
 //! `asides <agent>`'s, the CLI in the bundle.
 //!
 //! Terminal (the default) and iTerm run a `.command` script they're asked to open, as when it's
-//! double-clicked. Ghostty asks before it runs a script it's asked to open, so it's started as its
-//! own process with the script as its initial command instead, and quits when that window closes.
-//! Diri runs it as a session of its own through its CLI (`dirijor session run`).
+//! double-clicked, in a new window. A running Ghostty opens it in a new tab of its front window,
+//! through AppleScript: macOS asks the user once whether Asides may control Ghostty. Otherwise (it
+//! isn't running, or the user said no) Ghostty is started as a process of its own with the script as
+//! its initial command, since it asks before it runs a script it's asked to open, and that process
+//! quits when its window closes. Diri runs it as a session in its window, through its CLI
+//! (`dirijor session run`).
 //!
 //! The app is launched by Launch Services with a bare PATH, so the agents (installed with npm,
 //! Homebrew, their own installers) are found and run through the user's login shell, which has
@@ -26,6 +29,23 @@ use asides_core::launch::AgentKind;
 pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "iTerm", "Diri"];
 /// How long the login shell may take to say which agents are installed.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Opens a command in a new tab of the front window of a running Ghostty (or a window, when it has
+/// none). Says "not running" instead of starting Ghostty, which would open a window of its own too.
+const GHOSTTY_TAB: &str = r#"on run {dir, cmd}
+	if not (application id "com.mitchellh.ghostty" is running) then return "not running"
+	tell application id "com.mitchellh.ghostty"
+		set surface to new surface configuration
+		set initial working directory of surface to dir
+		set command of surface to cmd
+		if (count of windows) is 0 then
+			new window with configuration surface
+		else
+			new tab in front window with configuration surface
+		end if
+		activate
+	end tell
+	return "tab"
+end run"#;
 
 /// The `asides` CLI that ships with this app: in the bundle's Helpers, or beside the binary in a
 /// build folder.
@@ -89,6 +109,9 @@ pub fn open(terminal: &str, dir: &Path, command: &str, title: &str) -> Result<()
     let mut open = Command::new("open");
     match terminal.to_ascii_lowercase().as_str() {
         "ghostty" => {
+            if ghostty_tab(dir, &script) {
+                return Ok(());
+            }
             // As an option, not a bare path: AppKit would also open a path argument as a document.
             let initial = format!("--initial-command={}", script.display());
             open.args(["-na", terminal, "--args", "--quit-after-last-window-closed=true", &initial]);
@@ -122,6 +145,13 @@ pub fn open(terminal: &str, dir: &Path, command: &str, title: &str) -> Result<()
         );
     }
     Ok(())
+}
+
+/// Whether a running Ghostty opened `script` in a new tab: not when it isn't running, or when the
+/// user didn't let Asides control it (the first time, this waits for their answer).
+fn ghostty_tab(dir: &Path, script: &Path) -> bool {
+    let out = Command::new("osascript").args(["-e", GHOSTTY_TAB]).arg(dir).arg(script).stdin(Stdio::null()).output();
+    out.is_ok_and(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "tab")
 }
 
 /// Runs `command` in the user's login shell and returns its output, or what went wrong.

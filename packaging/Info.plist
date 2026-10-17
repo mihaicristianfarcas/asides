@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Asides records you while you describe a bug and transcribes it locally, on this Mac.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Asides opens the coding agents you start from its menu in a new tab of your terminal, instead of a new window.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

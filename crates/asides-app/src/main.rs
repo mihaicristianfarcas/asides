@@ -91,8 +91,8 @@ enum UserEvent {
     Sessions(Vec<Listener>, Vec<Session>),
     /// The coding agents installed, as the user's login shell finds them.
     Agents(Vec<AgentKind>),
-    /// A background session started (what to say about it), or what went wrong starting or
-    /// stopping one.
+    /// A background session started (what to say about it), or what went wrong starting, opening
+    /// or stopping one.
     Launched(Result<String, String>),
     CommandLinked(CommandLink),
     /// The screens, frozen for Measure & Annotate.
@@ -1323,10 +1323,7 @@ impl App {
                 let _ = proxy.send_event(UserEvent::Launched(result));
             });
         } else {
-            let title = format!("{} · {name}", agent.name());
-            if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &dir, &command, &title) {
-                return self.fail(format!("{err:#}"));
-            }
+            self.open_terminal(dir.clone(), command, format!("{} · {name}", agent.name()));
         }
         let status = format!("Starting {} in {name}…", agent.name());
         self.flash = Some((Instant::now() + SENT_FLASH, agent.name().into(), status));
@@ -1346,10 +1343,19 @@ impl App {
             (Some(_), Some(tree)) => project::worktree_path(&session.dir, tree),
             _ => session.dir.clone(),
         };
+        self.open_terminal(dir, command, self.label_of(id));
+    }
+
+    /// Runs `command` in `dir` in a tab or window of the user's terminal, off the main thread: the
+    /// first tab in Ghostty waits for the user to answer whether Asides may control it.
+    fn open_terminal(&self, dir: PathBuf, command: String, title: String) {
         let terminal = terminal::app(&self.config.agents.terminal);
-        if let Err(err) = terminal::open(&terminal, &dir, &command, &self.label_of(id)) {
-            self.fail(format!("{err:#}"));
-        }
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            if let Err(err) = terminal::open(&terminal, &dir, &command, &title) {
+                let _ = proxy.send_event(UserEvent::Launched(Err(format!("{err:#}"))));
+            }
+        });
     }
 
     /// Ends a background session: Claude Code's with `claude stop` (its conversation is kept), a

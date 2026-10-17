@@ -161,17 +161,19 @@ in your pull request what you tried.
   sends nothing. In each mode the item is disabled and `⌃⌥Enter` stays free for other apps.
 - [ ] **Agent sessions:** New Agent Session ▸ Claude Code opens Terminal in the repo with Claude
   Code already listening (no approval asked for the monitor or the asides tools; no prompt from the
-  terminal in Ghostty or Diri either, picked under Open Agent Sessions In), and becomes the
-  target under Asides Go To; Codex and OpenCode the same, waiting in `wait_for_asides`. A second
-  session in the repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the menu bar
-  saying where asides go, and a recording shows `→ <agent>` while it runs and reaches only that
-  session. A Codex session gets each aside as a message, in its window, without waiting in a tool
-  call. Claude Code and Codex in the Background start without a window; Show opens them (Codex in
-  its worktree, without asking which directory) and Stop ends them. Quitting the
-  target agent hands asides to another session in the repo, or Notes Only. From Spotlight, with
-  Asides not bound: New Agent Session ▸ In Another Directory… starts one after choosing a folder.
-  With Asides started by an agent (`open` it from Claude Code's shell), sessions still save their
-  transcripts (no "inherited CLAUDE_CODE_CHILD_SESSION" warning).
+  terminal in Ghostty or Diri either, picked under Open Agent Sessions In), and becomes the target
+  under Asides Go To; Codex and OpenCode the same, waiting in `wait_for_asides`. With Ghostty picked
+  and running, the first session asks whether Asides may control Ghostty: allowed, each session is a
+  new tab in its front window; declined (or Ghostty not running), a Ghostty window of its own. A
+  second session in the repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the
+  menu bar saying where asides go, and a recording shows `→ <agent>` while it runs and reaches only
+  that session. A Codex session gets each aside as a message, in its window, without waiting in a
+  tool call. Claude Code and Codex in the Background start without a window; Show opens them (Codex
+  in its worktree, without asking which directory) and Stop ends them. Quitting the target agent
+  hands asides to another session in the repo, or Notes Only. From Spotlight, with Asides not bound:
+  New Agent Session ▸ In Another Directory… starts one after choosing a folder. With Asides started
+  by an agent (`open` it from Claude Code's shell), sessions still save their transcripts (no
+  "inherited CLAUDE_CODE_CHILD_SESSION" warning).
 - [ ] **Installed by hand:** with no `asides` command anywhere, opening `/Applications/Asides.app`
   links `/usr/local/bin/asides` (asking for a password if root owns the folder); after Cancel it
   isn't asked again. The app icon shows in Spotlight and Finder.

@@ -5,5 +5,9 @@
 	<!-- The hardened runtime blocks the microphone unless the app declares it. -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<!-- And Apple events: New Agent Session opens agents in a new tab of Ghostty through AppleScript
+	     (macOS asks the user first; without it, they open in a new window). -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>

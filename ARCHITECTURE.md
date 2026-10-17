@@ -113,7 +113,7 @@ crates/
     audio.rs          cpal microphone capture → mono f32 at the device rate
     worker.rs         Job queue: transcription, note creation, images, audio, Wispr Flow dictations, routes, append
     watch.rs          polling threads: Wispr Flow's history, agent sessions and listeners, the latest note's threads
-    terminal.rs       New Agent Session: a script for Terminal, Ghostty, iTerm or Diri; the login shell (PATH, agents)
+    terminal.rs       New Agent Session: a script for Terminal, Ghostty (a tab), iTerm or Diri; the login shell (PATH, agents)
     capture.rs        ScreenCaptureKit screenshots (sRGB) → frames; the Screen Recording permission; displays
     overlay.rs        starts asides-overlay with a session directory, relays its messages, reads its result
     elements.rs       what's under a mark: the window list, and the accessibility tree (AXUIElement)
@@ -347,8 +347,10 @@ Break these only on purpose, and update this document when you do.
 11. **No new permissions without discussion.** Recording needs only the microphone (plus the
     optional clipboard prompt). Measure & Annotate added, at the maintainer's request, Screen
     Recording (asked for the first time it's used, never for recording) and Accessibility (only
-    with `identify_elements` on). Input Monitoring is still not needed. Anything else changes what
-    users must trust, so discuss it first.
+    with `identify_elements` on). New Agent Session added, also at the maintainer's request,
+    Automation for Ghostty only (asked the first time a session opens in a running Ghostty, for a
+    tab; declined, sessions keep a window of their own). Input Monitoring is still not needed.
+    Anything else changes what users must trust, so discuss it first.
 12. **`asides mcp` writes nothing to stdout but JSON-RPC.** Anything else breaks the agent's
     connection. `asides listen` writes only deliveries and notices: each burst of output is a
     notification in the agent's chat. Neither writes notes. Listening (the first wait) makes the
@@ -429,13 +431,19 @@ Break these only on purpose, and update this document when you do.
   OpenCode's inline config, read by a `--standalone` server since OpenCode 2's shared service
   wouldn't see it), so `asides claude` needs no `mcp add` and ties the server to its session. `exec`
   keeps the agent in charge of the terminal (Ctrl-Z, signals, exit code).
-- **Terminals through scripts, without Automation.** Sessions open in Terminal unless the user
-  picks another app. Terminal and iTerm run a `.command` script they're asked to open (`open -a`).
-  Ghostty asks before running a script it's asked to open, so it's started as a process of its own
-  (`open -na`) with the script as `--initial-command`, quitting when that window closes. Diri runs it
-  as a session of its own (`dirijor session run`). The script runs the command in the user's login
-  shell (their PATH). AppleScript would reuse a terminal's window, but needs the Automation
-  permission.
+- **Terminals through scripts; Ghostty tabs through AppleScript.** Sessions open in Terminal unless
+  the user picks another app. Terminal and iTerm run a `.command` script they're asked to open
+  (`open -a`), in a new window. A tab is better (the user's window, not one per session), but it
+  takes AppleScript, and so the Automation permission: a running Ghostty gets `new tab in front
+  window` with the script as the surface's command. macOS asks once; the AppleScript waits for the
+  answer (up to the Apple event timeout, 2 minutes), so terminals open off the main thread. When
+  Ghostty isn't running (starting it would open a window of its own too) or the user said no,
+  Ghostty is started as a process of its own (`open -na`) with the script as `--initial-command`,
+  since it asks before running a script it's asked to open; that process quits when its window
+  closes. Terminal's AppleScript can't make tabs (only ⌘T through System Events, which needs
+  Accessibility). iTerm's can (`create tab`), but isn't wired up: it wasn't available to test. Diri
+  runs the script as a session in its window (`dirijor session run`). The script runs the command
+  in the user's login shell (their PATH).
 - **A session is the user's own, not a child of the agent that started the app.** Agents mark the
   processes they run as part of their session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`,
   `CLAUDE_EFFORT`, `OPENCODE`, `AGENT`…), and `open` passes its caller's environment to the app it

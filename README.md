@@ -311,8 +311,10 @@ asides claude          # or: asides codex, asides opencode
 
 Or, from the menu, **New Agent Session ▸ Claude Code** (in the repo Asides is bound to, a recent one,
 or another): it opens Terminal there, or the app you pick under **Preferences → Open Agent Sessions
-In**: Ghostty (each session a Ghostty window of its own), iTerm, or [Diri](https://diri.sh) (a Diri
-session named after the agent and repo). Either way the agent starts already listening, with Asides' MCP server on its command
+In**: Ghostty (a new tab in your Ghostty window), iTerm, or [Diri](https://diri.sh) (a Diri session
+named after the agent and repo). The first time a session opens in Ghostty, macOS asks whether
+Asides may control Ghostty; if you don't allow it, each session gets a Ghostty window of its own
+instead. Either way the agent starts already listening, with Asides' MCP server on its command
 line, so there's nothing to set up first, and its asides tools allowed. Each aside you record from
 then on goes to it as a prompt; you can still type to it as usual. Your own arguments go along
 (`asides claude --model opus`), and `[agents]` in the settings can add some to every session.
@@ -532,8 +534,8 @@ more reliable; a single entry skips detection altogether.
   first time (or when you switch models).
 - **Agents** talk to `asides mcp` on your Mac, over standard input and output. It reads your notes
   and passes them to the agent, which may send them on to its model provider, like anything else you
-  give it. New Agent Session opens your terminal with a script, as if you had double-clicked it: no
-  Automation permission. The agents run with their own permission settings.
+  give it. New Agent Session opens your terminal with a script, as if you had double-clicked it.
+  The agents run with their own permission settings.
 - **Wispr Flow** transcribes with its own service, under its own terms. Asides only reads the
   history Wispr Flow keeps on your Mac, and only when you turn the integration on.
 - **Microphone** access is required.
@@ -544,6 +546,9 @@ more reliable; a single entry skips detection altogether.
 - **Screen Recording** is asked for the first time you use Measure & Annotate, which freezes the
   screen with a screenshot. Screenshots stay on your Mac, in memory, until you add one to an aside.
   Recording alone never needs it.
+- **Automation** (controlling Ghostty) is asked for the first time New Agent Session opens a session
+  in Ghostty while it's running, to open it as a tab in your window. Asides only asks Ghostty for
+  that tab. Say no and sessions open in a window of their own.
 - **Accessibility** is only asked for if you turn on **Identify UI Elements**. Asides then asks the
   app under a mark (or under the cursor, with the Mark tool) what's there, and nothing else.
 - **Input Monitoring** is not needed: the shortcuts use the system hot-key API, and Measure &
