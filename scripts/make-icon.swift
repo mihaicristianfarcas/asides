@@ -1,10 +1,11 @@
-// Draws the app icon, the website's mark: a white microphone on a black rounded square, on Apple's
-// macOS icon grid (an 824-point body on a 1024-point canvas, with its drop shadow). Writes
+// Draws the app icon, the asides mark: the letter a in brackets, white on a black rounded square, on
+// Apple's macOS icon grid (an 824-point body on a 1024-point canvas, with its drop shadow). Writes
 // packaging/Asides.icns, which `make bundle` copies into the app.
 //
 // Usage: swift scripts/make-icon.swift  (needs only the Command Line Tools)
 //
-// The microphone is drawn with paths, like docs/favicon.svg: SF Symbols may not be used in app icons.
+// The same mark is the menu bar's status item (crates/asides-app/src/icons.rs), docs/favicon.svg and
+// the website's header (docs/index.html): change them together.
 
 import AppKit
 
@@ -42,23 +43,24 @@ func png(size: Int) -> Data {
     ctx.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
     ctx.restoreGState()
 
-    // The mark's 24-unit microphone, centred: a filled capsule, its stand's arc and stem.
-    let unit: CGFloat = 22
-    let origin = CGPoint(x: 512 - 12 * unit, y: 512 - 12 * unit)
-    func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: origin.x + x * unit, y: origin.y + y * unit) }
-    ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+    // The mark, centred: brackets 488 points wide and 480 tall, with a 70-point stroke.
     ctx.setStrokeColor(CGColor(gray: 1, alpha: 1))
-    ctx.addPath(CGPath(
-        roundedRect: CGRect(origin: p(8.5, 2.5), size: CGSize(width: 7 * unit, height: 12 * unit)),
-        cornerWidth: 3.5 * unit, cornerHeight: 3.5 * unit, transform: nil))
-    ctx.fillPath()
-    ctx.setLineWidth(2 * unit)
+    ctx.setLineWidth(70)
     ctx.setLineCap(.round)
-    let stand = CGMutablePath()
-    stand.addArc(center: p(12, 11), radius: 7 * unit, startAngle: .pi, endAngle: 0, clockwise: true)
-    stand.move(to: p(12, 18))
-    stand.addLine(to: p(12, 21.5))
-    ctx.addPath(stand)
+    ctx.setLineJoin(.round)
+    let brackets = CGMutablePath()
+    brackets.addLines(between: [CGPoint(x: 368, y: 272), CGPoint(x: 268, y: 272), CGPoint(x: 268, y: 752), CGPoint(x: 368, y: 752)])
+    brackets.addLines(between: [CGPoint(x: 656, y: 272), CGPoint(x: 756, y: 272), CGPoint(x: 756, y: 752), CGPoint(x: 656, y: 752)])
+    ctx.addPath(brackets)
+    ctx.strokePath()
+
+    // A geometric single-storey a, sitting a little low like a lowercase letter: a circle with its
+    // stem along the right side, cut square at the circle's top and bottom.
+    let a = CGPoint(x: 512, y: 528), r: CGFloat = 88
+    ctx.addEllipse(in: CGRect(x: a.x - r, y: a.y - r, width: 2 * r, height: 2 * r))
+    ctx.strokePath()
+    ctx.setLineCap(.butt)
+    ctx.addLines(between: [CGPoint(x: a.x + r, y: a.y - r - 35), CGPoint(x: a.x + r, y: a.y + r + 35)])
     ctx.strokePath()
 
     let image = ctx.makeImage()!

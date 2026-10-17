@@ -89,7 +89,7 @@ To look at the menu-bar icons without installing, render them to files:
 ASIDES_ICON_DUMP=/tmp/icons cargo test -p asides-app icons
 ```
 
-This writes raw RGBA data (`<symbol>-<width>x<height>.rgba`) for each icon.
+This writes raw RGBA data (`<status>-44x44.rgba`) for each icon.
 
 If a release is also installed (say `/Applications/Asides.app`), it has the same bundle ID. The
 CLI sends its links to the app it ships in (`asides` from `~/.local/bin` reaches your build), or to
@@ -284,7 +284,10 @@ in your pull request what you tried.
 - **A model:** add it to `MODELS` in `models.rs` with the exact size and SHA-256 from the Hugging
   Face file listing. All models must be multilingual.
 - **The app icon:** edit `scripts/make-icon.swift` and run it (`swift scripts/make-icon.swift`). It
-  writes `packaging/Asides.icns`, which `make bundle` copies into the app.
+  writes `packaging/Asides.icns`, which `make bundle` copies into the app. The same mark, the a in
+  brackets, is drawn in `crates/asides-app/src/icons.rs` (the status item), `docs/favicon.svg` and
+  `docs/index.html` (the header and the demo's menu bar): change them together, then run
+  `python3 scripts/make-og.py`.
 - **The note format:** change `markdown.rs` or `frontmatter.rs` along with their tests, then the
   e2e expectations and the README example. Keep the format append-only (see the invariants in
   ARCHITECTURE.md).

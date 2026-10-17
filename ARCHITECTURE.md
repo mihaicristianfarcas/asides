@@ -117,7 +117,7 @@ crates/
   asides-app/      binary `asides-app`, renamed Asides inside the bundle
     main.rs           App: event loop, UserEvent dispatch, recording state machine, bind(), refresh(), publish()
     tray.rs           status item and menu (MenuAction, View, Directory submenu)
-    icons.rs          SF Symbols rendered to RGBA for tray-icon
+    icons.rs          the status item's icons: the asides mark per status, drawn to RGBA for tray-icon
     hotkeys.rs        global shortcuts (Carbon hot keys): Asides, a new note, freeze, attach, send, switch
     audio.rs          cpal microphone capture → mono f32 at the device rate
     worker.rs         Job queue: transcription, note creation, images, audio, Wispr Flow dictations, routes, append;
@@ -552,9 +552,11 @@ Break these only on purpose, and update this document when you do.
   related language (Romanian as Italian, for example); restricting the candidates fixes that.
 - **Links plus a state file instead of a socket.** Launch Services already guarantees a single
   instance and launches the app on demand, and the CLI only needs a one-shot acknowledgement.
-- **SF Symbols rendered to bitmaps.** tray-icon takes RGBA; rendering system symbols keeps the
-  icons native in light and dark menu bars. tray-icon caps icons at 22 pt, so they are drawn on a
-  22 pt canvas at 2×.
+- **The status item is the app's mark.** Every status is the letter a's brackets with something
+  between them (the a when ready, a dot while recording, dots while transcribing…), so the menu
+  bar and the app icon are one shape. tray-icon takes RGBA, so `icons.rs` draws them itself, from
+  strokes and circles, as template images the system tints for light and dark menu bars (red while
+  recording). tray-icon caps icons at 22 pt, so they are drawn on a 22 pt canvas at 2×.
 - **Shortcuts through Carbon hot keys** (global-hotkey). They need no Accessibility permission,
   and they report key-up, which makes hold-to-talk possible.
 - **Agents wait in a tool call, or watch a command.** MCP has no portable way for a server to start

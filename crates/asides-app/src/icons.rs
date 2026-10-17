@@ -1,17 +1,16 @@
-//! Menu-bar icons rendered from SF Symbols, so they match the system's own status items.
+//! Menu-bar icons: the asides mark, the letter a in brackets. Every status keeps the brackets and
+//! changes what's between them. The app icon (`scripts/make-icon.swift`) and the website
+//! (`docs/favicon.svg`, `docs/index.html`) draw the same mark.
 
-use objc2::AnyThread;
-use objc2_app_kit::{
-    NSBitmapImageRep, NSColor, NSDeviceRGBColorSpace, NSFontWeightRegular, NSGraphicsContext, NSImage,
-    NSImageSymbolConfiguration,
-};
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tray_icon::Icon;
 
 /// tray-icon shows icons at most 22 pt tall; we draw at 2× on a 22 pt canvas.
 const CANVAS_PT: f64 = 22.0;
 const SCALE: f64 = 2.0;
-const SYMBOL_PT: f64 = 15.0;
+/// The width of every stroke, in points.
+const STROKE: f64 = 1.75;
+/// systemRed, for the one status that isn't a template.
+const RED: [u8; 3] = [255, 59, 48];
 
 #[derive(Clone)]
 pub struct StatusIcon {
@@ -30,123 +29,161 @@ pub struct Icons {
     pub download: StatusIcon,
 }
 
+/// What goes between the brackets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Inside {
+    /// The a: ready to record.
+    Letter,
+    /// Recording.
+    Dot,
+    /// Transcribing.
+    Ellipsis,
+    /// Added to the note.
+    Check,
+    Exclamation,
+    /// Downloading the speech model.
+    Arrow,
+    /// Not bound to a repo.
+    Nothing,
+}
+
 impl Icons {
     pub fn load() -> Icons {
-        let template = |name| StatusIcon { icon: render(name, false), template: true };
+        let template = |inside| StatusIcon { icon: icon(inside, None), template: true };
         Icons {
-            idle: template("mic"),
-            unbound: template("mic.slash"),
-            recording: StatusIcon { icon: render("record.circle.fill", true), template: false },
-            busy: template("ellipsis.circle"),
-            done: template("checkmark.circle"),
-            error: template("exclamationmark.triangle"),
-            download: template("arrow.down.circle"),
+            idle: template(Inside::Letter),
+            unbound: template(Inside::Nothing),
+            recording: StatusIcon { icon: icon(Inside::Dot, Some(RED)), template: false },
+            busy: template(Inside::Ellipsis),
+            done: template(Inside::Check),
+            error: template(Inside::Exclamation),
+            download: template(Inside::Arrow),
         }
     }
 }
 
-fn render(symbol: &str, red: bool) -> Icon {
-    draw_symbol(symbol, red).and_then(|(rgba, w, h)| Icon::from_rgba(rgba, w, h).ok()).unwrap_or_else(|| {
-        // Fallback: a plain dot, should a symbol ever be unavailable.
-        let size = (CANVAS_PT * SCALE) as u32;
-        let mut rgba = vec![0u8; (size * size * 4) as usize];
-        let c = size as f64 / 2.0;
-        for y in 0..size {
-            for x in 0..size {
-                if ((x as f64 - c).powi(2) + (y as f64 - c).powi(2)).sqrt() < size as f64 / 5.0 {
-                    let i = ((y * size + x) * 4) as usize;
-                    rgba[i..i + 4].copy_from_slice(&[if red { 255 } else { 0 }, 0, 0, 255]);
-                }
+fn icon(inside: Inside, color: Option<[u8; 3]>) -> Icon {
+    let size = (CANVAS_PT * SCALE) as u32;
+    Icon::from_rgba(draw(inside, color), size, size).expect("valid status icon")
+}
+
+/// A stroke with round caps, a stroked circle, or a filled one, in points from the top left.
+enum Shape {
+    Line((f64, f64), (f64, f64)),
+    Ring((f64, f64), f64),
+    Disc((f64, f64), f64),
+}
+
+impl Shape {
+    /// Signed distance from `p` to the shape's edge, in points (negative inside).
+    fn distance(&self, p: (f64, f64)) -> f64 {
+        let length = |x: f64, y: f64| x.hypot(y);
+        match *self {
+            Shape::Line(a, b) => {
+                let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+                let t = (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+                length(p.0 - a.0 - t * dx, p.1 - a.1 - t * dy) - STROKE / 2.0
             }
+            Shape::Ring(c, r) => (length(p.0 - c.0, p.1 - c.1) - r).abs() - STROKE / 2.0,
+            Shape::Disc(c, r) => length(p.0 - c.0, p.1 - c.1) - r,
         }
-        Icon::from_rgba(rgba, size, size).expect("valid fallback icon")
-    })
+    }
 }
 
-/// Straight-alpha RGBA pixels, width and height of `symbol` drawn on the status-item canvas.
-fn draw_symbol(symbol: &str, red: bool) -> Option<(Vec<u8>, u32, u32)> {
-    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(symbol), None)?;
-    let mut config =
-        NSImageSymbolConfiguration::configurationWithPointSize_weight(SYMBOL_PT, unsafe { NSFontWeightRegular });
-    if red {
-        let color = NSImageSymbolConfiguration::configurationWithHierarchicalColor(&NSColor::systemRedColor());
-        config = config.configurationByApplyingConfiguration(&color);
-    }
-    let image = image.imageWithSymbolConfiguration(&config)?;
-    let symbol_size = image.size();
+fn shapes(inside: Inside) -> Vec<Shape> {
+    use Shape::*;
+    let mut shapes = vec![
+        Line((5.4, 3.8), (2.8, 3.8)),
+        Line((2.8, 3.8), (2.8, 18.2)),
+        Line((2.8, 18.2), (5.4, 18.2)),
+        Line((16.6, 3.8), (19.2, 3.8)),
+        Line((19.2, 3.8), (19.2, 18.2)),
+        Line((19.2, 18.2), (16.6, 18.2)),
+    ];
+    shapes.extend(match inside {
+        // A geometric single-storey a: a circle with its stem along the right side.
+        Inside::Letter => vec![Ring((11.0, 11.5), 2.9), Line((13.9, 8.6), (13.9, 14.4))],
+        Inside::Dot => vec![Disc((11.0, 11.0), 3.0)],
+        Inside::Ellipsis => [8.4, 11.0, 13.6].map(|x| Disc((x, 11.0), 1.1)).into(),
+        Inside::Check => vec![Line((8.6, 11.2), (10.3, 13.0)), Line((10.3, 13.0), (13.5, 9.3))],
+        Inside::Exclamation => vec![Line((11.0, 7.6), (11.0, 11.5)), Disc((11.0, 14.2), 1.05)],
+        Inside::Arrow => {
+            vec![Line((11.0, 7.4), (11.0, 14.0)), Line((8.4, 11.6), (11.0, 14.2)), Line((11.0, 14.2), (13.6, 11.6))]
+        }
+        Inside::Nothing => vec![],
+    });
+    shapes
+}
 
-    let width_pt = symbol_size.width.ceil().max(1.0);
-    let (w, h) = ((width_pt * SCALE) as isize, (CANVAS_PT * SCALE) as isize);
-    let rep = unsafe {
-        NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
-            NSBitmapImageRep::alloc(),
-            std::ptr::null_mut(),
-            w,
-            h,
-            8,
-            4,
-            true,
-            false,
-            NSDeviceRGBColorSpace,
-            w * 4,
-            32,
-        )
-    }?;
-    rep.setSize(NSSize::new(width_pt, CANVAS_PT));
-    let context = NSGraphicsContext::graphicsContextWithBitmapImageRep(&rep)?;
-    NSGraphicsContext::saveGraphicsState_class();
-    NSGraphicsContext::setCurrentContext(Some(&context));
-    let origin = NSPoint::new((width_pt - symbol_size.width) / 2.0, (CANVAS_PT - symbol_size.height) / 2.0);
-    image.drawInRect(NSRect::new(origin, symbol_size));
-    context.flushGraphics();
-    NSGraphicsContext::restoreGraphicsState_class();
-
-    let stride = rep.bytesPerRow() as usize;
-    let data = rep.bitmapData();
-    if data.is_null() {
-        return None;
-    }
-    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h as usize {
-        let row = unsafe { std::slice::from_raw_parts(data.add(y * stride), w as usize * 4) };
-        for px in row.as_chunks::<4>().0 {
-            // The bitmap is premultiplied; tray-icon expects straight alpha.
-            let a = px[3];
-            let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8 };
-            rgba.extend_from_slice(&[un(px[0]), un(px[1]), un(px[2]), a]);
+/// Straight-alpha RGBA pixels of the mark on the status-item canvas, black unless `color` is given.
+fn draw(inside: Inside, color: Option<[u8; 3]>) -> Vec<u8> {
+    let shapes = shapes(inside);
+    let [r, g, b] = color.unwrap_or([0, 0, 0]);
+    let size = (CANVAS_PT * SCALE) as usize;
+    let mut rgba = Vec::with_capacity(size * size * 4);
+    for y in 0..size {
+        for x in 0..size {
+            let p = ((x as f64 + 0.5) / SCALE, (y as f64 + 0.5) / SCALE);
+            let d = shapes.iter().map(|s| s.distance(p)).fold(f64::INFINITY, f64::min);
+            // Coverage from the distance in pixels: a one-pixel ramp across the edge.
+            let a = (0.5 - d * SCALE).clamp(0.0, 1.0);
+            rgba.extend_from_slice(&[r, g, b, (a * 255.0).round() as u8]);
         }
     }
-    Some((rgba, w as u32, h as u32))
+    rgba
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const ALL: [(&str, Inside); 7] = [
+        ("idle", Inside::Letter),
+        ("unbound", Inside::Nothing),
+        ("recording", Inside::Dot),
+        ("busy", Inside::Ellipsis),
+        ("done", Inside::Check),
+        ("error", Inside::Exclamation),
+        ("download", Inside::Arrow),
+    ];
+
+    fn alpha(rgba: &[u8], (x, y): (f64, f64)) -> u8 {
+        let size = (CANVAS_PT * SCALE) as usize;
+        rgba[((y * SCALE) as usize * size + (x * SCALE) as usize) * 4 + 3]
+    }
+
     #[test]
-    fn renders_every_status_symbol() {
-        let symbols = [
-            ("mic", false),
-            ("mic.slash", false),
-            ("record.circle.fill", true),
-            ("ellipsis.circle", false),
-            ("checkmark.circle", false),
-            ("exclamationmark.triangle", false),
-            ("arrow.down.circle", false),
-        ];
-        for (name, red) in symbols {
-            let (rgba, w, h) = draw_symbol(name, red).unwrap_or_else(|| panic!("{name} did not render"));
-            assert_eq!(h, 44, "{name}");
-            assert!((20..=60).contains(&w), "{name}: width {w}");
+    fn renders_every_status_icon() {
+        for (name, inside) in ALL {
+            let red = inside == Inside::Dot;
+            let rgba = draw(inside, red.then_some(RED));
+            assert_eq!(rgba.len(), 44 * 44 * 4, "{name}");
+            // The brackets are in every icon, and the centre between them is empty with nothing inside.
+            assert_eq!(alpha(&rgba, (2.8, 11.0)), 255, "{name}: left bracket");
+            assert_eq!(alpha(&rgba, (19.2, 11.0)), 255, "{name}: right bracket");
+            assert_eq!(alpha(&rgba, (11.0, 2.0)), 0, "{name}: above the brackets");
             let opaque = rgba.chunks(4).filter(|px| px[3] > 128).count();
-            assert!(opaque > 60, "{name}: only {opaque} opaque pixels");
+            let inner =
+                rgba.chunks(4).enumerate().filter(|(i, px)| px[3] > 128 && (14..30).contains(&(i % 44))).count();
+            assert_eq!(inner == 0, inside == Inside::Nothing, "{name}: {inner} pixels between the brackets");
             let reddish = rgba.chunks(4).filter(|px| px[3] > 128 && px[0] > 180 && px[1] < 120).count();
-            assert_eq!(reddish > opaque / 2, red, "{name}: color");
+            assert_eq!(reddish == opaque, red, "{name}: color");
             // ASIDES_ICON_DUMP=<dir> writes the raw pixels for visual inspection.
             if let Some(dir) = std::env::var_os("ASIDES_ICON_DUMP") {
                 std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(std::path::Path::new(&dir).join(format!("{name}-{w}x{h}.rgba")), &rgba).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}-44x44.rgba")), &rgba).unwrap();
             }
+            let _ = icon(inside, red.then_some(RED));
         }
+    }
+
+    #[test]
+    fn the_letter_is_an_a() {
+        let rgba = draw(Inside::Letter, None);
+        // A closed bowl around an open counter, and the stem beside it.
+        assert_eq!(alpha(&rgba, (11.0, 11.5)), 0, "counter");
+        assert_eq!(alpha(&rgba, (8.1, 11.5)), 255, "bowl, left");
+        assert_eq!(alpha(&rgba, (13.9, 9.0)), 255, "stem, top");
+        assert_eq!(alpha(&rgba, (13.9, 14.0)), 255, "stem, bottom");
     }
 }
