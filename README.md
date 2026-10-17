@@ -153,7 +153,8 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
 - switch between recently used repos, or choose another one (**Directory** submenu)
 - open, reveal or copy the path of the latest note
 - change preferences: hold to talk, auto-attaching images, sounds, keeping audio clips, Wispr Flow
-  dictations, Measure & Annotate, the speech model, the microphone, and how agents get asides
+  dictations, Measure & Annotate, the speech model, the microphone, how agents get asides, and the
+  app agent sessions open in
 
 The status line shows where your asides go, e.g. `Ready · shop → Claude Code, listening`.
 When an agent resolves or replies to an aside, the menu bar says so for a moment (`✓ #3`), and the
@@ -309,8 +310,9 @@ asides claude          # or: asides codex, asides opencode
 ```
 
 Or, from the menu, **New Agent Session ▸ Claude Code** (in the repo Asides is bound to, a recent one,
-or another): it opens your terminal there (Ghostty, iTerm or Terminal; `[agents] terminal` picks
-another). In Ghostty, each session opens as a Ghostty window of its own, which closes with it. Either way the agent starts already listening, with Asides' MCP server on its command
+or another): it opens Terminal there, or the app you pick under **Preferences → Open Agent Sessions
+In**: Ghostty (each session a Ghostty window of its own), iTerm, or [Diri](https://diri.sh) (a Diri
+session named after the agent and repo). Either way the agent starts already listening, with Asides' MCP server on its command
 line, so there's nothing to set up first, and its asides tools allowed. Each aside you record from
 then on goes to it as a prompt; you can still type to it as usual. Your own arguments go along
 (`asides claude --model opus`), and `[agents]` in the settings can add some to every session.
@@ -457,7 +459,7 @@ wispr_flow_apps = []         # e.g. ["Safari"] to add only dictations made there
 annotation_detail = "standard"  # "compact", "standard", "detailed" or "forensic"
 
 [agents]                     # sessions started by `asides claude` and New Agent Session
-terminal = ""                # the terminal app they open in, e.g. "Terminal"; "" picks Ghostty, iTerm or Terminal
+terminal = ""                # the app they open in: "" (Terminal), "Ghostty", "iTerm", "Diri", or another
 worktrees = true             # a second session in a repo works in a git worktree of it
 claude = []                  # extra arguments for each agent, e.g. ["--model", "opus"]
 codex = []
@@ -558,9 +560,10 @@ more reliable; a single entry skips detection altogether.
   session, switch with `⌃⌥Tab` or Asides Go To; if it says notes only, start one (New Agent Session)
   or ask your agent to listen to your asides. In batch mode, choose Send to Agent; it says whether
   the batch was sent, queued, or had no session to go to.
-- **New Agent Session opens the wrong terminal, or none.** Set `terminal` under `[agents]` to the
-  app's name, as `open -a` takes it. The agent must be installed for your login shell (`which
-  claude` in a terminal).
+- **New Agent Session opens the wrong app, or none.** Pick one under Preferences → Open Agent
+  Sessions In, or set `terminal` under `[agents]` to an app's name, as `open -a` takes it (it must
+  run `.command` scripts). The agent must be installed for your login shell (`which claude` in a
+  terminal).
 - **Wispr Flow dictations don't show up.** Check that Wispr Flow keeps history on this Mac, and that
   the app you dictate in matches `wispr_flow_apps`.
 - **Measure & Annotate says it can't see the screen.** Allow Asides in System Settings → Privacy &

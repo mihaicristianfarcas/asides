@@ -36,6 +36,7 @@ make fixtures    # once: test audio generated with the macOS voices
 | the CLI | `cargo run -p asides-cli -- status` (and the other subcommands) |
 | `asides mcp` | pipe JSON-RPC lines into `cargo run -p asides-cli -- mcp` (example below), then try it in an agent |
 | `asides claude` and the like | put a fake `claude` (a script that prints its arguments) first on `PATH`, as `scripts/e2e-mcp.py` does; then start the real one |
+| opening a terminal | `ASIDES_TERMINAL=Diri ASIDES_TERMINAL_DIR=<repo> ASIDES_TERMINAL_COMMAND='asides claude' cargo test -p asides-app opens_a_terminal -- --ignored` runs New Agent Session's `terminal::open` for real |
 | the app | `make install`, then `asides` in a scratch repo and try it for real |
 
 `make install` quits the running Asides and replaces it.
@@ -158,8 +159,9 @@ in your pull request what you tried.
   Send to Agent in the menu deliver everything recorded since the last send, including a recording
   still in progress, and the menu bar shows Sent or Queued; with no agent listening, it says so and
   sends nothing. In each mode the item is disabled and `⌃⌥Enter` stays free for other apps.
-- [ ] **Agent sessions:** New Agent Session ▸ Claude Code opens the terminal in the repo with Claude
-  Code already listening (no approval asked for the monitor or the asides tools), and becomes the
+- [ ] **Agent sessions:** New Agent Session ▸ Claude Code opens Terminal in the repo with Claude
+  Code already listening (no approval asked for the monitor or the asides tools; no prompt from the
+  terminal in Ghostty or Diri either, picked under Open Agent Sessions In), and becomes the
   target under Asides Go To; Codex and OpenCode the same, waiting in `wait_for_asides`. A second
   session in the repo works in a worktree. `⌃⌥Tab` cycles the sessions and Notes Only, the menu bar
   saying where asides go, and a recording shows `→ <agent>` while it runs and reaches only that

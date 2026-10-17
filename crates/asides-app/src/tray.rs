@@ -51,6 +51,8 @@ pub enum MenuAction {
     ScreenRecordingSettings,
     AccessibilitySettings,
     AgentDelivery(AgentDelivery),
+    /// The app agent sessions open in.
+    Terminal(String),
     Model(String),
     InputDevice(String),
     MicrophoneSettings,
@@ -118,6 +120,7 @@ pub struct Tray {
     screen_recording: MenuItem,
     accessibility: MenuItem,
     deliveries: Vec<(AgentDelivery, CheckMenuItem)>,
+    terminals: Vec<(String, CheckMenuItem)>,
     models: Vec<(String, CheckMenuItem)>,
     devices: Vec<(String, CheckMenuItem)>,
     microphone_settings: MenuItem,
@@ -143,7 +146,7 @@ pub struct View<'a> {
 }
 
 impl Tray {
-    pub fn new(config: &Config, devices: &[String], icon: &StatusIcon) -> anyhow::Result<Tray> {
+    pub fn new(config: &Config, devices: &[String], terminals: &[String], icon: &StatusIcon) -> anyhow::Result<Tray> {
         let status = MenuItem::new("", false, None);
         let record = MenuItem::new("Start Recording", false, accelerator(&config.shortcuts.record));
         let record_new = MenuItem::new("Start in New Note", false, accelerator(&config.shortcuts.record_new_note));
@@ -212,6 +215,24 @@ impl Tray {
         for (_, item) in &deliveries {
             delivery_menu.append(item)?;
         }
+        // The installed ones, and one named in the settings that isn't among them.
+        let chosen = terminal_name(config);
+        let mut names = terminals.to_vec();
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(&chosen)) {
+            names.push(chosen.clone());
+        }
+        let terminals: Vec<(String, CheckMenuItem)> = names
+            .into_iter()
+            .map(|name| {
+                let checked = name.eq_ignore_ascii_case(&chosen);
+                let item = CheckMenuItem::new(menu_text(&name), true, checked, None);
+                (name, item)
+            })
+            .collect();
+        let terminal_menu = Submenu::new("Open Agent Sessions In", true);
+        for (_, item) in &terminals {
+            terminal_menu.append(item)?;
+        }
         let models: Vec<(String, CheckMenuItem)> = MODELS
             .iter()
             .map(|m| (m.id.to_string(), CheckMenuItem::new(m.label, true, m.id == config.model, None)))
@@ -243,6 +264,7 @@ impl Tray {
             &model_menu,
             &device_menu,
             &delivery_menu,
+            &terminal_menu,
             &PredefinedMenuItem::separator(),
             &microphone_settings,
             &edit_settings,
@@ -326,6 +348,7 @@ impl Tray {
             screen_recording,
             accessibility,
             deliveries,
+            terminals,
             models,
             devices: devices_items,
             microphone_settings,
@@ -385,6 +408,9 @@ impl Tray {
         }
         if let Some((mode, _)) = self.deliveries.iter().find(|(_, item)| item.id() == id) {
             return Some(MenuAction::AgentDelivery(*mode));
+        }
+        if let Some((name, _)) = self.terminals.iter().find(|(_, item)| item.id() == id) {
+            return Some(MenuAction::Terminal(name.clone()));
         }
         if let Some((dir, _)) = self.directories.iter().find(|(_, item)| item.id() == id) {
             return Some(MenuAction::SwitchDirectory(dir.clone()));
@@ -571,6 +597,10 @@ impl Tray {
         for (mode, item) in &self.deliveries {
             item.set_checked(*mode == config.agent_delivery);
         }
+        let chosen = terminal_name(config);
+        for (name, item) in &self.terminals {
+            item.set_checked(name.eq_ignore_ascii_case(&chosen));
+        }
         for (id, item) in &self.models {
             item.set_checked(*id == config.model);
         }
@@ -624,6 +654,14 @@ impl Tray {
             MenuAction::ToggleMeasureRecord => self.measure_record.is_checked(),
             _ => false,
         }
+    }
+}
+
+/// The app agent sessions open in, as the settings say (Terminal when they don't).
+fn terminal_name(config: &Config) -> String {
+    match config.agents.terminal.trim() {
+        "" => "Terminal".into(),
+        name => name.into(),
     }
 }
 

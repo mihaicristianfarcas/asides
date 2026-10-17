@@ -23,8 +23,9 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 # padding: points of screen kept around what you measured in the screenshot;
 # record: start recording when Measure & Annotate opens, so you can talk while you mark;
 # toolbar: show its toolbar (shift+tab hides and shows it; every action also has a key).
-# [agents] terminal: the app New Session opens agents in ("Ghostty", "iTerm", "Terminal", …; "" picks
-# one); worktrees: a second session in a repo works in its own git worktree; claude, codex, opencode:
+# [agents] terminal: the app New Agent Session opens agents in ("Terminal", the default when "";
+# "Ghostty", "iTerm", "Diri", or another that runs .command scripts); worktrees: a second session in
+# a repo works in its own git worktree; claude, codex, opencode:
 # extra arguments for that agent's sessions, e.g. claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
@@ -69,8 +70,8 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Agents {
-    /// The terminal app New Session opens (its name, as `open -a` takes it); empty picks one that's
-    /// installed.
+    /// The app New Agent Session opens agents in (its name, as `open -a` takes it); empty is
+    /// Terminal.
     pub terminal: String,
     /// A second session in a repo works in a git worktree of it, so their edits don't collide.
     pub worktrees: bool,

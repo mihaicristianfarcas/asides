@@ -303,7 +303,7 @@ impl App {
 
     fn init(&mut self) {
         let icons = Icons::load();
-        match Tray::new(&self.config, &audio::input_device_names(), &icons.idle) {
+        match Tray::new(&self.config, &audio::input_device_names(), &terminal::installed(), &icons.idle) {
             Ok(mut tray) => {
                 tray.set_directories(&self.recent_dirs, self.bound.as_deref());
                 self.tray = Some(tray);
@@ -577,6 +577,7 @@ impl App {
                 self.apply_hotkeys();
                 self.refresh();
             }
+            MenuAction::Terminal(name) => self.update_config(|c| c.agents.terminal = name.clone()),
             MenuAction::Model(id) => {
                 self.update_config(|c| c.model = id.clone());
                 self.model_state = None;
@@ -1312,8 +1313,11 @@ impl App {
                 let result = terminal::run(&command).map_err(|e| format!("{e:#}"));
                 let _ = proxy.send_event(UserEvent::Launched(result));
             });
-        } else if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &dir, &command) {
-            return self.fail(format!("{err:#}"));
+        } else {
+            let title = format!("{} · {name}", agent.name());
+            if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &dir, &command, &title) {
+                return self.fail(format!("{err:#}"));
+            }
         }
         let status = format!("Starting {} in {name}…", agent.name());
         self.flash = Some((Instant::now() + SENT_FLASH, agent.name().into(), status));
@@ -1325,7 +1329,8 @@ impl App {
         let Some(session) = self.sessions.iter().find(|s| s.id == id).cloned() else { return };
         let Some(name) = session.background else { return };
         let command = format!("claude attach {}", terminal::quote(&name));
-        if let Err(err) = terminal::open(&terminal::app(&self.config.agents.terminal), &session.dir, &command) {
+        let terminal = terminal::app(&self.config.agents.terminal);
+        if let Err(err) = terminal::open(&terminal, &session.dir, &command, &self.label_of(id)) {
             self.fail(format!("{err:#}"));
         }
     }

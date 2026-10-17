@@ -2,9 +2,10 @@
 //! permission), or in the background through the user's login shell. Either way the work is
 //! `asides <agent>`'s, the CLI in the bundle.
 //!
-//! Terminal and iTerm run a `.command` script they're asked to open, as when it's double-clicked.
-//! Ghostty asks before it runs a script it's asked to open, so it's started as its own process
-//! with the script as its initial command instead, and quits when that window closes.
+//! Terminal (the default) and iTerm run a `.command` script they're asked to open, as when it's
+//! double-clicked. Ghostty asks before it runs a script it's asked to open, so it's started as its
+//! own process with the script as its initial command instead, and quits when that window closes.
+//! Diri runs it as a session of its own through its CLI (`dirijor session run`).
 //!
 //! The app is launched by Launch Services with a bare PATH, so the agents (installed with npm,
 //! Homebrew, their own installers) are found and run through the user's login shell, which has
@@ -20,9 +21,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use asides_core::launch::AgentKind;
 
-/// Terminal apps tried, in order, when `[agents] terminal` doesn't name one. All of them run
-/// `.command` scripts they're asked to open.
-const TERMINALS: &[&str] = &["Ghostty", "iTerm", "Terminal"];
+/// The apps sessions can open in, as the menu offers them (when installed). Terminal is the
+/// default; `[agents] terminal` can also name another app that runs `.command` scripts.
+pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "iTerm", "Diri"];
 /// How long the login shell may take to say which agents are installed.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -47,23 +48,31 @@ pub fn from_this_app(command: &str) -> String {
     }
 }
 
-/// The terminal app sessions open in: the configured one, or the first installed of [`TERMINALS`].
+/// The app sessions open in: the configured one, or Terminal.
 pub fn app(configured: &str) -> String {
-    if !configured.trim().is_empty() {
-        return configured.trim().to_string();
+    match configured.trim() {
+        "" => "Terminal".into(),
+        name => name.into(),
     }
-    let home = std::env::home_dir().unwrap_or_default();
-    let installed = |name: &str| {
-        [PathBuf::from("/Applications"), home.join("Applications"), "/System/Applications/Utilities".into()]
-            .iter()
-            .any(|dir| dir.join(format!("{name}.app")).exists())
-    };
-    TERMINALS.iter().find(|name| installed(name)).unwrap_or(&"Terminal").to_string()
 }
 
-/// Opens a window of `terminal` in `dir` running `command` (a shell command line) in the user's
-/// login shell. When it ends, the window keeps a shell there.
-pub fn open(terminal: &str, dir: &Path, command: &str) -> Result<()> {
+/// The apps of [`TERMINALS`] that are installed, for the menu.
+pub fn installed() -> Vec<String> {
+    TERMINALS.iter().filter(|name| bundle(name).is_some()).map(|name| name.to_string()).collect()
+}
+
+/// Where the app `name` is installed (names match ignoring case, as the file system does).
+fn bundle(name: &str) -> Option<PathBuf> {
+    let home = std::env::home_dir().unwrap_or_default();
+    [PathBuf::from("/Applications"), home.join("Applications"), "/System/Applications/Utilities".into()]
+        .into_iter()
+        .map(|dir| dir.join(format!("{name}.app")))
+        .find(|app| app.exists())
+}
+
+/// Opens a window (or, in Diri, a session titled `title`) of `terminal` in `dir`, running
+/// `command` (a shell command line) in the user's login shell. When it ends, a shell stays there.
+pub fn open(terminal: &str, dir: &Path, command: &str, title: &str) -> Result<()> {
     let scripts = std::env::temp_dir().join("asides-sessions");
     fs::create_dir_all(&scripts)?;
     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -78,12 +87,31 @@ pub fn open(terminal: &str, dir: &Path, command: &str) -> Result<()> {
     fs::write(&script, body)?;
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
     let mut open = Command::new("open");
-    if terminal.eq_ignore_ascii_case("ghostty") {
-        // As an option, not a bare path: AppKit would also open a path argument as a document.
-        let initial = format!("--initial-command={}", script.display());
-        open.args(["-na", terminal, "--args", "--quit-after-last-window-closed=true", &initial]);
-    } else {
-        open.arg("-a").arg(terminal).arg(&script);
+    match terminal.to_ascii_lowercase().as_str() {
+        "ghostty" => {
+            // As an option, not a bare path: AppKit would also open a path argument as a document.
+            let initial = format!("--initial-command={}", script.display());
+            open.args(["-na", terminal, "--args", "--quit-after-last-window-closed=true", &initial]);
+        }
+        "diri" => {
+            let app = bundle(terminal).context("Diri isn't installed")?;
+            let out = Command::new(app.join("Contents/Resources/bin/dirijor"))
+                .args(["session", "run", "--title", title, "--cwd"])
+                .arg(dir)
+                .args(["--", "/bin/sh"])
+                .arg(&script)
+                .output()
+                .context("could not run Diri's dirijor")?;
+            if !out.status.success() {
+                let _ = fs::remove_file(&script);
+                bail!("Diri didn't start the session: {}", String::from_utf8_lossy(&out.stderr).trim());
+            }
+            // Bring it forward, where the new session is.
+            open.arg(app);
+        }
+        _ => {
+            open.arg("-a").arg(terminal).arg(&script);
+        }
     }
     let out = open.output()?;
     if !out.status.success() {
@@ -173,6 +201,8 @@ mod tests {
         assert_eq!(safe("my shop!"), "my-shop-");
         assert_eq!(safe(""), "session");
         assert_eq!(app(" Warp "), "Warp");
+        assert_eq!(app(""), "Terminal");
+        assert!(installed().contains(&"Terminal".to_string()));
     }
 
     /// Opens a real terminal window, as New Agent Session does: run with `--ignored`, with
@@ -185,7 +215,7 @@ mod tests {
             return;
         };
         let terminal = app(&std::env::var("ASIDES_TERMINAL").unwrap_or_default());
-        open(&terminal, Path::new(&dir), &command).unwrap();
+        open(&terminal, Path::new(&dir), &command, "asides test").unwrap();
     }
 
     #[test]
