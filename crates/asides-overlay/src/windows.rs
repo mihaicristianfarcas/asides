@@ -67,13 +67,13 @@ pub struct Spare {
 }
 
 /// What a spare window draws as it opens (hidden): text in the sizes and weights the overlay's
-/// labels and toolbar use, so the frozen screen it becomes finds the font matched and the glyphs
+/// labels and pill use, so the frozen screen it becomes finds the font matched and the glyphs
 /// drawn in its atlas (its first draw took 7 ms longer).
 struct WarmUp;
 
 impl Render for WarmUp {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let text = "Measure Annotate Draw Shot Done Send 0123456789 px pt × · \
+        let text = "Claude Code · Codex OpenCode Measure Annotate Draw Shot 0123456789:‘’“” px pt × · \
                     abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let line = |size: f32, weight: FontWeight| div().text_size(px(size)).font_weight(weight).child(text);
         div()

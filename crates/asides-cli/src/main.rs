@@ -109,6 +109,9 @@ enum Command {
 }
 
 fn main() {
+    // `asides history | head`: a closed pipe ends it quietly, as it does other commands.
+    // SAFETY: before any thread exists.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     let cli = Cli::parse();
     if let Err(err) = run(cli) {
         eprintln!("asides: {err:#}");
