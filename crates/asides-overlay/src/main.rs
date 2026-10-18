@@ -7,6 +7,9 @@
 //!
 //! With a script in the session (`asides simulate-measure`), it plays it without any window and
 //! writes the result.
+//!
+//! Started with `--window`, it's the Asides window instead (`window.rs`): History, Sessions and
+//! Settings.
 
 mod assets;
 mod export;
@@ -17,12 +20,13 @@ mod native;
 mod replay;
 mod style;
 mod ui;
+mod window;
 mod windows;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
-use asides_core::helper::{Command, Event, STANDBY, Spec};
+use asides_core::helper::{Command, Event, STANDBY, Spec, WINDOW};
 use asides_core::measure::{Frame, Tolerance};
 use asides_core::overlay::{Action, Placed, Saved, Script, Session};
 use gpui::{App, AppContext, Application};
@@ -31,11 +35,14 @@ use crate::ui::Overlay;
 
 fn main() {
     let Some(arg) = std::env::args_os().nth(1) else {
-        eprintln!("usage: asides-overlay <session directory> | {STANDBY}");
+        eprintln!("usage: asides-overlay <session directory> | {STANDBY} | {WINDOW}");
         std::process::exit(2);
     };
     if arg == STANDBY {
         return standby();
+    }
+    if arg == WINDOW {
+        return window::run();
     }
     if let Err(err) = run(Path::new(&arg)) {
         failed(&err);

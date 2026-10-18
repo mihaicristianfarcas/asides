@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 asides-core.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Shaders compiled at launch (Metal caches them): building needs no Metal toolchain (full Xcode).
