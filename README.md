@@ -655,13 +655,14 @@ language (often a short one, or an accent), Asides keeps the language it was las
   Security → Screen & System Audio Recording, then quit and reopen Asides.
 - **Distances stop at the wrong place, or go through an edge.** Change the tolerance with `-` and
   `=`: lower it to see faint borders (a light card on white), raise it (or press `T`) to look through
-  borders and hard shadows. Soft shadows, gradients and what glass blurs behind it never stop them.
+  borders and hard shadows. Soft shadows, gradients, what glass blurs behind it and changes too
+  faint to see never stop them.
 - **Annotations only name the app.** Turn on Identify UI Elements and allow Asides under
   Accessibility. Chrome and Electron apps build their accessibility tree on the first query, so
   the first annotation in them may only name the window.
 - **A key does something else in the overlay.** Your keyboard layout may put it elsewhere; change it
   in `[measure.keys]`.
-- **The menu bar says "No repo".** Asides isn't bound to a directory (or it was deleted): run `asides`
+- **The menu bar shows empty brackets.** Asides isn't bound to a directory (or it was deleted): run `asides`
   in your project, or pick one under Directory. Until then it won't record.
 
 ## How it works
@@ -683,8 +684,10 @@ language (often a short one, or an accent), Asides keeps the language it was las
   languages partway through, it can drop the part in the other language.
 - **Measuring.** ScreenCaptureKit takes one sRGB screenshot per screen, so colors read like the CSS
   that drew them. Edges are where the color changes sharply, from one pixel to the next (or over two
-  anti-aliased pixels) by more than the tolerance; slow changes aren't edges, however far they go, so
-  measuring works on glass and frosted surfaces, over gradients and through soft shadows. An area
+  anti-aliased pixels) by more than the tolerance, visibly (compared as the eye sees colors, in
+  OKLab), and within a few pixels; slow changes aren't edges, however far they go, so measuring works
+  on glass and frosted surfaces, over gradients and through soft shadows, and on colors only the
+  display can show. An area
   snaps to the bounds of what's drawn inside it: whatever its outline can't reach without crossing
   an edge. The same Rust code measures in the overlay, in `asides measure` and in `measure_image`.
 - **Sessions.** Each agent session has a small record in `~/Library/Application Support/Asides/sessions/`.

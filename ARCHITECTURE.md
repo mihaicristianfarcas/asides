@@ -487,12 +487,21 @@ Break these only on purpose, and update this document when you do.
   colors that produced them, not the display profile's. On macOS 26 the screenshots come from its
   newer API, which keeps windows' shadows (the frozen screen looks exactly like the live one), and
   are converted to sRGB.
-- **Edges are sharp changes.** An edge is where a pixel differs by more than the tolerance from the
-  one before it, or from the one two before (anti-aliasing spreads an edge over two pixels). Slow
-  changes aren't edges, however far they drift: on glass and frosted materials (macOS 26's Liquid
-  Glass, vibrancy) the blurred background changes by a level or two a pixel and drifts by a hundred
-  across a panel, while what's drawn on them jumps by tens; gradients and soft shadows are the same.
-  Comparing with the scan's first pixel instead stopped wherever the drift passed the tolerance.
+- **Edges are sharp, visible changes.** An edge is where a pixel differs by more than the tolerance
+  from the one before it, or from the one two before (anti-aliasing spreads an edge over two
+  pixels), visibly, and all at once. Slow changes aren't edges, however far they drift: on glass and
+  frosted materials (macOS 26's Liquid Glass, vibrancy) the blurred background changes by a level or
+  two a pixel and drifts by a hundred across a panel, while what's drawn on them jumps by tens;
+  gradients and soft shadows are the same. Comparing with the scan's first pixel instead stopped
+  wherever the drift passed the tolerance. Over a bright, high-contrast background (a cloud behind a
+  menu), the blur can change faster than the tolerance, but it keeps changing that way for tens of
+  pixels: an edge's change spreads over at most a dozen (`measure::EDGE_WIDTH`; a soft edge in a
+  painting scaled up to the screen takes about seven). And a change must be one the eye can see:
+  the screen shows colors sRGB can't (Display P3), and converted to sRGB their clipped channels
+  jump by 3 to 6 levels from one pixel to the next where the screen changes by one. Two colors
+  closer than 0.008 in OKLab look the same (`measure::INVISIBLE`; a 6-level step between light grays
+  is 0.015, that jitter 0.003). The edge masks are worked out a band of rows per thread
+  (`measure::by_rows`), since areas are snapped on every frame of a drag.
   An area's content is whatever the background on its outline can't reach without crossing an
   edge (a scanline fill), so no background color is needed: the outline's background is its longest
   stretch without an edge, those colored like it, and any as long as a quarter of it, so a button

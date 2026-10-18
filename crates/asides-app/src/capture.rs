@@ -223,3 +223,27 @@ pub fn to_frame(image: &CGImage) -> Option<Frame> {
     }
     Frame::new(width as u32, height as u32, rgba)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Captures the main display as a freeze does (in sRGB, 2 pixels a point) into
+    /// `$ASIDES_CAPTURE_DUMP/freeze-<width>x<height>.rgba`: the pixels Measure works on, which a
+    /// screenshot in the display's colors isn't. `--ignored`; needs the Screen Recording permission.
+    #[test]
+    #[ignore]
+    fn dumps_a_freeze() {
+        let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
+        let display = objc2_core_graphics::CGMainDisplayID();
+        let bounds = objc2_core_graphics::CGDisplayBounds(display);
+        let (w, h) = ((bounds.size.width * 2.0) as usize, (bounds.size.height * 2.0) as usize);
+        let (tx, rx) = std::sync::mpsc::channel();
+        capture(vec![(display, w, h)], None, move |r| {
+            let _ = tx.send(r);
+        });
+        let captures = rx.recv().unwrap().unwrap();
+        let f = &captures[0].frame;
+        std::fs::write(dir.join(format!("freeze-{}x{}.rgba", f.width, f.height)), &f.rgba).unwrap();
+    }
+}

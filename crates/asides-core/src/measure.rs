@@ -3,11 +3,15 @@
 //! guide, the edge it should snap to. Everything works on a frozen frame (a screenshot) in pixels,
 //! origin top-left. An edge is where the color changes sharply: a pixel differs from the one before
 //! it, or from the one two before (an edge anti-aliasing spread over two pixels), by more than the
-//! tolerance. Slow changes aren't edges, however far they go: gradients, soft shadows, and what
-//! glass and frosted materials blur behind them (one or two levels a pixel, where an edge drawn on
-//! them jumps by tens). Raising the tolerance also looks through faint borders and hard shadows.
+//! tolerance, visibly, and all at once. Slow changes aren't edges, however far they go: gradients,
+//! soft shadows, and what glass and frosted materials blur behind them, which take many pixels to
+//! change even where they change fast. Nor are changes the eye can't see, however far apart the
+//! channels are: a screen shows colors sRGB can't, and in sRGB their clipped channels jump by
+//! several levels from one pixel to the next. Raising the tolerance also looks through faint borders
+//! and hard shadows.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// A screenshot as straight RGBA, row after row, `width * height * 4` bytes.
 #[derive(Debug, Clone, PartialEq)]
@@ -220,7 +224,6 @@ impl Frame {
 
 /// The largest difference between two colors' channels.
 pub fn difference(a: Rgb, b: Rgb) -> u8 {
-    let channel = |c: Rgb, shift: u32| ((c >> shift) & 0xff) as i32;
     [16, 8, 0].iter().map(|&s| (channel(a, s) - channel(b, s)).unsigned_abs()).max().unwrap_or(0) as u8
 }
 
@@ -229,22 +232,138 @@ pub fn hex(rgb: Rgb) -> String {
     format!("#{:06X}", rgb & 0xff_ffff)
 }
 
-/// Whether the color changes sharply at `at`, coming from `before`: by more than `threshold` from
-/// the pixel just before, or from the one two before (`two_before`, when it's on the same run), for
-/// an edge that anti-aliasing spread over two pixels.
-fn sharp(at: Rgb, before: Rgb, two_before: Option<Rgb>, threshold: u8) -> bool {
-    difference(at, before) > threshold || two_before.is_some_and(|p| difference(at, p) > threshold)
+fn channel(rgb: Rgb, shift: u32) -> i32 {
+    ((rgb >> shift) & 0xff) as i32
 }
 
-/// The run through `at` on a line of `len` pixels (`pixel(i)`), up to the first sharp change on
-/// either side.
-fn run(len: u32, at: u32, threshold: u8, pixel: impl Fn(u32) -> Rgb) -> Span {
+/// How far apart two colors look: their distance in OKLab, where people start to notice a difference
+/// around 0.02.
+fn apparent_difference(a: Rgb, b: Rgb) -> f32 {
+    let (a, b) = (oklab(a), oklab(b));
+    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+}
+
+/// Two colors closer than this look the same: a 6-level step between light grays is about 0.015,
+/// a red channel clipped at 0 that jumps to 12 in a sky blue 0.003.
+const INVISIBLE: f32 = 0.008;
+/// Channels further apart than this always look different (it takes about 40 levels in that sky
+/// blue's red), so their colors aren't compared in OKLab: most edges, text's among them.
+const SURELY_VISIBLE: u8 = 32;
+
+fn oklab(rgb: Rgb) -> [f32; 3] {
+    static LINEAR: OnceLock<[f32; 256]> = OnceLock::new();
+    let linear = LINEAR.get_or_init(|| {
+        std::array::from_fn(|v| {
+            let c = v as f32 / 255.0;
+            if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        })
+    });
+    let [r, g, b] = [16, 8, 0].map(|s| linear[channel(rgb, s) as usize]);
+    let l = cbrt(0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b);
+    let m = cbrt(0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b);
+    let s = cbrt(0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b);
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
+}
+
+/// The cube root of `x` (0 to 1), to a hundred-thousandth: a guess from its bits, then two of
+/// Newton's steps. Several times faster than `f32::cbrt`, and noisy screens need millions.
+fn cbrt(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let mut y = f32::from_bits(x.to_bits() / 3 + 709_921_077);
+    y = (2.0 * y + x / (y * y)) / 3.0;
+    (2.0 * y + x / (y * y)) / 3.0
+}
+
+/// A row or a column of a frame's pixels.
+#[derive(Clone, Copy)]
+struct Line<'a> {
+    rgba: &'a [u8],
+    /// Where its first pixel is, and how far apart its pixels are, in bytes.
+    start: usize,
+    step: usize,
+    len: u32,
+}
+
+impl<'a> Line<'a> {
+    fn row(frame: &'a Frame, y: u32) -> Line<'a> {
+        Line { rgba: &frame.rgba, start: y as usize * frame.width as usize * 4, step: 4, len: frame.width }
+    }
+
+    fn column(frame: &'a Frame, x: u32) -> Line<'a> {
+        Line { rgba: &frame.rgba, start: x as usize * 4, step: frame.width as usize * 4, len: frame.height }
+    }
+
+    /// Channel `c` (0 red, 1 green, 2 blue) of pixel `i`.
+    fn level(&self, i: u32, c: usize) -> i32 {
+        self.rgba[self.start + i as usize * self.step + c] as i32
+    }
+
+    fn rgb(&self, i: u32) -> Rgb {
+        let p = &self.rgba[self.start + i as usize * self.step..][..3];
+        (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32
+    }
+}
+
+/// The most pixels an edge's change spreads over: two or three when it's sharp, up to a dozen when
+/// it's soft (a cloud in a painting, scaled up to the screen). A gradient, a shadow or what glass
+/// blurs behind it takes more.
+const EDGE_WIDTH: u32 = 12;
+
+/// Whether the change from pixel `from` to pixel `to` (one or two further along a line) is an edge: by more than `threshold`, visible, and over at most [`EDGE_WIDTH`] pixels.
+/// Its width is how far the line keeps changing that way, along the channel that changes most:
+/// each pixel by at least a quarter of the largest change (and half the threshold) from the one two
+/// before, so that a blur changing unevenly (1, 4, 2, 3 levels a pixel) still counts as one change.
+/// An edge on a gradient stops where the gradient's slow change takes over.
+fn is_edge(line: &Line, from: u32, to: u32, threshold: u8) -> bool {
+    let (a, b) = (line.rgb(from), line.rgb(to));
+    let differ = difference(a, b);
+    if differ <= threshold || (differ <= SURELY_VISIBLE && apparent_difference(a, b) < INVISIBLE) {
+        return false;
+    }
+    let c = (0..3).max_by_key(|&c| line.level(from, c).abs_diff(line.level(to, c))).unwrap_or(0);
+    let rising = line.level(to, c) > line.level(from, c);
+    // The change from pixel `i` to pixel `j`, positive when it goes the edge's way.
+    let rise = |i: u32, j: u32| {
+        let r = line.level(j, c) - line.level(i, c);
+        if rising { r } else { -r }
+    };
+    let mut peak = rise(from, to);
+    let (mut first, mut last) = (from, to);
+    while last - first <= EDGE_WIDTH {
+        let least = (peak / 4).max((threshold as i32 + 1) / 2).max(1);
+        let before = (first > 0).then(|| rise(first - 1, first + 1)).filter(|&r| r >= least);
+        let after = (last + 1 < line.len).then(|| rise(last - 1, last + 1)).filter(|&r| r >= least);
+        if before.is_none() && after.is_none() {
+            return true;
+        }
+        if let Some(r) = before {
+            first -= 1;
+            peak = peak.max(r);
+        }
+        if let Some(r) = after {
+            last += 1;
+            peak = peak.max(r);
+        }
+    }
+    false
+}
+
+/// The run through pixel `at` of a line, up to the first edge on either side: between neighbours, or
+/// between pixels two apart on the run (an edge anti-aliasing spread over two pixels).
+fn run(line: &Line, at: u32, threshold: u8) -> Span {
+    let edge = |from: u32, to: u32| is_edge(line, from, to, threshold);
     let mut end = at + 1;
-    while end < len && !sharp(pixel(end), pixel(end - 1), (end >= at + 2).then(|| pixel(end - 2)), threshold) {
+    while end < line.len && !edge(end - 1, end) && !(end >= at + 2 && edge(end - 2, end)) {
         end += 1;
     }
     let mut start = at;
-    while start > 0 && !sharp(pixel(start - 1), pixel(start), (start < at).then(|| pixel(start + 1)), threshold) {
+    while start > 0 && !edge(start - 1, start) && !(start < at && edge(start - 1, start + 1)) {
         start -= 1;
     }
     Span { start, end }
@@ -256,8 +375,8 @@ pub fn distance_at(frame: &Frame, x: u32, y: u32, tolerance: Tolerance, stops: &
         return None;
     }
     let threshold = tolerance.threshold();
-    let across = run(frame.width, x, threshold, |i| frame.rgb(i, y));
-    let down = run(frame.height, y, threshold, |i| frame.rgb(x, i));
+    let across = run(&Line::row(frame, y), x, threshold);
+    let down = run(&Line::column(frame, x), y, threshold);
     let (left, right) = clip_to_stops(across.start, across.end, x, &stops.x);
     let (top, bottom) = clip_to_stops(down.start, down.end, y, &stops.y);
     Some(Distance { x, y, horizontal: Span { start: left, end: right }, vertical: Span { start: top, end: bottom } })
@@ -295,6 +414,38 @@ pub fn background(frame: &Frame, rect: Rect) -> Option<Rgb> {
     counts.into_iter().max_by_key(|&(rgb, n)| (n, rgb)).map(|(rgb, _)| rgb)
 }
 
+/// Whether each pixel of `a` differs from the one at the same place in `b` by more than `threshold`,
+/// into `out` (byte by byte first, into `bytes`, which vectorizes).
+fn differ(a: &[u8], b: &[u8], threshold: u8, bytes: &mut [u8], out: &mut [bool]) {
+    let n = a.len().min(b.len());
+    for ((d, p), q) in bytes[..n].iter_mut().zip(&a[..n]).zip(&b[..n]) {
+        *d = p.abs_diff(*q);
+    }
+    for (px, d) in bytes[..n].as_chunks::<4>().0.iter().zip(out.iter_mut()) {
+        *d = px[0].max(px[1]).max(px[2]) > threshold;
+    }
+}
+
+/// Fills `out`, rows `w` wide, a band of rows at a time (`fill(first row, its rows)`): on several
+/// threads when it's large enough to be worth them.
+fn by_rows<T: Send>(out: &mut [T], w: usize, fill: impl Fn(usize, &mut [T]) + Sync) {
+    let h = out.len() / w.max(1);
+    let threads = match out.len() {
+        0..0x40000 => 1,
+        _ => std::thread::available_parallelism().map_or(1, |n| n.get()).min(8),
+    };
+    if threads <= 1 || h < 2 {
+        return fill(0, out);
+    }
+    let band = h.div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (k, rows) in out.chunks_mut(band * w).enumerate() {
+            let fill = &fill;
+            scope.spawn(move || fill(k * band, rows));
+        }
+    });
+}
+
 /// Which pixels of `rect` (row by row) are drawn on its background: those the background on its
 /// outline can't reach without crossing a sharp change, stepping across and down. What the
 /// background does on the way doesn't matter (a gradient, a soft shadow, what glass blurs behind
@@ -304,8 +455,9 @@ pub fn background(frame: &Frame, rect: Rect) -> Option<Rgb> {
 ///
 /// Between two neighbours there's an edge when they differ by more than `threshold`, or when one
 /// of them and the pixel beyond the other do while that pair is alike: an edge that anti-aliasing
-/// spread over two pixels, whichever way it's crossed. The edges are found a row at a time, then
-/// the background filled a stretch of a row at a time (a scanline fill).
+/// spread over two pixels, whichever way it's crossed. Either way, only a visible change over a few
+/// pixels is one (see [`is_edge`]). The edges are found a row at a time, then the background filled a
+/// stretch of a row at a time (a scanline fill).
 fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
     let (w, h) = (rect.width as usize, rect.height as usize);
     let stride = frame.width as usize * 4;
@@ -313,50 +465,49 @@ fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
         let start = (rect.y as usize + y) * stride + rect.x as usize * 4;
         &frame.rgba[start..start + w * 4]
     };
-    // Whether each pixel of `a` differs from the one at the same place in `b` (byte by byte first,
-    // which vectorizes).
-    let mut bytes = vec![0u8; w * 4];
-    let mut differ = |a: &[u8], b: &[u8], out: &mut [bool]| {
-        let n = a.len().min(b.len());
-        for ((d, p), q) in bytes[..n].iter_mut().zip(&a[..n]).zip(&b[..n]) {
-            *d = p.abs_diff(*q);
-        }
-        for (px, d) in bytes[..n].as_chunks::<4>().0.iter().zip(out.iter_mut()) {
-            *d = px[0].max(px[1]).max(px[2]) > threshold;
-        }
-    };
     // Across: `edge_across[y * w + x]`, between (x - 1, y) and (x, y).
     let mut edge_across = vec![false; w * h];
-    let (mut one, mut two) = (vec![false; w], vec![false; w]);
-    for y in 0..h {
-        let r = row(y);
-        // one[k]: pixels k and k + 1 differ; two[k]: k and k + 2.
-        differ(&r[..w.saturating_sub(1) * 4], &r[4.min(r.len())..], &mut one);
-        differ(&r[..w.saturating_sub(2) * 4], &r[8.min(r.len())..], &mut two);
-        for x in 1..w {
-            edge_across[y * w + x] =
-                one[x - 1] || (x >= 2 && two[x - 2] && !one[x - 2]) || (x + 1 < w && two[x - 1] && !one[x]);
+    by_rows(&mut edge_across, w, |first, rows| {
+        let (mut one, mut two, mut bytes) = (vec![false; w], vec![false; w], vec![0u8; w * 4]);
+        for (y, out) in (first..).zip(rows.chunks_mut(w)) {
+            let r = row(y);
+            // one[k]: pixels k and k + 1 differ; two[k]: k and k + 2.
+            differ(&r[..w.saturating_sub(1) * 4], &r[4.min(r.len())..], threshold, &mut bytes, &mut one);
+            differ(&r[..w.saturating_sub(2) * 4], &r[8.min(r.len())..], threshold, &mut bytes, &mut two);
+            let line = Line::row(frame, rect.y + y as u32);
+            let edge = |from: usize, to: usize| is_edge(&line, rect.x + from as u32, rect.x + to as u32, threshold);
+            for x in 1..w {
+                out[x] = (one[x - 1] && edge(x - 1, x))
+                    || (x >= 2 && two[x - 2] && !one[x - 2] && edge(x - 2, x))
+                    || (x + 1 < w && two[x - 1] && !one[x] && edge(x - 1, x + 1));
+            }
         }
-    }
+    });
     // Down: rows that differ by one and by two, then `edge_down[y * w + x]`, between (x, y - 1)
     // and (x, y).
     let mut down_one = vec![false; w * h];
     let mut down_two = vec![false; w * h];
-    for y in 1..h {
-        differ(row(y - 1), row(y), &mut down_one[y * w..(y + 1) * w]);
-        if y >= 2 {
-            differ(row(y - 2), row(y), &mut down_two[y * w..(y + 1) * w]);
-        }
+    for (down, apart) in [(&mut down_one, 1), (&mut down_two, 2)] {
+        by_rows(down, w, |first, rows| {
+            let mut bytes = vec![0u8; w * 4];
+            for (y, out) in (first..).zip(rows.chunks_mut(w)).filter(|(y, _)| *y >= apart) {
+                differ(row(y - apart), row(y), threshold, &mut bytes, out);
+            }
+        });
     }
     let mut edge_down = vec![false; w * h];
-    for y in 1..h {
-        for x in 0..w {
-            let i = y * w + x;
-            edge_down[i] = down_one[i]
-                || (y >= 2 && down_two[i] && !down_one[i - w])
-                || (y + 1 < h && down_two[i + w] && !down_one[i + w]);
+    by_rows(&mut edge_down, w, |first, rows| {
+        for (y, out) in (first..).zip(rows.chunks_mut(w)).filter(|(y, _)| *y >= 1) {
+            for (x, edge_down) in out.iter_mut().enumerate() {
+                let i = y * w + x;
+                let line = Line::column(frame, rect.x + x as u32);
+                let edge = |from: usize, to: usize| is_edge(&line, rect.y + from as u32, rect.y + to as u32, threshold);
+                *edge_down = (down_one[i] && edge(y - 1, y))
+                    || (y >= 2 && down_two[i] && !down_one[i - w] && edge(y - 2, y))
+                    || (y + 1 < h && down_two[i + w] && !down_one[i + w] && edge(y - 1, y + 1));
+            }
         }
-    }
+    });
     drop((down_one, down_two));
     let mut reached = vec![false; w * h];
     let pixel = |x: usize, y: usize| {
@@ -462,7 +613,11 @@ pub fn snap_area(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Rect
     if rect.is_empty() {
         return None;
     }
-    let content = content_map(frame, rect, tolerance.threshold());
+    bounds(&content_map(frame, rect, tolerance.threshold()), rect)
+}
+
+/// The smallest rectangle holding the content pixels of `rect` (`content`, row by row).
+fn bounds(content: &[bool], rect: Rect) -> Option<Rect> {
     let w = rect.width as usize;
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
     for (i, _) in content.iter().enumerate().filter(|(_, c)| **c) {
@@ -567,17 +722,13 @@ pub fn nearest_edge(frame: &Frame, axis: Axis, x: u32, y: u32, radius: u32, tole
         return None;
     }
     let threshold = tolerance.threshold();
-    let (at, limit) = match axis {
-        Axis::X => (x, frame.width),
-        Axis::Y => (y, frame.height),
+    let (at, line) = match axis {
+        Axis::X => (x, Line::row(frame, y)),
+        Axis::Y => (y, Line::column(frame, x)),
     };
-    let pixel = |i: u32| match axis {
-        Axis::X => frame.rgb(i, y),
-        Axis::Y => frame.rgb(x, i),
-    };
-    let is_edge = |b: u32| b > 0 && b < limit && difference(pixel(b - 1), pixel(b)) > threshold;
+    let edge = |b: u32| b > 0 && b < line.len && is_edge(&line, b - 1, b, threshold);
     // The boundaries `d` pixels away on either side of the pixel at `at`, closest first.
-    (0..=radius).find_map(|d| [at.checked_sub(d), at.checked_add(d + 1)].into_iter().flatten().find(|&b| is_edge(b)))
+    (0..=radius).find_map(|d| [at.checked_sub(d), at.checked_add(d + 1)].into_iter().flatten().find(|&b| edge(b)))
 }
 
 /// How far the content inside `rect` sits from its sides: top, right, bottom, left.
@@ -609,7 +760,7 @@ pub fn appearance(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<App
         *counts.entry(frame.rgb(rect.x + (i % w) as u32, rect.y + (i / w) as u32)).or_default() += 1;
     }
     let foreground = counts.into_iter().max_by_key(|&(rgb, n)| (n, rgb)).map(|(rgb, _)| rgb);
-    let content = snap_area(frame, rect, tolerance);
+    let content = bounds(&content, rect);
     let insets = content.map(|c| Insets {
         top: c.y - rect.y,
         right: rect.right() - c.right(),
@@ -814,6 +965,76 @@ mod tests {
         // An area across the edge has two backgrounds and nothing drawn on them.
         assert_eq!(snap_area(&frame, Rect::new(5, 5, 90, 30), Tolerance::DEFAULT), None);
         assert_eq!(snap_area(&frame, Rect::new(5, 5, 40, 30), Tolerance::DEFAULT), None);
+    }
+
+    #[test]
+    fn colors_that_look_the_same_are_not_edges() {
+        // A sky blue the screen shows but sRGB can't: its red, clipped at 0, jumps between 0, 3 and
+        // 6 from one pixel to the next. A card on it, and a smaller one 6 levels off the first.
+        let mut frame = Frame::filled(200, 100, 0x0070b1);
+        for y in 0..100 {
+            for x in 0..200 {
+                let red = [0, 3, 6, 3, 0, 0, 6][((x * 7 + y * 13) ^ (x / 3)) as usize % 7];
+                frame.fill(Rect::new(x, y, 1, 1), red << 16 | 0x70b1);
+            }
+        }
+        frame.fill(Rect::new(140, 40, 40, 20), 0xf3f4f6);
+        frame.fill(Rect::new(150, 45, 20, 10), 0xf9fafb);
+        let d = distance_at(&frame, 60, 50, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!((d.horizontal, d.vertical), (Span { start: 0, end: 140 }, Span { start: 0, end: 100 }));
+        assert_eq!(snap_area(&frame, Rect::new(10, 10, 100, 80), Tolerance::DEFAULT), None);
+        assert_eq!(snap_area(&frame, Rect::new(130, 30, 60, 40), Tolerance::DEFAULT), Some(Rect::new(140, 40, 40, 20)));
+        // The faint card is still an edge: it can be seen.
+        let d = distance_at(&frame, 145, 50, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!(d.horizontal, Span { start: 140, end: 150 });
+    }
+
+    /// A line's colors, changing from `from` to `to` over `width` pixels from `at` (a smooth step).
+    fn blend(from: Rgb, to: Rgb, at: u32, width: u32) -> impl Fn(u32) -> Rgb {
+        move |x| {
+            let t = (x.saturating_sub(at) as f64 / width as f64).min(1.0);
+            let t = t * t * (3.0 - 2.0 * t);
+            let mix = |s: u32| {
+                let (a, b) = (channel(from, s) as f64, channel(to, s) as f64);
+                ((a + (b - a) * t).round() as u32) << s
+            };
+            mix(16) | mix(8) | mix(0)
+        }
+    }
+
+    #[test]
+    fn looks_through_a_strong_blur_but_not_a_soft_edge() {
+        // Dark glass over a cloud and the sky: behind it, the cloud's edge blurred over 40 px,
+        // changing by up to 8 levels a pixel. A border around the glass, a button on it.
+        let mut frame = Frame::filled(300, 120, 0x0070b1);
+        let behind = blend(0x7d7a6e, 0x183f63, 60, 40);
+        for x in 20..280 {
+            frame.fill(Rect::new(x, 10, 1, 100), behind(x));
+        }
+        for side in [
+            Rect::new(20, 10, 260, 1),
+            Rect::new(20, 109, 260, 1),
+            Rect::new(20, 10, 1, 100),
+            Rect::new(279, 10, 1, 100),
+        ] {
+            frame.fill(side, 0x5a5a5f);
+        }
+        frame.fill(Rect::new(200, 70, 50, 20), 0xe6e6eb);
+        let d = distance_at(&frame, 80, 40, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert_eq!((d.horizontal, d.vertical), (Span { start: 21, end: 279 }, Span { start: 11, end: 109 }));
+        assert_eq!(snap_area(&frame, Rect::new(30, 20, 150, 80), Tolerance::DEFAULT), None);
+        assert_eq!(
+            snap_area(&frame, Rect::new(150, 60, 120, 40), Tolerance::DEFAULT),
+            Some(Rect::new(200, 70, 50, 20))
+        );
+        // The same cloud, sharp, scaled up to the screen: its edge spreads over 8 px, and is one.
+        let mut frame = Frame::filled(200, 40, 0x0070b1);
+        let cloud = blend(0x0070b1, 0xe6e6dc, 100, 8);
+        for x in 0..200 {
+            frame.fill(Rect::new(x, 0, 1, 40), cloud(x));
+        }
+        let d = distance_at(&frame, 40, 20, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        assert!((100..104).contains(&d.horizontal.end), "{:?}", d.horizontal);
     }
 
     #[test]

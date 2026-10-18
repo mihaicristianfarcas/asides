@@ -105,7 +105,10 @@ rendered offscreen by the overlay's exporter):
 ASIDES_OVERLAY_DUMP=/tmp/overlay cargo test -p asides-overlay renders_annotations
 ```
 
-It writes `session.png`. To try a session of your own on any screenshot, with an installed
+It writes `session.png`. Measure works on a freeze's pixels, in sRGB, which a screenshot in the
+display's colors (`screencapture`'s) isn't: to measure what a freeze sees, capture one with
+`ASIDES_CAPTURE_DUMP=/tmp/freeze cargo test -p asides-app dumps_a_freeze -- --ignored` (it writes
+RGBA; needs Screen Recording). To try a session of your own on any screenshot, with an installed
 dev-hooks build (`make install FEATURES=dev-hooks`):
 
 ```bash
@@ -217,6 +220,9 @@ in your pull request what you tried.
   - `⌘C` puts `W × H` on the clipboard; `C` the image (and it isn't attached twice while recording)
   - right-click: the menu; on a held object, its screenshot; its camera on hover
   - `⌫` undoes, `X` clears, `Tab` hides everything, `R` restores the last session's guides
+  - over a glass menu on a bright wallpaper (a sky with clouds), distances go through what the glass
+    blurs to the menu's edges and separators; on the empty sky they reach the clouds, and an area
+    there finds nothing
 - [ ] **Measure & Annotate, annotating and drawing:**
   - `A`, then click a button in Safari or Chrome: marker 1, the card takes typing right away (with
     diacritics, an input method, and ⌘V), long text wraps and the card grows, the dots and

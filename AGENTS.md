@@ -377,6 +377,12 @@ The user may record a request and ask you to "implement the note". Find it with
 - The agent CLIs write into your home on their first run, even for `--version` (Copilot unpacks
   170 MB into `~/Library/Caches/copilot`; Gemini makes `~/.gemini`): install them into a scratch
   prefix (`npm install --prefix`) and run them with a scratch `HOME`.
+- A freeze is in sRGB, but the display's colors are Display P3: a saturated blue (a sky wallpaper)
+  is outside sRGB, its red clipped near 0, where one level of the screen's is 3 to 6 of sRGB's. Those
+  jumps were edges (phantom stops on an empty sky, objects in a blur behind glass) until edges had to
+  be visible (OKLab). `screencapture` saves the display's colors, so it doesn't show this: test
+  measuring on what a freeze captures (`dumps_a_freeze` in `capture.rs`), or convert with `sips
+  --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`.
 - `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
   run --help`, which does print help) before trying its commands.
 
