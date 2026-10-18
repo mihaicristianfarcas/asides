@@ -152,7 +152,8 @@ in your pull request what you tried.
 - [ ] **Screenshots:** `⌃⇧⌘4` while talking is placed at the right sentence; `⌃⌥V` with Asides open
   goes in its aside; closed, it appends to the note.
 - [ ] **Menu:**
-  - the icon states: idle, red with a timer, ellipsis, `✓ #N`, warning
+  - the icon states: idle, red with the time beside it, ellipsis, the entry's number (`[5]`, wider for
+    `[12]`), warning; nothing else beside the brackets
   - Directory switching: recent repos and Choose Directory… (focus returns to your previous app)
   - every Preferences item is saved to `config.toml`
 - [ ] **Robustness:**
@@ -249,7 +250,7 @@ in your pull request what you tried.
   - `⌘S`: a dragged screenshot is on the clipboard, and in the aside after Done
 - [ ] **Toolbar and keys:** icons only, names on hover; hovering `?` shows the keys; on a frozen
   screen `⇧Tab` hides the toolbar (a timer stays while recording) and it stays hidden next time.
-- [ ] **No repo:** with Asides unbound (or bound to a deleted folder), the menu bar shows "No repo";
+- [ ] **No repo:** with Asides unbound (or bound to a deleted folder), the menu bar shows `[ ]` alone;
   a frozen screen says so at the top, and Space, the microphone and Done say why they don't act.
 - [ ] **Talking:**
   - live (▶), hold `⌃⌥Space`, speak while clicking through the browser, let go, then freeze,
@@ -270,9 +271,9 @@ in your pull request what you tried.
   - the entry says where you were (`**In:** Safari · "…" · http://…`) where you started talking,
     and again, before what you said there, after you switched apps live and talked there; a
     screenshot with only measurements says it too
-- [ ] **Agent replies:** an agent's `resolve_aside` flashes `[✓] #N` in the menu bar (`dismiss_aside`
-  `[–] #N`, `reply_to_aside` `[?] #N`) and shows under Agent Replies; the note line counts the open
-  asides.
+- [ ] **Agent replies:** an agent's `resolve_aside` flashes `[✓]` in the menu bar (`dismiss_aside`
+  `[–]`, `reply_to_aside` `[?]`), the menu's first line says which aside, and it shows under Agent
+  Replies; the note line counts the open asides.
 
 ## Common changes
 

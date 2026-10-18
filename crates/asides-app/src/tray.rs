@@ -137,7 +137,7 @@ pub struct Tray {
 /// What the menu should show; computed by the app on every change.
 pub struct View<'a> {
     pub mark: Mark,
-    pub icon: &'a StatusIcon,
+    pub icon: StatusIcon,
     pub title: Option<String>,
     pub status: String,
     /// Asides is open, and its screen frozen.

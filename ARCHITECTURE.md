@@ -213,7 +213,8 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
      `auto_new_note`) when the latest was started on another git branch or not written to for 8
      hours (`notes::moved_on`); the CLI and the menu say so before the next recording
    - saves images and optional audio, composes the entry and appends it
-5. **Outcome:** the main thread flashes `✓ #N`, re-reads the latest note and publishes the state.
+5. **Outcome:** the main thread flashes the entry's number between the brackets (`[5]`), re-reads
+   the latest note and publishes the state.
 
 ### Asides: live and frozen
 
@@ -609,9 +610,11 @@ Break these only on purpose, and update this document when you do.
 - **The status item is the app's mark.** Every status is the letter a's brackets with something
   between them (the a when ready, a dot while recording, dots while transcribing, a check when
   added, a cross when cancelled…), so the menu bar and the app icon are one shape. A moment's mark
-  (`icons::Mark`, an app `Flash`) says what happened on its own; beside the brackets goes only a
-  word or a number (`#3`, `→ Codex`), never a second symbol. tray-icon takes RGBA, so `icons.rs` draws them itself, from
-  strokes and circles, as template images the system tints for light and dark menu bars (red while
+  (`icons::Mark`, an app `Flash`) says what happened on its own, and the menu says the rest: beside
+  the brackets goes nothing but a recording's time or a download's progress. An entry just added
+  shows its number between them (`[5]`), in digits drawn in the same strokes; for two digits or more
+  the brackets move apart. tray-icon takes RGBA, so `icons.rs` draws them itself, from strokes and
+  circles, as template images the system tints for light and dark menu bars (red while
   recording). tray-icon caps icons at 22 pt, so they are drawn on a 22 pt canvas at 2×.
 - **Shortcuts through Carbon hot keys** (global-hotkey). They need no Accessibility permission,
   and they report key-up, which makes hold-to-talk possible.

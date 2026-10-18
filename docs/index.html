@@ -575,7 +575,7 @@ h2 { font-weight: 600; }
                 <svg class="i-idle" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11.5" r="2.9"/><path d="M13.9 8.6v5.8"/></svg>
                 <svg class="i-rec" viewBox="0 0 22 22" fill="none" stroke="#ff3b30" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="#ff3b30" stroke="none"/></svg>
                 <svg class="i-busy" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><g fill="currentColor" stroke="none"><circle cx="8.4" cy="11" r="1.1"/><circle cx="11" cy="11" r="1.1"/><circle cx="13.6" cy="11" r="1.1"/></g></svg>
-                <svg class="i-done" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><path d="M8.6 11.2l1.7 1.8 3.2-3.7"/></svg>
+                <svg class="i-done" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><path d="M13.2 7.2H9.3l-.2 3.6M8.95 11.46A2.3 2.3 0 1 1 8.95 13.54"/></svg>
                 <span class="status-title"></span>
               </span>
               <span class="mic-on" hidden></span>
@@ -950,12 +950,11 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       moveTo(spot(card, 0.45, 0, 0, 8), 900);
       await wait(1300, id);
 
-      let images = '';
       await press('⌃⌥Space', id, () => {
         const start = Date.now();
         const tick = () => {
           const s = Math.floor((Date.now() - start) / 1000);
-          title.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}${images}`;
+          title.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
         };
         show('rec', '');
         tick();
@@ -986,7 +985,6 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       await wait(1150, id);
       shot.classList.remove('on');
       pointer.classList.remove('crosshair');
-      images = ' · 📎1';
       await wait(500, id);
 
       moveTo(spot($('.pay'), 0.9, 0.8), 800);
@@ -1000,7 +998,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       });
       // Transcribing.
       await wait(1800, id);
-      show('done', '#5');
+      show('done', '');
       await wait(400, id);
 
       moveTo(spot(status, 0.5, 0.6), 900);

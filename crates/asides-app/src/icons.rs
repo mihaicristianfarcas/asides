@@ -2,6 +2,7 @@
 //! changes what's between them. The app icon (`scripts/make-icon.swift`) and the website
 //! (`docs/favicon.svg`, `docs/index.html`) draw the same mark.
 
+use std::cell::RefCell;
 use std::f64::consts::{PI, TAU};
 
 use tray_icon::Icon;
@@ -21,8 +22,8 @@ pub struct StatusIcon {
     pub template: bool,
 }
 
-/// What goes between the brackets. One mark says it all: anything beside the brackets is a word
-/// or a number (`#3`, `→ Codex`), never another symbol.
+/// What goes between the brackets. One mark says it all, and nothing goes beside the brackets but
+/// a recording's time or a download's progress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
     /// The a: ready to record.
@@ -31,8 +32,10 @@ pub enum Mark {
     Dot,
     /// Under way: transcribing, an agent starting or on an aside.
     Ellipsis,
-    /// Done: added to the note, sent, resolved.
+    /// Done: sent, resolved, an image added.
     Check,
+    /// Added to the note as entry N.
+    Number(u32),
     /// Cancelled or ended: nothing added.
     Cross,
     /// Nothing: nothing heard, an aside dismissed.
@@ -62,30 +65,63 @@ impl Mark {
     ];
 }
 
-/// Every mark's icon, drawn once.
-pub struct Icons(Vec<(Mark, StatusIcon)>);
+/// Every mark's icon, drawn once; a number's when it's shown (the last one kept).
+pub struct Icons {
+    marks: Vec<(Mark, StatusIcon)>,
+    number: RefCell<Option<(u32, StatusIcon)>>,
+}
 
 impl Icons {
     pub fn load() -> Icons {
-        Icons(
-            Mark::ALL
-                .iter()
-                .map(|&mark| {
-                    let color = (mark == Mark::Dot).then_some(RED);
-                    (mark, StatusIcon { icon: icon(mark, color), template: color.is_none() })
-                })
-                .collect(),
-        )
+        let marks = Mark::ALL
+            .iter()
+            .map(|&mark| {
+                let color = (mark == Mark::Dot).then_some(RED);
+                (mark, StatusIcon { icon: icon(mark, color), template: color.is_none() })
+            })
+            .collect();
+        Icons { marks, number: RefCell::new(None) }
     }
 
-    pub fn get(&self, mark: Mark) -> &StatusIcon {
-        &self.0.iter().find(|(m, _)| *m == mark).expect("every mark is drawn").1
+    pub fn get(&self, mark: Mark) -> StatusIcon {
+        if let Mark::Number(n) = mark {
+            let mut number = self.number.borrow_mut();
+            if number.as_ref().is_none_or(|(shown, _)| *shown != n) {
+                *number = Some((n, StatusIcon { icon: icon(mark, None), template: true }));
+            }
+            return number.as_ref().expect("just drawn").1.clone();
+        }
+        self.marks.iter().find(|(m, _)| *m == mark).expect("every mark is drawn").1.clone()
     }
 }
 
 fn icon(mark: Mark, color: Option<[u8; 3]>) -> Icon {
-    let size = (CANVAS_PT * SCALE) as u32;
-    Icon::from_rgba(draw(mark, color), size, size).expect("valid status icon")
+    let (width, height) = ((width(mark) * SCALE) as u32, (CANVAS_PT * SCALE) as u32);
+    Icon::from_rgba(draw(mark, color), width, height).expect("valid status icon")
+}
+
+/// A digit's box, in points, and the space between two (its strokes reach half theirs past it).
+const DIGIT: (f64, f64) = (4.4, 7.6);
+const DIGIT_GAP: f64 = 2.5;
+/// How wide a number fits between the brackets where they are: a digit. A longer one moves the
+/// right bracket over, so the number keeps the margins the a has.
+const NUMBER_ROOM: f64 = DIGIT.0;
+
+fn digits(n: u32) -> Vec<u32> {
+    n.to_string().chars().filter_map(|c| c.to_digit(10)).collect()
+}
+
+fn number_width(n: u32) -> f64 {
+    let count = digits(n).len() as f64;
+    count * DIGIT.0 + (count - 1.0) * DIGIT_GAP
+}
+
+/// The icon's width in points: the canvas's, or wider for a number of three digits or more.
+fn width(mark: Mark) -> f64 {
+    match mark {
+        Mark::Number(n) => CANVAS_PT + (number_width(n) - NUMBER_ROOM).max(0.0),
+        _ => CANVAS_PT,
+    }
 }
 
 /// A stroke with round caps, a stroked circle or arc, or a filled circle, in points from the top
@@ -124,13 +160,14 @@ impl Shape {
 
 fn shapes(mark: Mark) -> Vec<Shape> {
     use Shape::*;
+    let right = width(mark) - CANVAS_PT;
     let mut shapes = vec![
         Line((5.4, 3.8), (2.8, 3.8)),
         Line((2.8, 3.8), (2.8, 18.2)),
         Line((2.8, 18.2), (5.4, 18.2)),
-        Line((16.6, 3.8), (19.2, 3.8)),
-        Line((19.2, 3.8), (19.2, 18.2)),
-        Line((19.2, 18.2), (16.6, 18.2)),
+        Line((16.6 + right, 3.8), (19.2 + right, 3.8)),
+        Line((19.2 + right, 3.8), (19.2 + right, 18.2)),
+        Line((19.2 + right, 18.2), (16.6 + right, 18.2)),
     ];
     shapes.extend(match mark {
         // A geometric single-storey a: a circle with its stem along the right side.
@@ -148,19 +185,64 @@ fn shapes(mark: Mark) -> Vec<Shape> {
         Mark::Arrow => {
             vec![Line((11.0, 7.4), (11.0, 14.0)), Line((8.4, 11.6), (11.0, 14.2)), Line((11.0, 14.2), (13.6, 11.6))]
         }
+        Mark::Number(n) => {
+            let mut x = (width(mark) - number_width(n)) / 2.0;
+            let mut strokes = Vec::new();
+            for d in digits(n) {
+                strokes.extend(digit(d, x, 11.0 - DIGIT.1 / 2.0));
+                x += DIGIT.0 + DIGIT_GAP;
+            }
+            strokes
+        }
         Mark::Nothing => vec![],
     });
     shapes
+}
+
+/// Digit `d` in its box ([`DIGIT`]), top-left corner at `(x, y)`, in the marks' strokes.
+fn digit(d: u32, x: f64, y: f64) -> Vec<Shape> {
+    use Shape::*;
+    let (w, h) = DIGIT;
+    let (cx, r) = (x + w / 2.0, w / 2.0);
+    match d {
+        0 => vec![
+            Arc((cx, y + r), r, PI, TAU),
+            Arc((cx, y + h - r), r, 0.0, PI),
+            Line((x, y + r), (x, y + h - r)),
+            Line((x + w, y + r), (x + w, y + h - r)),
+        ],
+        1 => vec![Line((x + w * 0.62, y), (x + w * 0.62, y + h)), Line((x + w * 0.62, y), (x + w * 0.1, y + 1.9))],
+        2 => vec![
+            Arc((cx, y + r), r, PI, 2.25 * PI),
+            Line((cx + r * 0.707, y + r + r * 0.707), (x, y + h)),
+            Line((x, y + h), (x + w, y + h)),
+        ],
+        3 => vec![Arc((cx, y + 1.9), 1.9, 1.1 * PI, 2.5 * PI), Arc((cx, y + h - 1.9), 1.9, 1.5 * PI, 2.9 * PI)],
+        4 => vec![
+            Line((x + 3.2, y), (x, y + 5.0)),
+            Line((x, y + 5.0), (x + w, y + 5.0)),
+            Line((x + 3.2, y), (x + 3.2, y + h)),
+        ],
+        5 => vec![
+            Line((x + w, y), (x + 0.5, y)),
+            Line((x + 0.5, y), (x + 0.3, y + 3.6)),
+            Arc((cx, y + h - 2.3), 2.3, 1.15 * PI, 2.85 * PI),
+        ],
+        6 => vec![Ring((cx, y + h - 2.3), 2.3), Line((x + 3.4, y), (x + 0.2, y + 4.4))],
+        7 => vec![Line((x, y), (x + w, y)), Line((x + w, y), (x + 1.3, y + h))],
+        8 => vec![Ring((cx, y + 1.75), 1.75), Ring((cx, y + h - 2.05), 2.05)],
+        _ => vec![Ring((cx, y + 2.3), 2.3), Line((x + w - 0.2, y + 3.0), (x + 1.0, y + h))],
+    }
 }
 
 /// Straight-alpha RGBA pixels of the mark on the status-item canvas, black unless `color` is given.
 fn draw(mark: Mark, color: Option<[u8; 3]>) -> Vec<u8> {
     let shapes = shapes(mark);
     let [r, g, b] = color.unwrap_or([0, 0, 0]);
-    let size = (CANVAS_PT * SCALE) as usize;
-    let mut rgba = Vec::with_capacity(size * size * 4);
-    for y in 0..size {
-        for x in 0..size {
+    let (width, height) = ((width(mark) * SCALE) as usize, (CANVAS_PT * SCALE) as usize);
+    let mut rgba = Vec::with_capacity(width * height * 4);
+    for y in 0..height {
+        for x in 0..width {
             let p = ((x as f64 + 0.5) / SCALE, (y as f64 + 0.5) / SCALE);
             let d = shapes.iter().map(|s| s.distance(p)).fold(f64::INFINITY, f64::min);
             // Coverage from the distance in pixels: a one-pixel ramp across the edge.
@@ -204,6 +286,36 @@ mod tests {
             }
             let _ = icon(mark, red.then_some(RED));
         }
+    }
+
+    #[test]
+    fn numbers_go_between_the_brackets() {
+        for n in [1, 7, 42, 108, 2026, 1_234_567_890] {
+            let rgba = draw(Mark::Number(n), None);
+            let width = (width(Mark::Number(n)) * SCALE) as usize;
+            assert_eq!(rgba.len(), width * 44 * 4, "{n}");
+            assert_eq!(width, if n < 10 { 44 } else { 44 + ((number_width(n) - NUMBER_ROOM) * SCALE) as usize }, "{n}");
+            let at = |(x, y): (f64, f64)| rgba[((y * SCALE) as usize * width + (x * SCALE) as usize) * 4 + 3];
+            let right = width as f64 / SCALE - 2.8;
+            assert_eq!((at((2.8, 11.0)), at((right, 11.0))), (255, 255), "{n}: both brackets");
+            // Every digit drawn, each in its own place.
+            let inked = |x0: f64, x1: f64| {
+                (0..44).any(|y| {
+                    ((x0 * SCALE) as usize..(x1 * SCALE) as usize).any(|x| rgba[(y * width + x) * 4 + 3] > 128)
+                })
+            };
+            let mut x = (width as f64 / SCALE - number_width(n)) / 2.0;
+            for _ in digits(n) {
+                assert!(inked(x, x + DIGIT.0), "{n}: a digit at {x}");
+                x += DIGIT.0 + DIGIT_GAP;
+            }
+            if let Some(dir) = std::env::var_os("ASIDES_ICON_DUMP") {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("number-{n}-{width}x44.rgba")), &rgba).unwrap();
+            }
+        }
+        assert_eq!(digits(2026), [2, 0, 2, 6]);
+        let _ = Icons::load().get(Mark::Number(12));
     }
 
     #[test]

@@ -13,7 +13,7 @@ Asides ready in ~/code/shop
 ```
 
 Notice a bug → hold `⌃⌥Space` and say what's wrong → let go → tap `⌃⌥Space` → keep testing. A few
-seconds later the transcript is in the note, and the menu-bar icon shows `[✓] #5`.
+seconds later the transcript is in the note, and the menu-bar icon shows its number: `[5]`.
 
 - **Local and free.** Speech is transcribed by [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
   on the GPU (Metal). No account, no API key, and no audio leaves your Mac.
@@ -158,9 +158,9 @@ The icon shows what's happening: idle, recording (red, with a timer), transcribi
   the microphone, how agents get asides, and the app agent sessions open in
 
 The status line shows where your asides go, e.g. `Ready · shop → Claude Code, listening`.
-When an agent resolves or replies to an aside, the menu bar says so for a moment (`[✓] #3`, or
-`[?] #3` when it asks you something; with the screen frozen, Asides says it on screen), and the
-note line shows how many asides are still open.
+When an agent resolves or replies to an aside, the menu bar says so for a moment (`[✓]`, or `[?]`
+when it asks you something; the menu says which aside, and with the screen frozen, Asides says it
+on screen), and the note line shows how many asides are still open.
 
 ## Asides on your screen
 
@@ -195,7 +195,7 @@ made it, between what you said before and after it, and each time you talked is 
 own; each freeze's screenshot comes just before the first thing you did on it. While you talk, new
 annotations don't open their card. To say something about one annotation, hold `Space` in its card,
 or use its microphone (below). Asides must be bound to a repo to record and to keep what you do: if
-it isn't, the menu bar shows "No repo", and a frozen screen says so at the top.
+it isn't, the menu bar shows empty brackets, `[ ]`, and a frozen screen says so at the top.
 
 **Measure** (`D`):
 
@@ -373,7 +373,7 @@ server on its command line: the first `asides gemini` adds Asides' to its settin
 Each aside goes to one session: the one you're talking to, the target. A new session becomes the
 target. **Asides Go To** in the menu lists the sessions, what each is doing (starting, listening,
 working), and **Notes Only**, which saves your asides without handing them to an agent; `⌃⌥Tab`
-switches to the next. While you record, the menu bar shows where it's going (`0:04 → Codex`).
+switches to the next. While you record, the menu says where it's going (`● Recording 0:04 → Untitled · Codex`).
 
 - **In different repos:** start one in each. Switching to a session also switches the repo your
   notes go to.

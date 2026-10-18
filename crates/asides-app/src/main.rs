@@ -190,7 +190,6 @@ struct LatestNote {
 struct Flash {
     until: Instant,
     mark: Mark,
-    title: Option<String>,
     status: String,
 }
 
@@ -406,7 +405,7 @@ impl App {
 
     fn init(&mut self) {
         let icons = Icons::load();
-        match Tray::new(&self.config, &audio::input_device_names(), &terminal::installed(), icons.get(Mark::Letter)) {
+        match Tray::new(&self.config, &audio::input_device_names(), &terminal::installed(), &icons.get(Mark::Letter)) {
             Ok(mut tray) => {
                 tray.set_directories(&self.recent_dirs, self.bound.as_deref());
                 self.tray = Some(tray);
@@ -495,13 +494,13 @@ impl App {
                 self.refresh();
             }
             UserEvent::Launched(Ok(status)) => {
-                self.flash(SENT_FLASH, Mark::Check, None, status);
+                self.flash(SENT_FLASH, Mark::Check, status);
                 self.refresh();
             }
             UserEvent::Launched(Err(message)) => self.fail(message),
             UserEvent::CommandLinked(CommandLink::Linked) => {
                 let status = format!("You can now run `asides` in any terminal ({})", install::LINK);
-                self.flash(SENT_FLASH, Mark::Check, None, status);
+                self.flash(SENT_FLASH, Mark::Check, status);
                 self.refresh();
             }
             UserEvent::CommandLinked(CommandLink::Declined) => {
@@ -692,7 +691,7 @@ impl App {
                     elements::request_trust();
                     let status = "Allow Asides in System Settings → Privacy & Security → Accessibility to name the \
                                   elements you annotate";
-                    self.flash(SENT_FLASH, Mark::Exclamation, None, status);
+                    self.flash(SENT_FLASH, Mark::Exclamation, status);
                     self.refresh();
                 }
             }
@@ -740,13 +739,13 @@ impl App {
         match outcome {
             Outcome::Appended { note, number } => {
                 self.error = None;
-                self.flash(FLASH, Mark::Check, Some(format!("#{number}")), format!("Added #{number} to {note}"));
+                self.flash(FLASH, Mark::Number(number), format!("Added #{number} to {note}"));
             }
             Outcome::ImageAdded { note } => {
-                self.flash(FLASH, Mark::Check, None, format!("Image added to {note}"));
+                self.flash(FLASH, Mark::Check, format!("Image added to {note}"));
             }
             Outcome::NothingHeard => {
-                self.flash(FLASH, Mark::Dash, None, "Nothing heard; nothing was written");
+                self.flash(FLASH, Mark::Dash, "Nothing heard; nothing was written");
             }
             Outcome::Failed(message) => self.fail(message),
             Outcome::Transcribed { id, text } => {
@@ -805,10 +804,9 @@ impl App {
         if let Err(err) = project::ensure_git_exclude(&dir) {
             eprintln!("could not update .git/info/exclude: {err}");
         }
-        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.target = self.sessions.iter().rev().find(|s| s.dir == dir).map(|s| s.id.clone());
         self.bind(dir.clone(), None);
-        self.flash(FLASH, Mark::Letter, Some(format!("→ {name}")), format!("Now writing to {}", tilde(&dir)));
+        self.flash(FLASH, Mark::Letter, format!("Now writing to {}", tilde(&dir)));
         self.refresh();
     }
 
@@ -974,7 +972,7 @@ impl App {
             self.pending_new = Some(PendingNew { title });
         }
         self.sound("Funk");
-        self.flash(FLASH, Mark::Cross, None, "Recording cancelled");
+        self.flash(FLASH, Mark::Cross, "Recording cancelled");
         self.refresh();
         self.publish();
     }
@@ -1303,7 +1301,7 @@ impl App {
                     self.cancel_recording();
                 } else if discarded {
                     self.sound("Funk");
-                    self.flash(FLASH, Mark::Cross, None, "Cancelled: nothing was added");
+                    self.flash(FLASH, Mark::Cross, "Cancelled: nothing was added");
                     self.refresh();
                 }
             }
@@ -1522,7 +1520,7 @@ impl App {
             if let Some(overlay) = self.overlay.as_mut().filter(|o| o.frozen) {
                 overlay.send(&OverlayCommand::Notice { text: status.clone() });
             }
-            self.flash(SENT_FLASH, mark, Some(format!("#{id}")), status);
+            self.flash(SENT_FLASH, mark, status);
             self.sound("Purr");
         }
         self.replies = events
@@ -1587,11 +1585,11 @@ impl App {
             session: Some(session.id.clone()),
         };
         app_state::remember_send(&mut self.agent_sends, send);
-        let (mark, title, status) = match session.state(&self.listeners, now_ms()) {
-            SessionState::Listening => (Mark::Check, "Sent", format!("Sent to {}", session.agent)),
-            _ => (Mark::Ellipsis, "Queued", format!("Queued: {} gets them when it's ready", session.agent)),
+        let (mark, status) = match session.state(&self.listeners, now_ms()) {
+            SessionState::Listening => (Mark::Check, format!("Sent to {}", session.agent)),
+            _ => (Mark::Ellipsis, format!("Queued: {} gets them when it's ready", session.agent)),
         };
-        self.flash(SENT_FLASH, mark, Some(title.into()), status);
+        self.flash(SENT_FLASH, mark, status);
         self.sound("Glass");
         self.refresh();
         self.publish();
@@ -1654,7 +1652,7 @@ impl App {
                 None => format!("{} ended: your asides are saved to the notes only", gone.agent),
             };
             self.target = next;
-            self.flash(SENT_FLASH, Mark::Cross, Some(gone.agent.clone()), status);
+            self.flash(SENT_FLASH, Mark::Cross, status);
             self.publish();
         }
         self.refresh();
@@ -1672,16 +1670,16 @@ impl App {
     fn set_target(&mut self, id: Option<String>) {
         let session = id.as_ref().and_then(|id| self.sessions.iter().find(|s| &s.id == id)).cloned();
         self.target = session.as_ref().map(|s| s.id.clone());
-        let (title, status) = match &session {
+        let status = match &session {
             Some(session) => {
                 if self.bound.as_ref() != Some(&session.dir) {
                     self.bind(session.dir.clone(), None);
                 }
-                (format!("→ {}", session.agent), format!("Your asides go to {}", self.label_of(&session.id)))
+                format!("Your asides go to {}", self.label_of(&session.id))
             }
-            None => ("→ Notes".to_string(), "Your asides are saved to the notes only".to_string()),
+            None => "Your asides are saved to the notes only".to_string(),
         };
-        self.flash(SENT_FLASH, Mark::Letter, Some(title), status);
+        self.flash(SENT_FLASH, Mark::Letter, status);
         self.refresh();
         self.publish();
     }
@@ -1739,7 +1737,7 @@ impl App {
             self.open_terminal(dir.clone(), command, format!("{} · {name}", agent.name()));
         }
         let status = format!("Starting {} in {name}…", agent.name());
-        self.flash(SENT_FLASH, Mark::Ellipsis, Some(agent.name().into()), status);
+        self.flash(SENT_FLASH, Mark::Ellipsis, status);
         self.refresh();
     }
 
@@ -1800,8 +1798,7 @@ impl App {
             });
         }
         let status = format!("Stopping {}…", self.label_of(id));
-        let agent = self.sessions.iter().find(|s| s.id == id).map(|s| s.agent.clone());
-        self.flash(SENT_FLASH, Mark::Ellipsis, agent, status);
+        self.flash(SENT_FLASH, Mark::Ellipsis, status);
         self.refresh();
     }
 
@@ -1893,8 +1890,9 @@ impl App {
     }
 
     /// Shows `mark` (and `title` beside it) in the menu bar for `how_long`, and `status` in the menu.
-    fn flash(&mut self, how_long: Duration, mark: Mark, title: Option<String>, status: impl Into<String>) {
-        self.flash = Some(Flash { until: Instant::now() + how_long, mark, title, status: status.into() });
+    /// Shows `mark` between the brackets for a moment, and `status` atop the menu.
+    fn flash(&mut self, how_long: Duration, mark: Mark, status: impl Into<String>) {
+        self.flash = Some(Flash { until: Instant::now() + how_long, mark, status: status.into() });
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
@@ -1926,16 +1924,9 @@ impl App {
         let (mark, title, status) = if let Some(recording) = &self.recording {
             let secs = recording.started_at.elapsed().as_secs();
             let clock = format!("{}:{:02}", secs / 60, secs % 60);
-            let images = match recording.images.len() {
-                0 => String::new(),
-                n => format!(" · 📎{n}"),
-            };
-            let to = recording.to_agent.as_ref().map(|agent| format!(" → {agent}")).unwrap_or_default();
-            (
-                Mark::Dot,
-                Some(format!("{clock}{images}{to}")),
-                format!("● Recording {clock} → {}{}", recording.target_label, to.replacen(" →", " ·", 1)),
-            )
+            let to = recording.to_agent.as_ref().map(|agent| format!(" · {agent}")).unwrap_or_default();
+            // Beside the brackets, only the time.
+            (Mark::Dot, Some(clock.clone()), format!("● Recording {clock} → {}{to}", recording.target_label))
         } else if self.in_flight > 0 {
             let status = match downloading {
                 Some(p) => format!("Waiting for the speech model download… {p}%"),
@@ -1944,7 +1935,7 @@ impl App {
             };
             (Mark::Ellipsis, None, status)
         } else if let Some(flash) = &self.flash {
-            (flash.mark, flash.title.clone(), flash.status.clone())
+            (flash.mark, None, flash.status.clone())
         } else if error_icon {
             (Mark::Exclamation, None, format!("⚠ {}", error_text.clone().unwrap_or_default()))
         } else if let Some(p) = downloading {
@@ -1964,7 +1955,7 @@ impl App {
                 Some(gone) => format!("{} no longer exists · run `asides` in a repo", tilde(gone)),
                 None => "Not bound · start an agent (New Agent Session), choose a Directory, or run `asides`".into(),
             };
-            (Mark::Nothing, Some("No repo".into()), status)
+            (Mark::Nothing, None, status)
         };
 
         let note_info = match (&dir_name, &self.pending_new, &self.latest) {
