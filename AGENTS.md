@@ -402,6 +402,12 @@ The user may record a request and ask you to "implement the note". Find it with
   works out all of them in two passes over a block. Its records are sparse (most pixels have no
   change), and one change ends at a pixel at most (from the pixel before, else two before): records
   for every pixel, and for both, were slower than the tracing they replaced.
+- Edges must not depend on the part of the frame being worked on. Judged against a thread's band of
+  rows, 0.7.2 lost horizontal edges on each band's first row when snapping a large area (on a
+  1-thread machine, or a small area, it didn't). And an area's outline is split into stretches at its
+  edges, the longest being its background, so one edge more or less near a corner changes what it
+  snaps to: a frozen screen's edges, found once for all of it, keep where each anti-aliased one
+  starts and ends, for each area to leave out those reaching past it (`for_area`).
 - Whisper's segment times run through silence: two takes joined with a 2 s pause came back as
   segments with no gap between them, or as one. Keep each take's segments in it (`fit_segments`).
 - On a notched display, the notch sits in the menu bar (the screen's safe area, 38 pt; the menu bar

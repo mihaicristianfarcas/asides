@@ -723,8 +723,10 @@ impl Contours {
 /// when there's one between pixels `x - 1` and `x` of row `y`, [`DOWN`] when there's one between pixels
 /// `y - 1` and `y` of column `x`. That's an edge between them (see [`is_edge`]), or between pixels two
 /// apart while the pair on the other side is alike: an edge that anti-aliasing spread over two pixels,
-/// whichever way it's crossed. Contours are followed a [`BLOCK`] of rows and a [`TILE`] of columns at
-/// a time, along both.
+/// whichever way it's crossed, marked as where it starts or ends ([`ACROSS_FROM_BEFORE`] and the
+/// others), so that an area can leave out those that reach past it (see [`for_area`]). The marks are
+/// the same whatever part of the frame is asked for. Contours are followed a [`BLOCK`] of rows and a
+/// [`TILE`] of columns at a time, along both.
 fn boundaries(frame: &Frame, rows: Range<u32>, columns: Range<u32>, threshold: u8, out: &mut [u8]) {
     let w = columns.len();
     for start in rows.clone().step_by(BLOCK as usize) {
@@ -733,34 +735,38 @@ fn boundaries(frame: &Frame, rows: Range<u32>, columns: Range<u32>, threshold: u
             let tile = tile..(tile + TILE).min(columns.end);
             let across = Contours::new(frame, true, block.clone(), tile.clone(), threshold);
             let down = Contours::new(frame, false, tile.clone(), block.clone(), threshold);
-            for (contours, other, bit) in [(&across, &down, ACROSS), (&down, &across, DOWN)] {
-                // This way's lines and the pixels along them: in the block and the area.
-                let (lines, part, whole) = match bit {
-                    ACROSS => (&block, &tile, &columns),
-                    _ => (&tile, &block, &rows),
+            let ways = [
+                (true, &across, &down, [ACROSS, ACROSS_FROM_BEFORE, ACROSS_TO_AFTER]),
+                (false, &down, &across, [DOWN, DOWN_FROM_BEFORE, DOWN_TO_AFTER]),
+            ];
+            for (is_across, contours, other, [bit, from_before, to_after]) in ways {
+                // This way's lines in the block, the pixels along them, and how many the frame has.
+                let (lines, part, len) = match is_across {
+                    true => (&block, &tile, frame.width),
+                    false => (&tile, &block, frame.height),
                 };
                 for l in lines.clone() {
                     // The edge is between `p - 1` and `p`.
-                    let mut mark = |p: u32| {
-                        if part.contains(&p) && p > whole.start {
-                            let (x, y) = if bit == ACROSS { (p, l) } else { (l, p) };
+                    let mut mark = |p: u32, bit: u8| {
+                        if part.contains(&p) {
+                            let (x, y) = if is_across { (p, l) } else { (l, p) };
                             out[(y - rows.start) as usize * w + (x - columns.start) as usize] |= bit;
                         }
                     };
-                    let ends = part.start..(part.end + 1).min(whole.end);
+                    let ends = part.start..(part.end + 1).min(len);
                     for f in contours.on(l).iter().filter(|f| ends.contains(&f.to)) {
                         if !f.is_edge() && !other.touch(f.to - f.apart as u32..=f.to, l) {
                             continue;
                         }
                         if f.apart == 1 {
-                            mark(f.to);
+                            mark(f.to, bit);
                             continue;
                         }
-                        if f.to >= whole.start + 2 && !contours.differs(l, f.to - 1) {
-                            mark(f.to);
+                        if !contours.differs(l, f.to - 1) {
+                            mark(f.to, from_before);
                         }
                         if !contours.differs(l, f.to) {
-                            mark(f.to - 1);
+                            mark(f.to - 1, to_after);
                         }
                     }
                 }
@@ -769,9 +775,34 @@ fn boundaries(frame: &Frame, rows: Range<u32>, columns: Range<u32>, threshold: u
     }
 }
 
-/// What [`boundaries`] marks: an edge before a pixel across its row, and down its column.
+/// What [`boundaries`] marks at a pixel: an edge between it and the pixel before across its row
+/// (`ACROSS`) or down its column (`DOWN`); or one spread over two pixels there, starting at the pixel
+/// before that (`*_FROM_BEFORE`), or ending at the pixel after it (`*_TO_AFTER`).
 const ACROSS: u8 = 1;
 const DOWN: u8 = 2;
+const ACROSS_FROM_BEFORE: u8 = 4;
+const DOWN_FROM_BEFORE: u8 = 8;
+const ACROSS_TO_AFTER: u8 = 16;
+const DOWN_TO_AFTER: u8 = 32;
+const ANY_ACROSS: u8 = ACROSS | ACROSS_FROM_BEFORE | ACROSS_TO_AFTER;
+const ANY_DOWN: u8 = DOWN | DOWN_FROM_BEFORE | DOWN_TO_AFTER;
+
+/// [`boundaries`]' marks for a `w` × `h` area, row by row, without the anti-aliased edges that
+/// start or end past it: an area sees only what's in it, so it snaps the same whether its edges are
+/// found for it or read from those of the whole frame ([`Edges`]).
+fn for_area(mut marks: Vec<u8>, w: usize, h: usize) -> Vec<u8> {
+    if w > 1 {
+        for row in marks.chunks_mut(w) {
+            row[1] &= !ACROSS_FROM_BEFORE;
+            row[w - 1] &= !ACROSS_TO_AFTER;
+        }
+    }
+    if h > 1 {
+        marks[w..2 * w].iter_mut().for_each(|m| *m &= !DOWN_FROM_BEFORE);
+        marks[(h - 1) * w..].iter_mut().for_each(|m| *m &= !DOWN_TO_AFTER);
+    }
+    marks
+}
 
 /// Whether each pixel of `a` differs from the one at the same place in `b` by more than `threshold`,
 /// into `out` (byte by byte first, into `bytes`, which vectorizes).
@@ -886,19 +917,14 @@ fn by_rows<T: Send>(out: &mut [T], w: usize, fill: impl Fn(usize, &mut [T]) + Sy
 /// cuts into) is drawn on it.
 ///
 /// The edges are those measuring finds from a point (see [`is_edge`]), between neighbours or over two
-/// anti-aliased pixels (see [`boundaries`]), found a block of rows (then of columns) at a time, then
-/// the background filled a stretch of a row at a time (a scanline fill).
-fn content_map(frame: &Frame, rect: Rect, threshold: u8) -> Vec<bool> {
+/// anti-aliased pixels: `edges`, row by row (see [`edges_in`], or [`Edges`] worked out once). The
+/// background is filled a stretch of a row at a time (a scanline fill).
+fn content_map(frame: &Frame, rect: Rect, threshold: u8, edges: &[u8]) -> Vec<bool> {
     let (w, h) = (rect.width as usize, rect.height as usize);
-    let mut edges = vec![0u8; w * h];
-    by_rows(&mut edges, w, |first, out| {
-        let rows = rect.y + first as u32..rect.y + (first + out.len() / w) as u32;
-        boundaries(frame, rows, rect.x..rect.right(), threshold, out);
-    });
     // Across: `edge_across(y * w + x)`, between (x - 1, y) and (x, y); down: `edge_down(y * w + x)`,
     // between (x, y - 1) and (x, y).
-    let edge_across = |i: usize| edges[i] & ACROSS != 0;
-    let edge_down = |i: usize| edges[i] & DOWN != 0;
+    let edge_across = |i: usize| edges[i] & ANY_ACROSS != 0;
+    let edge_down = |i: usize| edges[i] & ANY_DOWN != 0;
     let stride = frame.width as usize * 4;
     let mut reached = vec![false; w * h];
     let pixel = |x: usize, y: usize| {
@@ -1000,11 +1026,85 @@ fn outline_background(
 /// The bounds of whatever `rect` surrounds: the smallest rectangle holding everything drawn on its
 /// background (see [`content_map`]). `None` when nothing is.
 pub fn snap_area(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Rect> {
+    snapped(frame, rect, tolerance, None)
+}
+
+fn snapped(frame: &Frame, rect: Rect, tolerance: Tolerance, edges: Option<&Edges>) -> Option<Rect> {
     let rect = rect.clamp_to(frame.width, frame.height);
     if rect.is_empty() {
         return None;
     }
-    bounds(&content_map(frame, rect, tolerance.threshold()), rect)
+    let threshold = tolerance.threshold();
+    bounds(&content_map(frame, rect, threshold, &Edges::within(edges, frame, rect, threshold)), rect)
+}
+
+/// Where `rect` of `frame` has edges, as an area sees them (see [`for_area`]).
+fn edges_in(frame: &Frame, rect: Rect, threshold: u8) -> Vec<u8> {
+    for_area(marks(frame, rect, threshold), rect.width as usize, rect.height as usize)
+}
+
+/// [`boundaries`]' marks within `rect` of `frame`, row by row, found a block of rows (and of columns)
+/// at a time, on several threads.
+fn marks(frame: &Frame, rect: Rect, threshold: u8) -> Vec<u8> {
+    let w = rect.width as usize;
+    let mut marks = vec![0u8; w * rect.height as usize];
+    by_rows(&mut marks, w, |first, out| {
+        let rows = rect.y + first as u32..rect.y + (first + out.len() / w) as u32;
+        boundaries(frame, rows, rect.x..rect.right(), threshold, out);
+    });
+    marks
+}
+
+/// Where a whole frame has edges at a tolerance (see [`boundaries`]), worked out once: a frozen screen
+/// doesn't change, so snapping an area on every frame of a drag reads them instead of finding them
+/// again. An area snaps to the same object either way.
+pub struct Edges {
+    tolerance: Tolerance,
+    width: u32,
+    height: u32,
+    marks: Vec<u8>,
+}
+
+impl Edges {
+    pub fn new(frame: &Frame, tolerance: Tolerance) -> Edges {
+        let all = Rect::new(0, 0, frame.width, frame.height);
+        Edges { tolerance, width: frame.width, height: frame.height, marks: marks(frame, all, tolerance.threshold()) }
+    }
+
+    pub fn tolerance(&self) -> Tolerance {
+        self.tolerance
+    }
+
+    /// Like [`snap_area`], at these edges' tolerance.
+    pub fn snap_area(&self, frame: &Frame, rect: Rect) -> Option<Rect> {
+        snapped(frame, rect, self.tolerance, Some(self))
+    }
+
+    /// Like [`objects`], at these edges' tolerance.
+    pub fn objects(&self, frame: &Frame, rect: Rect, gap: u32) -> Vec<Rect> {
+        found_objects(frame, rect, self.tolerance, gap, Some(self))
+    }
+
+    /// Like [`appearance`], at these edges' tolerance.
+    pub fn appearance(&self, frame: &Frame, rect: Rect) -> Option<Appearance> {
+        described(frame, rect, self.tolerance, Some(self))
+    }
+
+    /// The edges within `rect` of `frame`, row by row, as an area sees them (see [`for_area`]): from
+    /// `edges` when they're that frame's (its size) at `threshold`, or else found.
+    fn within(edges: Option<&Edges>, frame: &Frame, rect: Rect, threshold: u8) -> Vec<u8> {
+        let Some(edges) =
+            edges.filter(|e| (e.width, e.height, e.tolerance.threshold()) == (frame.width, frame.height, threshold))
+        else {
+            return edges_in(frame, rect, threshold);
+        };
+        let w = edges.width as usize;
+        let mut out = Vec::with_capacity(rect.width as usize * rect.height as usize);
+        for y in rect.y as usize..rect.bottom() as usize {
+            out.extend_from_slice(&edges.marks[y * w + rect.x as usize..][..rect.width as usize]);
+        }
+        for_area(out, rect.width as usize, rect.height as usize)
+    }
 }
 
 /// The smallest rectangle holding the content pixels of `rect` (`content`, row by row).
@@ -1024,12 +1124,17 @@ fn bounds(content: &[bool], rect: Rect) -> Option<Rect> {
 /// are one object (the letters of a word, the parts of an icon), and specks smaller than `gap` on
 /// both sides are left out.
 pub fn objects(frame: &Frame, rect: Rect, tolerance: Tolerance, gap: u32) -> Vec<Rect> {
+    found_objects(frame, rect, tolerance, gap, None)
+}
+
+fn found_objects(frame: &Frame, rect: Rect, tolerance: Tolerance, gap: u32, edges: Option<&Edges>) -> Vec<Rect> {
     let rect = rect.clamp_to(frame.width, frame.height);
     if rect.is_empty() {
         return Vec::new();
     }
     let (w, h) = (rect.width as usize, rect.height as usize);
-    let content = content_map(frame, rect, tolerance.threshold());
+    let threshold = tolerance.threshold();
+    let content = content_map(frame, rect, threshold, &Edges::within(edges, frame, rect, threshold));
     // Flood-fill each group of touching content pixels (diagonals too), keeping its bounds.
     let mut seen = vec![false; w * h];
     let mut groups: Vec<Rect> = Vec::new();
@@ -1142,9 +1247,14 @@ pub struct Appearance {
 }
 
 pub fn appearance(frame: &Frame, rect: Rect, tolerance: Tolerance) -> Option<Appearance> {
+    described(frame, rect, tolerance, None)
+}
+
+fn described(frame: &Frame, rect: Rect, tolerance: Tolerance, edges: Option<&Edges>) -> Option<Appearance> {
     let rect = rect.clamp_to(frame.width, frame.height);
     let bg = background(frame, rect)?;
-    let content = content_map(frame, rect, tolerance.threshold());
+    let threshold = tolerance.threshold();
+    let content = content_map(frame, rect, threshold, &Edges::within(edges, frame, rect, threshold));
     let mut counts: HashMap<Rgb, u32> = HashMap::new();
     let w = rect.width as usize;
     for (i, _) in content.iter().enumerate().filter(|(_, c)| **c) {
@@ -1543,10 +1653,8 @@ mod tests {
         assert!(spans.iter().filter(|&&n| n >= 50).count() >= 40, "{spans:?}");
     }
 
-    #[test]
-    fn snapping_finds_the_edges_measuring_does() {
-        // Grain, faint and strong shapes, sharp and soft, slanted: contours followed for a block of
-        // lines at a time, across blocks and threads, find what following each from its change does.
+    /// Grain, faint and strong shapes, sharp and soft, slanted, 700 × 420.
+    fn shapes_on_grain() -> Frame {
         let mut frame = grainy_sky(700, 420, 2);
         frame.fill(Rect::new(40, 30, 300, 200), 0x0b79b8);
         frame.fill(Rect::new(400, 60, 1, 300), 0x0b79b8);
@@ -1558,12 +1666,17 @@ mod tests {
         for x in 520..600 {
             frame.fill(Rect::new(x, 20, 1, 60), cloud(x));
         }
+        frame
+    }
+
+    #[test]
+    fn snapping_finds_the_edges_measuring_does() {
+        // Contours followed for a block of lines at a time, across blocks and threads, find what
+        // following each from its change does, within an area.
+        let frame = shapes_on_grain();
         let threshold = Tolerance::DEFAULT.threshold();
         for rect in [Rect::new(0, 0, 700, 420), Rect::new(37, 61, 300, 150), Rect::new(600, 300, 100, 120)] {
-            let content = content_map(&frame, rect, threshold);
-            assert_eq!(content.len(), (rect.width * rect.height) as usize);
-            let mut out = vec![0u8; (rect.width * rect.height) as usize];
-            boundaries(&frame, rect.y..rect.bottom(), rect.x..rect.right(), threshold, &mut out);
+            let out = edges_in(&frame, rect, threshold);
             for rows in [true, false] {
                 let line_of = |l| if rows { Line::row(&frame, l) } else { Line::column(&frame, l) };
                 let (lines, positions) = match rows {
@@ -1580,14 +1693,52 @@ mod tests {
                             || (k >= 2 && !differ(p - 2) && edge(p - 2, p))
                             || (k + 1 < n && !differ(p) && edge(p - 1, p + 1));
                         let found = match rows {
-                            true => out[i * n + k] & ACROSS != 0,
-                            false => out[k * lines.len() + i] & DOWN != 0,
+                            true => out[i * n + k] & ANY_ACROSS != 0,
+                            false => out[k * lines.len() + i] & ANY_DOWN != 0,
                         };
                         assert_eq!(found, traced, "line {l}, pixel {p} of {rect:?}");
                     }
                 }
             }
         }
+    }
+
+    #[test]
+    fn edges_worked_out_once_snap_the_same() {
+        // A frozen screen's edges, found once for all of it, snap every area as finding them for
+        // the area does: areas cutting through shapes and anti-aliased edges, and the whole frame.
+        let frame = shapes_on_grain();
+        let edges = Edges::new(&frame, Tolerance::DEFAULT);
+        for rect in [
+            Rect::new(0, 0, 700, 420),
+            Rect::new(37, 61, 300, 150),
+            Rect::new(600, 300, 100, 120),
+            Rect::new(30, 20, 320, 220),
+            Rect::new(41, 31, 120, 90),
+            Rect::new(500, 10, 81, 80),
+            Rect::new(430, 90, 260, 260),
+        ] {
+            assert_eq!(edges.snap_area(&frame, rect), snap_area(&frame, rect, Tolerance::DEFAULT), "{rect:?}");
+            assert_eq!(edges.objects(&frame, rect, 3), objects(&frame, rect, Tolerance::DEFAULT, 3), "{rect:?}");
+            assert_eq!(edges.appearance(&frame, rect), appearance(&frame, rect, Tolerance::DEFAULT), "{rect:?}");
+        }
+        // Found a band of rows per thread (the frame is large enough for several), they're what one
+        // pass over the area finds.
+        for rect in [Rect::new(0, 0, 700, 420), Rect::new(37, 61, 600, 350)] {
+            let threshold = Tolerance::DEFAULT.threshold();
+            let mut whole = vec![0u8; (rect.width * rect.height) as usize];
+            boundaries(&frame, rect.y..rect.bottom(), rect.x..rect.right(), threshold, &mut whole);
+            let whole = for_area(whole, rect.width as usize, rect.height as usize);
+            assert!(edges_in(&frame, rect, threshold) == whole, "{rect:?}");
+        }
+        // Another tolerance's, or another frame's, aren't used.
+        let high = Edges::new(&frame, Tolerance::HIGH);
+        let rect = Rect::new(30, 20, 320, 220);
+        assert_eq!(high.snap_area(&frame, rect), snap_area(&frame, rect, Tolerance::HIGH));
+        assert_eq!(
+            edges.snap_area(&button(), Rect::new(30, 20, 90, 50)),
+            snap_area(&button(), Rect::new(30, 20, 90, 50), Tolerance::DEFAULT)
+        );
     }
 
     #[test]

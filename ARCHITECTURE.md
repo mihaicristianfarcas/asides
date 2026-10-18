@@ -531,7 +531,13 @@ Break these only on purpose, and update this document when you do.
   passes, top-down and bottom-up (`measure::Contours`), then the faint ones that touch an edge the
   other way (`Contours::touch`), which gives the same edges (a test checks it on grain) in a pass over
   the area. The work is shared by threads a band of rows at a time, each taking the next as it
-  finishes (`measure::by_rows`), since areas are snapped on every frame of a drag.
+  finishes (`measure::by_rows`), since areas are snapped on every frame of a drag. A frozen screen
+  doesn't change, so its edges are found once, for all of it, on a thread of their own as soon as
+  the pointer is on it (`measure::Edges`, kept by `overlay::EdgeCache` for the session's tolerance),
+  and areas snapped while dragging read them: a drag then only fills. An area sees only the edges
+  within it (`measure::for_area` leaves out anti-aliased ones that start or end past it), so it
+  snaps the same as with edges found for it alone, which it does until they're ready. Edges never
+  depend on the part of the frame being worked on, a thread's band or an area.
   An area's content is whatever the background on its outline can't reach without crossing an
   edge (a scanline fill), so no background color is needed: the outline's background is its longest
   stretch without an edge, those colored like it, and any as long as a quarter of it, so a button

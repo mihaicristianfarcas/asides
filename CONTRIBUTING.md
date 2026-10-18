@@ -229,6 +229,8 @@ in your pull request what you tried.
     edge
   - on a light UI, a faint selected item (#F3F4F6 on #F9FAFB) stops a distance across it near its
     rounded corners too, and an area around a faint hairline snaps to all of it
+  - dragging a large area (most of the screen, on a wallpaper too) snaps without lagging behind the
+    pointer, from the first drag after freezing
   - on a notched display, nothing the overlay draws (the "Not bound" banner, labels, cards, menus,
     the toolbar dragged up, live or frozen) goes over the menu bar or under the notch
 - [ ] **Measure & Annotate, annotating and drawing:**

@@ -16,13 +16,15 @@
 //! Annotations and measurements carry when they were made, so they can sit among what the user
 //! said.
 
+use std::sync::{Arc, Mutex, Weak};
+
 use serde::{Deserialize, Serialize};
 
 use crate::inspect::{
     Annotation, Axis, Detail, Element, Guide, Inspection, Intent, Look, Measurement, PtRect, Run, Screen, Severity,
     Shape, Units,
 };
-use crate::measure::{self, Frame, Rect, Stops, Tolerance};
+use crate::measure::{self, Edges, Frame, Rect, Stops, Tolerance};
 
 /// A drag shorter than this (in points) is a click.
 const CLICK_SLOP: f64 = 3.0;
@@ -62,7 +64,9 @@ impl Tool {
 #[derive(Debug, Clone)]
 pub struct ScreenState {
     pub screen: Screen,
-    pub frame: Frame,
+    pub frame: Arc<Frame>,
+    /// The frame's edges, found once (see [`EdgeCache`]).
+    edges: EdgeCache,
     /// Where the user was on it when it froze (`helper::SpecScreen::place`).
     pub place: Option<String>,
     pub guides: Vec<Guide>,
@@ -70,6 +74,59 @@ pub struct ScreenState {
     /// When each held measurement was made, in seconds into the session.
     pub held_times: Vec<f32>,
     pub annotations: Vec<Annotation>,
+}
+
+/// A screen's edges at the session's tolerance, found on a thread of their own as soon as the pointer
+/// is on the screen: a frozen screen doesn't change, so snapping an area on every frame of a drag
+/// then only fills it (see [`Edges`]). Until they're found, and for a tolerance just switched to,
+/// areas find their own, as they would anyway: they snap the same either way.
+#[derive(Clone, Default)]
+struct EdgeCache(Arc<Mutex<Cached>>);
+
+/// The frame and tolerance last asked for, and their edges once found.
+#[derive(Default)]
+struct Cached {
+    frame: Weak<Frame>,
+    tolerance: Option<Tolerance>,
+    edges: Option<Arc<Edges>>,
+}
+
+impl Cached {
+    fn is_for(&self, frame: &Arc<Frame>, tolerance: Tolerance) -> bool {
+        self.tolerance == Some(tolerance) && std::ptr::eq(self.frame.as_ptr(), Arc::as_ptr(frame))
+    }
+}
+
+impl EdgeCache {
+    /// Starts finding `frame`'s edges at `tolerance`, unless they're found or being found.
+    fn prepare(&self, frame: &Arc<Frame>, tolerance: Tolerance) {
+        let Ok(mut cached) = self.0.lock() else { return };
+        if cached.is_for(frame, tolerance) {
+            return;
+        }
+        *cached = Cached { frame: Arc::downgrade(frame), tolerance: Some(tolerance), edges: None };
+        let (cache, frame) = (self.0.clone(), frame.clone());
+        std::thread::spawn(move || {
+            let edges = Arc::new(Edges::new(&frame, tolerance));
+            if let Ok(mut cached) = cache.lock()
+                && cached.is_for(&frame, tolerance)
+            {
+                cached.edges = Some(edges);
+            }
+        });
+    }
+
+    /// `frame`'s edges at `tolerance`, once found.
+    fn get(&self, frame: &Arc<Frame>, tolerance: Tolerance) -> Option<Arc<Edges>> {
+        let cached = self.0.lock().ok()?;
+        cached.edges.clone().filter(|_| cached.is_for(frame, tolerance))
+    }
+}
+
+impl std::fmt::Debug for EdgeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("EdgeCache")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -257,7 +314,8 @@ impl Session {
     pub fn screen(screen: Screen, frame: Frame) -> ScreenState {
         ScreenState {
             screen,
-            frame,
+            frame: Arc::new(frame),
+            edges: EdgeCache::default(),
             place: None,
             guides: Vec::new(),
             held: Vec::new(),
@@ -350,11 +408,14 @@ impl Session {
         let s = state.screen.scale;
         let (x0, y0) = Session::pixel(state, rect.x, rect.y);
         let (x1, y1) = Session::pixel(state, rect.right(), rect.bottom());
-        let gap = (OBJECT_GAP * s).round() as u32;
-        measure::objects(&state.frame, Rect::from_corners((x0, y0), (x1, y1)), self.tolerance, gap)
-            .into_iter()
-            .map(|r| px_rect_to_pt(r, s))
-            .collect()
+        let (rect, gap) = (Rect::from_corners((x0, y0), (x1, y1)), (OBJECT_GAP * s).round() as u32);
+        match self.edges(state) {
+            Some(edges) => edges.objects(&state.frame, rect, gap),
+            None => measure::objects(&state.frame, rect, self.tolerance, gap),
+        }
+        .into_iter()
+        .map(|r| px_rect_to_pt(r, s))
+        .collect()
     }
 
     /// `rect` (points) shrunk to the object inside it, if there is one.
@@ -363,8 +424,19 @@ impl Session {
         let s = state.screen.scale;
         let (x0, y0) = Session::pixel(state, rect.x, rect.y);
         let (x1, y1) = Session::pixel(state, rect.right(), rect.bottom());
-        let snapped = measure::snap_area(&state.frame, Rect::from_corners((x0, y0), (x1, y1)), self.tolerance)?;
+        let rect = Rect::from_corners((x0, y0), (x1, y1));
+        let snapped = match self.edges(state) {
+            Some(edges) => edges.snap_area(&state.frame, rect),
+            None => measure::snap_area(&state.frame, rect, self.tolerance),
+        }?;
         Some(px_rect_to_pt(snapped, s))
+    }
+
+    /// `state`'s edges at the session's tolerance, when they're found (see [`EdgeCache`]); and has
+    /// them found, unless they're being found.
+    fn edges(&self, state: &ScreenState) -> Option<Arc<Edges>> {
+        state.edges.prepare(&state.frame, self.tolerance);
+        state.edges.get(&state.frame, self.tolerance)
     }
 
     /// The arrow being drawn (⇧-drag with Draw): from where the drag started to the cursor.
@@ -380,6 +452,10 @@ impl Session {
             drag.start = (drag.start.0 + dx, drag.start.1 + dy);
         }
         self.cursor = Some((screen, x, y));
+        // Snapping reads the screen's edges, found while the pointer gets to where it starts.
+        if let Some(state) = self.screens.get(screen) {
+            state.edges.prepare(&state.frame, self.tolerance);
+        }
         let square = self.crosshair && !self.moving && matches!(self.tool, Tool::Measure | Tool::Annotate | Tool::Shot);
         if let Some(drag) = &mut self.drag
             && drag.screen == screen
@@ -640,13 +716,19 @@ impl Session {
     /// Measures the annotated element's colors and padding from the frame.
     fn describe(&mut self, screen: usize, index: usize) {
         let tolerance = self.tolerance;
+        let edges = self.screens.get(screen).and_then(|state| self.edges(state));
         let Some(state) = self.screens.get_mut(screen) else { return };
         let Some(a) = state.annotations.get(index) else { return };
         let Some(rect) = a.area.or(a.element.as_ref().and_then(|e| e.frame)) else { return };
         let s = state.screen.scale;
         let (x0, y0) = Session::pixel(state, rect.x, rect.y);
         let (x1, y1) = Session::pixel(state, rect.right() - 1.0 / s, rect.bottom() - 1.0 / s);
-        let look = measure::appearance(&state.frame, Rect::from_corners((x0, y0), (x1, y1)), tolerance).map(|l| Look {
+        let rect = Rect::from_corners((x0, y0), (x1, y1));
+        let look = match edges {
+            Some(edges) => edges.appearance(&state.frame, rect),
+            None => measure::appearance(&state.frame, rect, tolerance),
+        };
+        let look = look.map(|l| Look {
             background: Some(measure::hex(l.background)),
             foreground: l.foreground.map(measure::hex),
             padding: l.insets.map(|i| [i.top as f64 / s, i.right as f64 / s, i.bottom as f64 / s, i.left as f64 / s]),
@@ -1203,6 +1285,30 @@ mod tests {
     }
 
     #[test]
+    fn snapping_reads_the_edges_found_once() {
+        let mut s = session();
+        // The pointer on the screen has its edges found, on a thread of their own.
+        s.move_to(0, 10.0, 10.0);
+        let found = |s: &Session| s.screens[0].edges.get(&s.screens[0].frame, s.tolerance).is_some();
+        let start = std::time::Instant::now();
+        while !found(&s) {
+            assert!(start.elapsed().as_secs() < 10, "the edges were never found");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // A drag around the button snaps to it, as it does without them.
+        s.mouse_down(0, 15.0, 10.0, false);
+        s.move_to(0, 60.0, 35.0);
+        assert_eq!(s.drag_area(), Some((0, PtRect::new(20.0, 15.0, 30.0, 10.0), true)));
+        assert_eq!(s.objects(0, PtRect::new(15.0, 10.0, 45.0, 25.0)), [PtRect::new(20.0, 15.0, 30.0, 10.0)]);
+        // Another tolerance's, or a changed frame's, aren't used.
+        s.toggle_high_tolerance();
+        assert!(!found(&s));
+        s.toggle_high_tolerance();
+        Arc::make_mut(&mut s.screens[0].frame).fill(Rect::new(0, 0, 10, 10), 0x111111);
+        assert!(!found(&s));
+    }
+
+    #[test]
     fn hovering_measures_and_clicking_holds() {
         let mut s = session();
         s.move_to(0, 5.0, 20.0);
@@ -1261,7 +1367,7 @@ mod tests {
     #[test]
     fn held_objects_stop_distances_and_option_holds_each_object() {
         let mut s = session();
-        s.screens[0].frame.fill(Rect::new(140, 30, 20, 20), 0x111111);
+        Arc::make_mut(&mut s.screens[0].frame).fill(Rect::new(140, 30, 20, 20), 0x111111);
         assert_eq!(
             s.apply(&Action::Objects { screen: 0, from: (1.0, 1.0), to: (99.0, 49.0) }),
             Placed::Measurement { screen: 0 }
