@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>asides · Talk through bugs while you test</title>
-<meta name="description" content="A macOS menu-bar app. Press a shortcut, say what's wrong, and it's transcribed on your Mac into a Markdown note in your repo, screenshots inline, and handed straight to your coding agent.">
+<meta name="description" content="A macOS menu-bar app. Freeze your screen, click what's wrong and say why: it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked. Transcribed on your Mac.">
 <meta name="color-scheme" content="light">
 <meta name="theme-color" content="#ffffff">
 <link rel="canonical" href="https://asides.mihaicristian.dev/">
@@ -13,7 +13,7 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asides.mihaicristian.dev/">
 <meta property="og:title" content="asides">
-<meta property="og:description" content="Talk through bugs while you test. Transcribed on your Mac into a Markdown note in your repo, and straight to your coding agent.">
+<meta property="og:description" content="Talk through bugs while you test. Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.">
 <meta property="og:image" content="https://asides.mihaicristian.dev/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <style>
@@ -142,7 +142,7 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .menus { gap: calc(16 * var(--u)); }
 .menus b { font-weight: 700; }
 .menus svg { width: calc(13 * var(--u)); height: calc(16 * var(--u)); fill: currentColor; }
-.desk[data-app="safari"] .m-textedit, .desk[data-app="textedit"] .m-safari { display: none; }
+.desk[data-app="safari"] .m-terminal, .desk[data-app="terminal"] .m-safari { display: none; }
 .extras { gap: calc(12 * var(--u)); }
 .extras svg { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
 .extras .battery { width: calc(24 * var(--u)); }
@@ -170,55 +170,77 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
   border-radius: calc(6 * var(--u));
   white-space: nowrap;
 }
-.status.open { background: rgba(255, 255, 255, 0.28); }
 .status svg { display: none; width: calc(17 * var(--u)); height: calc(17 * var(--u)); }
 .status[data-state="idle"] .i-idle,
-.status[data-state="rec"] .i-rec,
 .status[data-state="busy"] .i-busy,
 .status[data-state="done"] .i-done { display: block; }
-.mic-on {
-  width: calc(7 * var(--u));
-  height: calc(7 * var(--u));
-  margin: 0 calc(-2 * var(--u));
-  border-radius: 50%;
-  background: #ff9f0a;
-  box-shadow: 0 0 0 calc(1 * var(--u)) rgba(0, 0, 0, 0.12);
-}
-.mic-on[hidden] { display: none; }
 
-/* The asides menu */
-.menu {
+/* Asides, frozen: the pill under the menu bar (the microphone, where the aside goes, send and
+   close), the element under the pointer outlined, and numbered pins. */
+.pill {
   position: absolute;
-  top: calc(31 * var(--u));
-  left: calc(var(--menu-x, 700) * var(--u));
-  z-index: 6;
-  width: calc(286 * var(--u));
-  padding: calc(5 * var(--u));
-  background: rgba(244, 244, 246, 0.86);
-  -webkit-backdrop-filter: blur(calc(20 * var(--u))) saturate(1.6);
-  backdrop-filter: blur(calc(20 * var(--u))) saturate(1.6);
-  border-radius: calc(11 * var(--u));
-  box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.2), 0 calc(12 * var(--u)) calc(32 * var(--u)) rgba(0, 0, 0, 0.28);
-  opacity: 0;
-  transform: scale(0.98);
-  transform-origin: 20% 0;
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
-}
-.menu.open { opacity: 1; transform: none; }
-.menu .item {
+  top: calc(38 * var(--u));
+  left: 50%;
+  z-index: 7;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: calc(16 * var(--u));
-  height: calc(22 * var(--u));
-  padding: 0 calc(10 * var(--u));
-  border-radius: calc(6 * var(--u));
+  gap: calc(4 * var(--u));
+  height: calc(38 * var(--u));
+  padding: 0 calc(5 * var(--u)) 0 calc(12 * var(--u));
+  background: rgba(28, 28, 30, 0.98);
+  border: calc(1 * var(--u)) solid rgba(255, 255, 255, 0.14);
+  border-radius: calc(19 * var(--u));
+  box-shadow: 0 calc(10 * var(--u)) calc(26 * var(--u)) rgba(0, 0, 0, 0.32);
+  color: #fff;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-50%) scale(0.96);
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
 }
-.menu .off { color: rgba(0, 0, 0, 0.32); }
-.menu .key { color: rgba(0, 0, 0, 0.45); }
-.menu .item.hot { background: #0a6cff; color: #fff; }
-.menu .sep { height: 1px; margin: calc(5 * var(--u)) calc(10 * var(--u)); background: rgba(0, 0, 0, 0.1); }
+.pill.on { opacity: 1; transform: translateX(-50%); }
+.pill svg { width: calc(16 * var(--u)); height: calc(16 * var(--u)); }
+.pill .mic { display: flex; align-items: center; gap: calc(5 * var(--u)); min-width: calc(54 * var(--u)); color: #ff3b30; }
+.pill .to { display: flex; align-items: center; gap: calc(5 * var(--u)); padding: 0 calc(8 * var(--u)) 0 calc(4 * var(--u)); }
+.pill .to svg { width: calc(12 * var(--u)); height: calc(12 * var(--u)); opacity: 0.75; }
+.pill .div { width: calc(1 * var(--u)); height: calc(20 * var(--u)); margin-right: calc(2 * var(--u)); background: rgba(255, 255, 255, 0.2); }
+.pill .send, .pill .stop { display: grid; place-items: center; width: calc(30 * var(--u)); height: calc(28 * var(--u)); border-radius: calc(8 * var(--u)); }
+.pill .send { background: #c2d6f6; color: #16213a; }
+.outline {
+  position: absolute;
+  top: calc(var(--y, 0) * var(--u));
+  left: calc(var(--x, 0) * var(--u));
+  z-index: 6;
+  width: calc(var(--w, 0) * var(--u));
+  height: calc(var(--h, 0) * var(--u));
+  border: calc(2 * var(--u)) solid #3b82f6;
+  border-radius: calc(5 * var(--u));
+  background: rgba(59, 130, 246, 0.08);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.outline.on { opacity: 1; }
+.pin {
+  position: absolute;
+  top: calc(var(--y, 0) * var(--u));
+  left: calc(var(--x, 0) * var(--u));
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  width: calc(22 * var(--u));
+  height: calc(22 * var(--u));
+  margin: calc(-11 * var(--u)) 0 0 calc(-11 * var(--u));
+  border-radius: 50%;
+  background: #3b82f6;
+  box-shadow: 0 0 0 calc(2 * var(--u)) #fff, 0 calc(2 * var(--u)) calc(8 * var(--u)) rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: calc(12 * var(--u));
+  font-weight: 700;
+  transform: scale(0);
+  transition: transform 180ms var(--ease-out);
+}
+.pin.on { transform: none; }
 
 /* Windows */
 .win {
@@ -247,7 +269,7 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .inactive .lights i { background: #dcdcde; }
 .inactive .bar { background: #fbfbfb; }
 
-.safari { top: calc(46 * var(--u)); left: calc(40 * var(--u)); width: calc(712 * var(--u)); height: calc(540 * var(--u)); }
+.safari { top: calc(46 * var(--u)); left: calc(40 * var(--u)); z-index: 2; width: calc(712 * var(--u)); height: calc(540 * var(--u)); }
 .safari .bar { height: calc(46 * var(--u)); }
 .url {
   display: flex;
@@ -324,49 +346,51 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
   text-align: center;
 }
 
-/* TextEdit, showing the note */
-.editor {
-  top: calc(118 * var(--u));
-  left: calc(352 * var(--u));
-  z-index: 2;
-  width: calc(600 * var(--u));
-  height: calc(440 * var(--u));
-  opacity: 0;
-  transform: scale(0.96);
-  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+/* Terminal, with Claude Code: the aside arrives in its chat. Like a terminal, it shows the last
+   lines, so older ones leave at the top. */
+.term {
+  top: calc(84 * var(--u));
+  left: calc(436 * var(--u));
+  z-index: 1;
+  width: calc(560 * var(--u));
+  height: calc(480 * var(--u));
+  background: #1c1c1c;
 }
-.editor.open { opacity: 1; transform: none; }
-.editor .bar { height: calc(30 * var(--u)); }
-.doc-title { position: absolute; left: 50%; transform: translateX(-50%); color: #3a3a3c; font-weight: 600; }
-.doc { position: relative; height: calc(410 * var(--u)); overflow: hidden; }
-.doc pre {
-  margin: 0;
-  padding: calc(12 * var(--u)) calc(18 * var(--u)) calc(16 * var(--u));
-  font: calc(11.5 * var(--u))/1.6 var(--mono);
-  color: #1d1d1f;
-  white-space: pre-wrap;
-  transition: transform 1100ms cubic-bezier(0.65, 0, 0.35, 1);
+.term.front { z-index: 3; }
+.term .bar { height: calc(30 * var(--u)); background: #2c2c2c; border-color: #0d0d0d; color: #a1a1a6; }
+.term.inactive .bar { background: #262626; }
+.term.inactive .lights i { background: #464648; }
+.term-title { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 600; }
+.screen {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: calc(8 * var(--u));
+  height: calc(450 * var(--u));
+  overflow: hidden;
+  padding: calc(10 * var(--u)) calc(14 * var(--u)) calc(10 * var(--u));
+  font: calc(11 * var(--u))/1.5 var(--mono);
+  color: #e5e5e5;
 }
-/* Scrolled to the end: the document's last line at the window's bottom edge. */
-.doc pre.end { transform: translateY(calc(410 * var(--u) - 100%)); }
-.doc .h { font-weight: 700; }
-.doc .fm { color: #8e8e93; }
+.screen p { margin: 0; white-space: pre-wrap; }
+.screen [hidden] { display: none; }
+.screen .you { padding: calc(2 * var(--u)) calc(6 * var(--u)); background: #2a2a2a; color: #b8b8b8; }
+.screen .star { color: #d97757; }
+.screen .dim { color: #8a8a8e; }
+.input {
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--u));
+  min-height: calc(30 * var(--u));
+  margin-top: calc(4 * var(--u));
+  padding: 0 calc(10 * var(--u));
+  border: calc(1 * var(--u)) solid #5a5a5e;
+  border-radius: calc(6 * var(--u));
+}
+.caret { width: calc(7 * var(--u)); height: calc(15 * var(--u)); background: #d4d4d4; }
+.typed b { font-weight: 400; color: #a8c7fa; }
 
-/* The screenshot selection, the keys being pressed, and the pointer */
-.shot {
-  position: absolute;
-  top: calc(var(--sy, 0) * var(--u));
-  left: calc(var(--sx, 0) * var(--u));
-  z-index: 8;
-  width: calc(var(--sw, 0) * var(--u));
-  height: calc(var(--sh, 0) * var(--u));
-  background: rgba(120, 120, 128, 0.22);
-  outline: calc(1 * var(--u)) solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 0 calc(2 * var(--u)) rgba(0, 0, 0, 0.12);
-  opacity: 0;
-  transition: width var(--move, 0ms) cubic-bezier(0.4, 0, 0.3, 1), height var(--move, 0ms) cubic-bezier(0.4, 0, 0.3, 1);
-}
-.shot.on { opacity: 1; }
+/* The keys being pressed, and the pointer */
 /* Above the subtitles, which can show at the same moment. */
 .hud {
   position: absolute;
@@ -400,9 +424,6 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .pointer.on { opacity: 1; }
 .pointer svg { position: absolute; transition: transform 90ms ease-out; }
 .pointer .arrow { top: calc(-3 * var(--u)); left: calc(-5 * var(--u)); width: calc(24 * var(--u)); height: calc(24 * var(--u)); transform-origin: 20% 12%; }
-.pointer .cross { display: none; top: calc(-11 * var(--u)); left: calc(-11 * var(--u)); width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
-.pointer.crosshair .arrow { display: none; }
-.pointer.crosshair .cross { display: block; }
 .pointer.down .arrow { transform: scale(0.86); }
 
 /* Subtitles: what the tester says, inside the picture like a video's captions. The box takes the
@@ -540,7 +561,7 @@ h2 { font-weight: 600; }
 <main>
   <section class="wrap hero">
     <h1>Talk through bugs while you test.</h1>
-    <p class="lede">Press <kbd>⌃⌥Space</kbd> and say what's wrong. asides transcribes it on your Mac, appends it to a Markdown note in your repo with screenshots inline, and can hand it straight to your coding agent.</p>
+    <p class="lede">Press <kbd>⌃⌥Space</kbd>, click what's wrong and say why. Press it again, and it's in your coding agent's chat, typed there as your own message, with the screenshot and the element you clicked. Transcribed on your Mac.</p>
     <div class="cta">
       <a class="button" href="https://download.asides.mihaicristian.dev/Asides.dmg">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
@@ -550,35 +571,33 @@ h2 { font-weight: 600; }
     </div>
   </section>
 
-  <section class="wrap demo" aria-label="Example: one recording">
+  <section class="wrap demo" aria-label="Example: one aside">
     <figure class="device" id="demo">
       <div class="display">
         <!-- The markup is the demo's last frame, so it reads fine without JavaScript. -->
-        <div class="desk" data-app="textedit" aria-hidden="true">
+        <div class="desk" data-app="terminal" aria-hidden="true">
           <div class="menubar">
             <div class="menus">
               <svg viewBox="0 0 170 200"><path d="M150.4 155.9c-2.8 6.4-6.1 12.3-9.9 17.7-5.2 7.4-9.5 12.5-12.8 15.4-5.1 4.7-10.6 7.1-16.5 7.2-4.2 0-9.3-1.2-15.2-3.6-5.9-2.4-11.4-3.6-16.4-3.6-5.2 0-10.8 1.2-16.8 3.6-6 2.4-10.9 3.7-14.6 3.8-5.6.2-11.2-2.2-16.8-7.4-3.6-3.1-8-8.4-13.4-16-5.7-8-10.4-17.3-14.1-28C-.2 133.4-2 122.4-2 111.8c0-12.2 2.6-22.7 7.9-31.5 4.2-7.1 9.7-12.8 16.7-16.9 7-4.1 14.6-6.3 22.7-6.4 4.5 0 10.3 1.4 17.6 4.1 7.3 2.7 11.9 4.1 14 4.1 1.5 0 6.8-1.6 15.6-4.8 8.4-3 15.5-4.3 21.3-3.8 15.8 1.3 27.6 7.5 35.5 18.7-14.1 8.6-21.1 20.6-21 36 .1 12 4.5 22 13.1 29.9 3.9 3.7 8.3 6.6 13.1 8.6-1 3-2.2 5.9-3.4 8.7zM114.4 4c0 9.4-3.4 18.2-10.3 26.3-8.3 9.6-18.3 15.2-29.2 14.3-.1-1.1-.2-2.3-.2-3.6 0-9 3.9-18.7 10.9-26.6 3.5-4 7.9-7.3 13.2-10 5.3-2.6 10.4-4.1 15.1-4.3.1 1.3.2 2.6.2 3.9z"/></svg>
               <b class="m-safari">Safari</b>
-              <b class="m-textedit">TextEdit</b>
-              <span>File</span>
+              <b class="m-terminal">Terminal</b>
+              <span class="m-safari">File</span>
+              <span class="m-terminal">Shell</span>
               <span>Edit</span>
-              <span class="m-textedit">Format</span>
               <span>View</span>
               <span class="m-safari">History</span>
               <span class="m-safari">Bookmarks</span>
               <span>Window</span>
-              <span class="m-textedit">Help</span>
+              <span class="m-terminal">Help</span>
             </div>
             <span class="notch"></span>
             <div class="extras">
               <span class="status" data-state="idle">
                 <svg class="i-idle" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11.5" r="2.9"/><path d="M13.9 8.6v5.8"/></svg>
-                <svg class="i-rec" viewBox="0 0 22 22" fill="none" stroke="#ff3b30" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="#ff3b30" stroke="none"/></svg>
                 <svg class="i-busy" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><g fill="currentColor" stroke="none"><circle cx="8.4" cy="11" r="1.1"/><circle cx="11" cy="11" r="1.1"/><circle cx="13.6" cy="11" r="1.1"/></g></svg>
                 <svg class="i-done" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><path d="M13.2 7.2H9.3l-.2 3.6M8.95 11.46A2.3 2.3 0 1 1 8.95 13.54"/></svg>
                 <span class="status-title"></span>
               </span>
-              <span class="mic-on" hidden></span>
               <svg class="battery" viewBox="0 0 28 14" fill="none" stroke="currentColor"><rect x="0.75" y="0.75" width="23" height="12.5" rx="3.5" stroke-opacity="0.5" stroke-width="1.2"/><rect x="2.6" y="2.6" width="16" height="8.8" rx="1.8" fill="currentColor" stroke="none"/><path d="M26 5v4" stroke-opacity="0.5" stroke-width="1.6" stroke-linecap="round"/></svg>
               <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 19.2 9.4 16.6a3.7 3.7 0 0 1 5.2 0zM6.6 13.8l-1.5-1.5a9.8 9.8 0 0 1 13.8 0l-1.5 1.5a7.7 7.7 0 0 0-10.8 0zM3.8 11 2.3 9.5a13.8 13.8 0 0 1 19.4 0L20.2 11a11.7 11.7 0 0 0-16.4 0z"/></svg>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="6" rx="3"/><rect x="3" y="13" width="18" height="6" rx="3"/><circle cx="15" cy="8" r="1.6" fill="currentColor"/><circle cx="9" cy="16" r="1.6" fill="currentColor"/></svg>
@@ -586,22 +605,12 @@ h2 { font-weight: 600; }
             </div>
           </div>
 
-          <div class="menu">
-            <div class="item off status-line">Added #5 to Checkout session</div>
-            <div class="item"><span>Open Asides</span><span class="key">⌃⌥Space</span></div>
-            <div class="item"><span>Open Asides in a New Note</span><span class="key">⌃⌥N</span></div>
-            <div class="item"><span>Attach Clipboard Image</span><span class="key">⌃⌥V</span></div>
-            <div class="item off">Cancel Recording (Esc)</div>
-            <div class="sep"></div>
-            <div class="item"><span>Directory: shop</span><span class="key">›</span></div>
-            <div class="item off">shop › Checkout session · 5 entries</div>
-            <div class="item open-note">Open Note</div>
-            <div class="item">Reveal in Finder</div>
-            <div class="item">Copy Note Path</div>
-            <div class="sep"></div>
-            <div class="item"><span>Preferences</span><span class="key">›</span></div>
-            <div class="sep"></div>
-            <div class="item"><span>Quit Asides</span><span class="key">⌘Q</span></div>
+          <div class="pill">
+            <span class="mic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span class="time">0:00</span></span>
+            <span class="to">Claude Code · shop<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+            <span class="div"></span>
+            <span class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>
+            <span class="stop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
           </div>
 
           <div class="win safari inactive">
@@ -649,56 +658,42 @@ h2 { font-weight: 600; }
             </div>
           </div>
 
-          <div class="win editor open">
+          <div class="win term front">
             <div class="bar">
               <span class="lights"><i></i><i></i><i></i></span>
-              <span class="doc-title">notes.md</span>
+              <span class="term-title">shop — claude — 80×30</span>
             </div>
-            <div class="doc"><pre class="end"><span class="fm">---
-title: Checkout session
-created: 2026-10-15T14:32:07+01:00
-directory: /Users/sam/code/shop
-git:
-  branch: fix/checkout-layout
-  commit: 4f2c9e1
-  commit_subject: Move the order summary into a card
-  uncommitted_files: 3
-environment:
-  macos: "26.0"
-  browser: Safari 26.0
-  display: 3024x1964 @2x
-transcription: asides 0.2.0 · whisper large-v3-turbo (local)
----</span>
+            <div class="screen">
+              <p><span class="star">✻</span> Welcome to Claude Code</p>
+              <p class="you">&gt; Run the checkout tests</p>
+              <p>⏺ All 14 checkout tests pass.</p>
+              <p class="you aside">&gt; [Image #1]
 
-<span class="h">## 1 · 14:32</span>
+  ### 1. group "Order summary"
+  **App:** Safari · "Checkout · meadow"
+  **Page:** localhost:5173/checkout
+  **Location:** main &gt; aside.summary
 
-The logo in the header looks blurry.
+  The summary card needs more padding under the sticky header.
 
-<span class="h">## 2 · 14:33</span>
+  ### 2. button "Pay now · $72.00"
+  **Location:** aside.summary &gt; button.pay
 
-Shipping options take a while to load, and there's no spinner.
-
-<span class="h">## 3 · 14:34</span>
-
-The quantity buttons are too small to tap.
-
-<span class="h">## 4 · 14:35</span>
-
-The total doesn't update after removing the coupon.
-
-<span class="h">## 5 · 14:38</span>
-
-The summary card needs more padding under the sticky header.
-
-![14:38:51](images/05-143851.png)
-
-And the Pay button text wraps.</pre></div>
+  And the Pay button text wraps.</p>
+              <p class="thinking" hidden><span class="star">✻</span> Thinking…</p>
+              <p class="reply">⏺ I'll give the summary card room below the sticky header and
+  keep the Pay button's label on one line.</p>
+              <div class="input"><span class="dim">&gt;</span><span class="typed"></span><i class="caret"></i></div>
+              <p class="dim">? for shortcuts</p>
+            </div>
           </div>
 
-          <div class="shot"></div>
+          <div class="outline o1"></div>
+          <div class="outline o2"></div>
+          <div class="pin p1">1</div>
+          <div class="pin p2">2</div>
           <div class="pointer">
             <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
-            <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
           </div>
         </div>
         <div class="hud" aria-hidden="true"></div>
@@ -709,28 +704,28 @@ And the Pay button text wraps.</pre></div>
 
   <section class="wrap features" aria-label="Features">
     <div class="feature">
+      <h3>Into the chat you're in</h3>
+      <p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI or Qwen Code, in Terminal, Ghostty or Diri. It goes to the session you typed into last. Nothing to install in the agent.</p>
+    </div>
+    <div class="feature">
+      <h3>Point, don't describe</h3>
+      <p>Click an element, and its name, app, page and location go with what you say about it. Drag over an area, or draw an arrow or a circle.</p>
+    </div>
+    <div class="feature">
+      <h3>Measure anything</h3>
+      <p>Distances between edges, the size of anything, guides, like PixelSnap. In any app, not just the browser.</p>
+    </div>
+    <div class="feature">
       <h3>Local and free</h3>
-      <p>Whisper runs on your Mac's GPU. No account, no API key, and no audio leaves your Mac.</p>
+      <p>Whisper runs on your Mac's GPU. No account, no API key, and no audio leaves your Mac. Verbatim: what you said, as Whisper heard it.</p>
     </div>
     <div class="feature">
-      <h3>Verbatim, in any language</h3>
-      <p>What you said, as Whisper heard it, with no rewriting. The language is detected for each recording.</p>
+      <h3>Freeze, use, freeze again</h3>
+      <p>Go back to your app while you keep talking, and freeze it again when you see the next thing. One aside holds every freeze, in order.</p>
     </div>
     <div class="feature">
-      <h3>Screenshots in place</h3>
-      <p>Copy a screenshot while you talk, and it lands next to the sentence you were saying.</p>
-    </div>
-    <div class="feature">
-      <h3>Context included</h3>
-      <p>Each new note records the branch, commit and uncommitted changes, plus your browser and display.</p>
-    </div>
-    <div class="feature">
-      <h3>Straight to your agent</h3>
-      <p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code get each aside as you say it, or a batch when you send it. Any agent with MCP can listen.</p>
-    </div>
-    <div class="feature">
-      <h3>Wispr Flow too</h3>
-      <p>Already dictate with Wispr Flow? Turn it on, and your dictations land in the note next to your recordings.</p>
+      <h3>A history, not files</h3>
+      <p>Every aside is kept on your Mac for 30 days: send it again, to another session, or let your agent look it up.</p>
     </div>
   </section>
 
@@ -746,11 +741,14 @@ brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class=
         <p>Or <a href="https://github.com/mihaicristianfarcas/asides#from-source">build it from source</a> with <code>make install</code>.</p>
       </li>
       <li>
-        <p>Run it in your project. The first launch asks for the microphone and downloads the speech model (574 MB).</p>
-        <div class="code"><pre><code>cd ~/code/shop &amp;&amp; asides</code></pre><button class="copy" type="button" hidden>Copy</button></div>
+        <p>Start your coding agent as usual, in Terminal, Ghostty or Diri. There's nothing to set up in it.</p>
+        <div class="code"><pre><code>cd ~/code/shop &amp;&amp; claude</code></pre><button class="copy" type="button" hidden>Copy</button></div>
       </li>
       <li>
-        <p>Optionally, add it to your coding agent, then ask the agent to listen to your asides (in Claude Code, <code>/asides:listen</code>). Each aside reaches it as you say it, or in a batch when you send it (Preferences → Agents Get Asides).</p>
+        <p>Press <kbd>⌃⌥Space</kbd> over the app you're testing. The first time, macOS asks for Screen Recording, and whether Asides may control your terminal when it first types into it. Click the microphone to download a voice model (190 MB for English, 574 MB for any language).</p>
+      </li>
+      <li>
+        <p>Optionally, let your agent look up past asides and measure screenshots with the MCP server.</p>
         <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
 codex mcp add asides -- asides mcp
 opencode mcp add --global asides -- asides mcp
@@ -763,13 +761,13 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   <section class="wrap usage" id="usage">
     <h2>Usage</h2>
     <dl class="keys">
-      <dt><kbd>⌃⌥Space</kbd></dt><dd>Freeze your screen to measure, annotate and talk. Hold it while you talk; tap it again to add it all to your note.</dd>
-      <dt><kbd>⌃⌥N</kbd></dt><dd>The same, into a new note.</dd>
-      <dt><kbd>⌃⌥P</kbd></dt><dd>Back to the live screen, to keep using your app as you talk. Again: freeze it.</dd>
-      <dt><kbd>⌃⌥V</kbd></dt><dd>Attach the image on the clipboard.</dd>
-      <dt><kbd>⌃⌥Enter</kbd></dt><dd>Send the batch to your agent, when it gets asides in batches.</dd>
+      <dt><kbd>⌃⌥Space</kbd></dt><dd>Freeze your screen. Click what's wrong for a numbered pin (drag for an area) and talk. Press it again, or <kbd>⏎</kbd>, to send it all to your agent.</dd>
+      <dt><kbd>⌃⌥P</kbd></dt><dd>Back to the live screen, to use your app while you keep talking. Again: freeze it.</dd>
+      <dt><kbd>Tab</kbd></dt><dd>Send to the next agent session. Click the pill's session for all of them, or for a new one in any folder.</dd>
+      <dt><kbd>M</kbd> <kbd>D</kbd></dt><dd>Measure, or draw. <kbd>?</kbd> shows every key.</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close without sending.</dd>
     </dl>
-    <p class="keys-note">You can change any shortcut in Preferences → Edit Shortcuts &amp; Settings.</p>
+    <p class="keys-note">Both shortcuts can be changed in Settings → Edit shortcuts and more…</p>
   </section>
 </main>
 
@@ -839,13 +837,16 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   const $ = (selector) => desk.querySelector(selector);
   const status = $('.status');
   const title = $('.status-title');
-  const micOn = $('.mic-on');
-  const menu = $('.menu');
-  const openNote = $('.open-note');
+  const pill = $('.pill');
+  const time = $('.pill .time');
   const safari = $('.safari');
-  const editor = $('.editor');
-  const doc = $('.doc pre');
-  const shot = $('.shot');
+  const term = $('.term');
+  const aside = $('.aside');
+  const thinking = $('.thinking');
+  const reply = $('.reply');
+  const typed = $('.typed');
+  const outlines = [$('.o1'), $('.o2')];
+  const pins = [$('.p1'), $('.p2')];
   const hud = device.querySelector('.hud');
   const pointer = $('.pointer');
   const say = device.querySelector('.say');
@@ -858,7 +859,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   let run = 0;
   let timer;
   // It plays in a loop while it's on screen; a run that ends off screen starts over when it's
-  // back. With reduced motion it plays once and stays on the note.
+  // back. With reduced motion it plays once and stays on the agent's chat.
   const loop = !matchMedia('(prefers-reduced-motion: reduce)').matches;
   let onScreen = false;
   let due = true;
@@ -874,10 +875,25 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     return [(r.left - d.left + r.width * fx) * k + dx, (r.top - d.top + r.height * fy) * k + dy];
   }
 
-  function moveTo([x, y], ms) {
+  function place(el, [x, y]) {
+    el.style.setProperty('--x', x.toFixed(1));
+    el.style.setProperty('--y', y.toFixed(1));
+  }
+
+  function moveTo(at, ms) {
     pointer.style.setProperty('--move', `${ms}ms`);
-    pointer.style.setProperty('--x', x.toFixed(1));
-    pointer.style.setProperty('--y', y.toFixed(1));
+    place(pointer, at);
+  }
+
+  // Outlines an element, a little outside its bounds, as hovering it on the frozen screen does.
+  function outline(i, el) {
+    const [x0, y0] = spot(el, 0, 0, -3, -3);
+    const [x1, y1] = spot(el, 1, 1, 3, 3);
+    const box = outlines[i];
+    place(box, [x0, y0]);
+    box.style.setProperty('--w', (x1 - x0).toFixed(1));
+    box.style.setProperty('--h', (y1 - y0).toFixed(1));
+    box.classList.add('on');
   }
 
   async function click(id) {
@@ -914,25 +930,30 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       await wait(150, id);
       word.classList.remove('off');
     }
-    await wait(1000, id);
+    await wait(900, id);
     await caption('', id);
+  }
+
+  function front(app) {
+    desk.dataset.app = app;
+    safari.classList.toggle('inactive', app !== 'safari');
+    term.classList.toggle('inactive', app !== 'terminal');
+    term.classList.toggle('front', app === 'terminal');
   }
 
   // Back to the first frame, without animating there.
   function reset() {
     clearInterval(timer);
     desk.classList.add('instant');
-    desk.dataset.app = 'safari';
-    safari.classList.remove('inactive');
-    editor.classList.remove('open');
-    doc.classList.remove('end');
-    menu.classList.remove('open');
-    status.classList.remove('open');
-    openNote.classList.remove('hot');
-    shot.classList.remove('on');
+    front('safari');
+    pill.classList.remove('on');
+    for (const el of [...outlines, ...pins]) el.classList.remove('on');
+    aside.hidden = true;
+    thinking.hidden = true;
+    reply.hidden = true;
+    typed.innerHTML = '';
     hud.classList.remove('on');
     say.innerHTML = '';
-    micOn.hidden = true;
     show('idle', '');
     pointer.className = 'pointer on';
     moveTo([560, 470], 0);
@@ -945,95 +966,79 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     due = false;
     reset();
     const card = $('.card');
+    const pay = $('.pay');
     try {
       await wait(700, id);
-      moveTo(spot(card, 0.45, 0, 0, 8), 900);
+      moveTo(spot(card, 0.4, 0, 0, -30), 900);
       await wait(1300, id);
 
+      // Frozen, and listening. The menu bar is part of the frozen picture, so only the pill moves.
       await press('⌃⌥Space', id, () => {
         const start = Date.now();
         const tick = () => {
           const s = Math.floor((Date.now() - start) / 1000);
-          title.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+          time.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
         };
-        show('rec', '');
         tick();
         timer = setInterval(tick, 200);
-        micOn.hidden = false;
+        pill.classList.add('on');
       });
+      await wait(500, id);
+
+      const first = spot(card, 0.62, 0.06);
+      moveTo(first, 800);
       await wait(600, id);
-      moveTo(spot(card, 0.8, 0, 0, 8), 1700);
+      outline(0, card);
+      await wait(450, id);
+      await click(id);
+      place(pins[0], first);
+      pins[0].classList.add('on');
+      await wait(200, id);
+      moveTo(spot(card, 0.8, 0.3), 2400);
       await speak(sentences[0], id);
 
-      const [x0, y0] = spot(card, 0, 0, -8, -8);
-      const [x1, y1] = spot(card, 1, 1, 8, 8);
-      moveTo([x0, y0], 600);
-      await wait(800, id);
-      await press('⌃⇧⌘4', id, () => pointer.classList.add('crosshair'));
-      await wait(300, id);
-      shot.style.setProperty('--move', '0ms');
-      shot.style.setProperty('--sx', x0.toFixed(1));
-      shot.style.setProperty('--sy', y0.toFixed(1));
-      shot.style.setProperty('--sw', 0);
-      shot.style.setProperty('--sh', 0);
-      shot.getBoundingClientRect();
-      shot.classList.add('on');
-      shot.style.setProperty('--move', '1000ms');
-      shot.style.setProperty('--sw', (x1 - x0).toFixed(1));
-      shot.style.setProperty('--sh', (y1 - y0).toFixed(1));
-      moveTo([x1, y1], 1000);
-      await wait(1150, id);
-      shot.classList.remove('on');
-      pointer.classList.remove('crosshair');
-      await wait(500, id);
-
-      moveTo(spot($('.pay'), 0.9, 0.8), 800);
+      const second = spot(pay, 0.82, 0.3);
+      moveTo(second, 800);
       await wait(600, id);
+      outline(1, pay);
+      await wait(400, id);
+      await click(id);
+      place(pins[1], second);
+      pins[1].classList.add('on');
+      await wait(200, id);
       await speak(sentences[1], id);
 
+      // Sent: Asides closes at once, and transcribes.
       await press('⌃⌥Space', id, () => {
         clearInterval(timer);
-        micOn.hidden = true;
+        pill.classList.remove('on');
+        for (const el of [...outlines, ...pins]) el.classList.remove('on');
         show('busy', '');
       });
-      // Transcribing.
-      await wait(1800, id);
-      show('done', '');
-      await wait(400, id);
-
-      moveTo(spot(status, 0.5, 0.6), 900);
-      await wait(1050, id);
+      moveTo(spot(term, 0.82, 0.12), 900);
+      await wait(1000, id);
       await click(id);
-      // The menu opens under the status item, shifted left if it would run off the screen.
-      menu.style.setProperty('--menu-x', Math.min(spot(status, 0, 0)[0], 1024 - 286 - 6).toFixed(1));
-      status.classList.add('open');
-      menu.classList.add('open');
+      front('terminal');
+      moveTo(spot(term, 0.9, 0.55), 700);
       await wait(500, id);
-      moveTo(spot(openNote, 0.3, 0.55), 600);
-      await wait(650, id);
-      openNote.classList.add('hot');
-      await wait(250, id);
-      await click(id);
-      openNote.classList.remove('hot');
-      await wait(70, id);
-      openNote.classList.add('hot');
-      await wait(70, id);
-      menu.classList.remove('open');
-      status.classList.remove('open');
-      await wait(250, id);
 
+      // Typed in as the user would: the screenshot, then the text, then Return.
+      typed.innerHTML = '<b>[Image #1]</b> ';
+      await wait(500, id);
+      typed.innerHTML = '<b>[Image #1]</b> <b>[Pasted text #1 +11 lines]</b>';
+      await wait(700, id);
+      typed.innerHTML = '';
+      aside.hidden = false;
+      thinking.hidden = false;
+      show('done', '');
+      await wait(1600, id);
+      thinking.hidden = true;
+      reply.hidden = false;
+      await wait(800, id);
       show('idle', '');
-      openNote.classList.remove('hot');
-      desk.dataset.app = 'textedit';
-      safari.classList.add('inactive');
-      editor.classList.add('open');
-      moveTo(spot(editor, 0.75, 0.6), 700);
-      // The front matter first, then down to the new entry.
-      await wait(2200, id);
-      doc.classList.add('end');
       if (!loop) return;
-      // A moment to read the note, then from the top.
-      await wait(4000, id);
+      // A moment to read it, then from the top.
+      await wait(5000, id);
       if (onScreen) play(); else due = true;
     } catch {
       // A newer run took over.

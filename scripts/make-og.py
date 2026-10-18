@@ -1,6 +1,6 @@
 """Renders docs/og.png, the 1200 × 630 image shown when the website's link is shared.
 
-The picture is the website's own demo, frozen mid-recording: this script takes the demo's markup
+The picture is the website's own demo, frozen with a pin on the page: this script takes the demo's markup
 and styles from docs/index.html, so the image keeps up with the page. It needs Firefox.
 
 Usage: python3 scripts/make-og.py
@@ -29,16 +29,34 @@ def replace(text, old, new):
     return text.replace(old, new, 1)
 
 
-# The frame: testing the checkout page in Safari, seven seconds into a recording, one screenshot in.
+# The frame: testing the checkout page in Safari, frozen seven seconds ago, the summary card pinned.
 words = "The summary card needs more padding under the sticky header."
-device = replace(device, '<div class="desk" data-app="textedit"', '<div class="desk" data-app="safari"')
+device = replace(device, '<div class="desk" data-app="terminal"', '<div class="desk" data-app="safari"')
 device = replace(device, '<div class="win safari inactive">', '<div class="win safari">')
-device = replace(device, '<div class="win editor open">', '<div class="win editor">')
-device = replace(device, '<span class="status" data-state="idle">', '<span class="status" data-state="rec">')
-device = replace(device, '<span class="status-title"></span>', '<span class="status-title">0:07 · 📎1</span>')
-device = replace(device, '<span class="mic-on" hidden></span>', '<span class="mic-on"></span>')
-device = replace(device, '<div class="pointer">', '<div class="pointer on" style="--x: 640; --y: 488">')
+device = replace(device, '<div class="win term front">', '<div class="win term inactive">')
+# The aside isn't in the agent's chat yet.
+device = replace(device, '<p class="you aside">', '<p class="you aside" hidden>')
+device = replace(device, '<p class="reply">', '<p class="reply" hidden>')
+device = replace(device, '<div class="pill">', '<div class="pill on">')
+device = replace(device, '<span class="time">0:00</span>', '<span class="time">0:07</span>')
+device = replace(device, '<div class="outline o1">', '<div class="outline o1 on">')
+device = replace(device, '<div class="pin p1">', '<div class="pin p1 on">')
+device = replace(device, '<div class="pointer">', '<div class="pointer on">')
 device = replace(device, '<p class="say" aria-live="polite"></p>', f'<p class="say">{words}</p>')
+
+# The outline, the pin and the pointer go on the card, wherever the page's styles put it (on the
+# desktop's 1024-unit grid, as the page's demo places them).
+place = """<script>
+const desk = document.querySelector('.desk');
+const d = desk.getBoundingClientRect();
+const r = desk.querySelector('.card').getBoundingClientRect();
+const k = 1024 / d.width;
+const [x, y, w, h] = [(r.left - d.left) * k, (r.top - d.top) * k, r.width * k, r.height * k];
+const set = (sel, props) => Object.entries(props).forEach(([p, v]) => desk.querySelector(sel).style.setProperty(p, v));
+set('.o1', { '--x': x - 3, '--y': y - 3, '--w': w + 6, '--h': h + 6 });
+set('.p1', { '--x': x + 0.62 * w, '--y': y + 0.06 * h });
+set('.pointer', { '--x': x + 0.8 * w, '--y': y + 0.3 * h });
+</script>"""
 
 html = f"""<!doctype html>
 <html lang="en">
@@ -64,9 +82,10 @@ html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
 <div class="og-copy">
   <span class="mark">{mark} asides</span>
   <h1>Talk through bugs while you test.</h1>
-  <p>Transcribed on your Mac, into a Markdown note in your repo, and straight to your coding agent.</p>
+  <p>Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.</p>
 </div>
 <div class="og-device">{device}</div>
+{place}
 </body>
 </html>
 """

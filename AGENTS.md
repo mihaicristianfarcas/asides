@@ -5,39 +5,37 @@ before changing the app. [CONTRIBUTING.md](CONTRIBUTING.md) has the full human w
 
 ## The project
 
-asides is a macOS menu-bar app plus a CLI.
-- `asides` binds a repo.
-- A global shortcut (`⌃⌥Space`) opens Asides: one mode, the screen frozen under a toolbar to
-  measure and annotate it while talking, or live (▶, `⌃⌥P`), the toolbar alone over it, to talk
-  while using the app.
-- whisper.cpp transcribes it locally, verbatim.
-- The transcript is appended to `<repo>/.asides/<YYYY-MM-DD-HHMM Title>/notes.md`.
-- Coding agents can listen through `asides mcp`, an MCP server in the CLI, and get each new
-  entry (or a batch, on Send to Agent) as a prompt. They acknowledge, resolve, dismiss or reply to
-  asides and their annotations (Agentation's feedback loop), appended to `threads.jsonl` beside the note.
-- `asides claude` (or `codex`, `opencode`, `gemini`, `copilot`, `qwen`; New Agent Session in the menu runs it in a terminal)
-  starts an agent already listening, with the MCP server on its command line. Codex sessions are
-  threads in Codex's app-server daemon, and OpenCode sessions live in OpenCode's background service:
-  asides pushes each aside into them. Every listening agent is a session; each aside goes to one, the target (`⌃⌥Tab` switches), recorded in `routes.jsonl`
-  beside the note. A second session in a repo works in a git worktree.
-- Freezing (a tool or ⏸ on the toolbar, or `⌃⌥P`) freezes every screen, in any app, under the same
-  toolbar: PixelSnap-style measuring (distances, snapped areas, holds, guides), numbered
-  annotations on elements and areas, drawings (arrows, circles), screenshots of parts, and talking
-  (Space) while doing it; ▶ or `⌃⌥P` goes back to live, and a session can freeze many times. Done
-  adds it all as one aside: each freeze's screenshot, each measurement and annotation where the
-  user was speaking, and what's said from an annotation's card in that annotation. The toolbar
-  moves (its handle) and folds. Its overlay is a separate GPUI process, `asides-overlay`, the next
-  one started ahead of time (`--standby`). Web-only (Agentation's toolbar, React
-  names) and CleanShot-only (PixelSnap's hand-offs) features are out of scope: it works on
-  anything on screen.
-- With the Wispr Flow integration on, Wispr Flow dictations become entries too.
+asides is a macOS menu-bar app plus a CLI. Why it works as it does, and what was measured:
+[design/redesign.md](design/redesign.md).
+- A global shortcut (`⌃⌥Space`) opens Asides: every screen frozen under a small pill (the
+  microphone, where the aside goes, send, close). A click pins the element under it (its role,
+  label, app, window, and in browsers the page and a CSS-like location), a drag pins an area; `M`
+  measures (PixelSnap-style: distances, snapped areas, holds, guides), `D` draws, `S` takes a
+  screenshot of a part. The user talks while doing it (the microphone starts as it opens; `Space`
+  held while muted). `⌃⌥P` goes live (the pill alone, over the user's app) and freezes again: one
+  aside holds many freezes. `⌃⌥Space` again (or `⏎`) sends it all as one aside: what was said, with
+  each freeze's screenshot, measurement and pin where the user was speaking.
+- whisper.cpp transcribes it locally, verbatim. The voice model is downloaded only when asked
+  (English-only by default).
+- The aside is typed into a coding agent's session (Claude Code, Codex, OpenCode, Gemini CLI,
+  Copilot CLI, Qwen Code) running in Terminal, Ghostty or Diri, as the user's own message, with its
+  screenshots: by default the session the user typed into last, found in the process table; the
+  pill picks another, or New session in… (an agent in a folder, started with the aside). Nothing is
+  installed in the agents and nothing has to listen.
+- Every aside is kept in `~/.asides/history` (pruned after `history_days`); nothing goes into the
+  user's repositories. The Asides window (`asides-overlay --window`) shows History, Sessions and
+  Settings. `asides mcp` (optional) lets agents read asides and measure images.
+- With the Wispr Flow integration on, dictations made while the screen is frozen join the aside.
+- Its overlay is a separate GPUI process, `asides-overlay`, the next one started ahead of time
+  (`--standby`). Web-only (Agentation's toolbar, React names) and CleanShot-only (PixelSnap's
+  hand-offs) features are out of scope: it works on anything on screen.
 
 It's a Rust workspace:
 - `crates/asides-core`: platform-independent logic.
 - `crates/asides-cli`: the `asides` binary.
 - `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `Asides.app`).
-- `crates/asides-overlay`: the overlay, toolbar and frozen screens (binary `asides-overlay`, GPUI), bundled
-  beside the app's binary. Any new UI for it is GPUI.
+- `crates/asides-overlay`: the overlay, the pill, the frozen screens and the Asides window (binary
+  `asides-overlay`, GPUI), bundled beside the app's binary. Any new UI is GPUI.
 
 ## Commands
 
@@ -65,34 +63,40 @@ changes.
 - **Follow the invariants in ARCHITECTURE.md.** The ones most often at risk:
   - `asides-core` has no macOS dependencies
   - AppKit, tray and menu code runs on the main thread only
-  - only the worker thread writes notes
-  - notes are append-only
+  - only the worker thread creates asides in the history
+  - an aside is typed in as the user would: nothing installed in the agents, nothing listening
+  - never into a session the user didn't choose (tests send `--to` a session of their own)
   - transcripts are verbatim: no prompts, no post-processing
   - new `config.toml` and `state.json` fields get serde defaults
-- **Never commit** `.asides/` (the user's notes and voice recordings), `tests/fixtures/`
+- **Never commit** `.asides/` (old notes and voice recordings), `tests/fixtures/`
   (generated with macOS voices, which may not be redistributed), `target/` or `dist/`. They're
   gitignored; keep them that way.
-- **Never edit the user's notes** in `.asides/`.
+- **Never edit the user's history** in `~/.asides` (or old notes in a repo's `.asides/`). Tests use
+  a history of their own (`ASIDES_HOME`; the app gets it with `launchctl setenv`, unset after).
+- **Never send to the user's own agent sessions** while testing: start sessions of your own in a
+  scratch repo and send `--to` them.
 - **Run `make release` only when the maintainer asks.** It uploads the build to Apple's notary
   service and needs their stored notarytool credentials.
 - **Don't run `make cert`** unless asked. It changes the login keychain and prompts for a password.
 - **Keep the stable signing.** `make bundle` picks the identity with `scripts/signing-identity.sh`
   and signs with the hardened runtime. Don't fall back to ad hoc (the microphone permission would
   reset every build), and add an entitlement for any new capability.
-- **Check `asides status` before `make install` or `make e2e`.** If it says recording or
-  transcribing, the user is in the middle of something: don't reinstall.
+- **Check `asides status` before `make install` or `make e2e`.** If it says open, recording,
+  transcribing or sending, the user is in the middle of something: don't reinstall.
 - **Tell the user what `make install` and `make e2e` did.** Both quit the running Asides and
   replace the installed app, and `make e2e` installs a test build with dev hooks. Afterwards run
   `make install` to restore a normal build, and tell the user to run `asides` again.
-- **Know what `make e2e` uses.** It relies on the model in
-  `~/Library/Application Support/Asides/models/`; if it's missing, the app downloads 574 MB.
-  It also rebinds the app to a temporary repo.
+- **Know what `make e2e` uses.** It sets the model to large-v3-turbo (the fixtures are English and
+  Romanian), which must be in `~/Library/Application Support/Asides/models/` (`asides download
+  large-v3-turbo`). It keeps its asides in a temporary history, sends only to a stand-in agent of
+  its own (in Diri, or Terminal without Diri), and puts back the user's settings and clipboard.
 - **Keep binary names unique ignoring case** (case-insensitive APFS). Don't name a binary
   `Asides`.
 - **Don't add permissions** without the maintainer's agreement. Freezing the screen uses Screen
-  Recording (asked on first use) and Accessibility (only with `identify_elements`); talking over
-  the live screen must keep working without either. New Agent Session uses Automation for Ghostty only (a
-  tab per session; declined, a window of its own). Input Monitoring is not used.
+  Recording (asked on first use) and Accessibility (with `identify_elements`, on by default; pins
+  work without it); talking over the live screen must keep working without either. Sending uses
+  Automation for Terminal and Ghostty (asked the first time Asides types into or opens a session
+  there); Diri needs none. Input Monitoring is not used.
 - **Keep the docs in sync.** Update the README (user-facing), ARCHITECTURE.md (structure,
   invariants) and CONTRIBUTING.md (workflow) when your change affects them. The website
   (`docs/index.html`) repeats the shortcuts, requirements and install steps.
@@ -101,49 +105,50 @@ changes.
 
 **You can:**
 - run all the automated tests
-- drive the installed app through the CLI with `asides simulate <wav> [--new] [--image FILE --at SECONDS]` (dev-hooks builds only; `make e2e` sets this up)
-- run frozen sessions on an image with `asides simulate-measure <png> <script.json>` (`"live"` and
-  `"freeze"` steps for several freezes)
-  (dev-hooks builds), and look at the image it adds with `ASIDES_OVERLAY_DUMP`
+- drive the installed app through the CLI with `asides simulate <wav> [--image FILE --at SECONDS] [--to SESSION]` (dev-hooks builds only; `make e2e` sets this up)
+- run frozen sessions on an image with `asides simulate-measure <png> <script.json> [--to SESSION]`
+  (`"live"` and `"freeze"` steps for several freezes) (dev-hooks builds), and look at the image it
+  adds with `ASIDES_OVERLAY_DUMP`
+- list the sessions (`asides sessions`), start agents of your own in a scratch repo (Diri's
+  `dirijor session spawn`, or Terminal and Ghostty through AppleScript from your terminal) and send
+  them asides (`--to`), reading what each agent recorded (Claude Code's transcript in
+  `~/.claude/projects`, Codex's rollout in `~/.codex/sessions`, OpenCode's database, read-only)
 - run the real overlay windows on a screenshot in a small window, play mouse and key steps in them
   (`replay`: AppKit events into GPUI's view), and capture them to PNGs to look at
   (`screencapture -l`, when your terminal has Screen Recording). Keep the window small and the run
   short: it's on the user's screen
+- open the Asides window on a history of your own and capture each part (CONTRIBUTING.md)
 - measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
 - read `~/Library/Application Support/Asides/state.json`
-- drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md), and run Claude Code, Codex or
-  OpenCode against it with a one-off MCP config, using `asides simulate` for speech
-- run `asides claude`/`codex`/`opencode`/`gemini`/`copilot`/`qwen` with a fake agent first on `PATH` to see the command line it
-  builds, and check the real agent accepts it without a model call (CONTRIBUTING.md)
-- run `asides listen --timeout N` and read what it prints
+- drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md)
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
 
 **You can't:**
 - press global shortcuts
-- click the status item or menus (New Agent Session, Asides Go To, Show)
+- click the status item or menus
 - use the overlay with a real mouse and keyboard, or check that it takes the keyboard without a click
-- check that the live toolbar leaves the keyboard and the clicks around it to the user's app, or
+- check that the live pill leaves the keyboard and the clicks around it to the user's app, or
   drag it (it follows the real mouse)
 - speak into the microphone
-- grant permissions (Microphone, Screen Recording, Accessibility)
+- grant permissions (Microphone, Screen Recording, Accessibility, Automation): an Automation prompt
+  holds an AppleScript for up to 2 minutes, then it fails
 
 When a change touches those, finish by listing the exact manual checks for the user to run. The
 manual QA checklist in CONTRIBUTING.md has the full list.
 
-## Working from asides notes
+## Working from asides
 
-The user may record a request and ask you to "implement the note". Find it with
-`asides path` (or `asides -C <repo> path`): it's the latest `notes.md` under `.asides/`.
+The user's asides arrive in your chat as their messages. To read one again (with its screenshots'
+paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'s `get_aside`.
 
-- Entries (`## N · HH:MM`) are raw Whisper output, in English or Romanian. Expect misheard words,
-  especially project names (for example "Local Tatus" for "local-tts").
-- Early entries may be microphone tests. Act on the entries that ask for something, and say which
-  ones you implemented.
-- Images referenced in an entry (`images/…`) are screenshots the user attached at that point.
+- What was said is raw Whisper output, in English or Romanian. Expect misheard words, especially
+  project names (for example "Local Tatus" for "local-tts").
+- Each screenshot is where the user took it (`[Image #1]`, or a path into `~/.asides/history`).
   Look at them.
-- The front matter records the branch and commit the user was testing.
-- Also report defects the note itself reveals, such as wrong metadata or a failed audio conversion.
+- `### N.` blocks are pins: the element (role and label), the app and window, the page and a
+  CSS-like location, its size, what the user typed or said about it.
+- Also report defects the aside itself reveals, such as a misplaced screenshot or a wrong element.
 
 ## Pitfalls already hit
 
@@ -444,6 +449,42 @@ The user may record a request and ask you to "implement the note". Find it with
 - `NSRunningApplication.hide()` from a command-line tool returns false: it can't hide other apps.
 - `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
   run --help`, which does print help) before trying its commands.
+- Typing into agents (2026-10-18, measured; design/redesign.md has the table):
+  - Terminal's `do script "…" in <tab>` sends its text and a CR in one burst, which agents take for
+    a paste: the CR becomes a new line, and nothing is sent (a lone CR sent 1.5 s later sent a
+    one-line message, not a multi-line one). Wrapped in bracketed-paste markers (`ESC[200~ …
+    ESC[201~`), the CR that follows sends it. `do script` can't send a key without its CR: Ctrl+V
+    arrives with one, as a paste, and Claude Code strips it ("removed 1 invisible character").
+  - Ghostty 1.3's AppleScript `send key "v" modifiers "control"` sends nothing when the program has
+    the kitty keyboard protocol on (Claude Code, Codex and OpenCode all do): Ctrl keys are dropped,
+    Return and Tab aren't. A bare `send key "a"` sends nothing either. `input text` is a paste.
+  - A pasted image path becomes an attachment in Ghostty for all three agents, in Terminal for all
+    three (bracketed), but stays text in Diri for Claude Code and OpenCode: Diri gets Ctrl+V with
+    the image on the pasteboard instead.
+  - Claude Code attaches a pasted path a moment after the paste: with a CR in the same burst, the
+    text went out and the image joined the next message. Codex and OpenCode attach it as it's
+    pasted: a path pasted alone with a CR was sent alone.
+  - Return while Codex is working joins the turn in progress ("steers"), and in the test Codex then
+    answered only the newer message. Tab queues it (and sends at once when idle).
+  - Diri's `session send` refuses text that's only whitespace ("requires text"), and `session spawn
+    --prompt` typed into OpenCode before its input box was ready (lost; spawn without it, wait for
+    "Ask anything" in `session read`, then send).
+  - The access time of an agent's terminal device (`/dev/ttys003`) moves when it reads input: the
+    session typed into last, for any agent in any app (`w` uses it for idle time).
+  - A terminal app started from inside an agent's session (an AppleScript from it launching Ghostty)
+    hands that session's markers to every shell it opens; Claude Code there said "Transcript saving
+    is off — inherited CLAUDE_CODE_CHILD_SESSION marker". Start test terminals with the markers
+    stripped (or from the Dock), and quit them after.
+  - Asides' first AppleScript to Terminal (or Ghostty) waits for the Automation prompt, up to the
+    Apple event timeout: the send shows "sending" until then. Permissions follow the signing
+    identity: a build signed like the last release has the Ghostty permission New Agent Session got.
+  - Claude Code asks whether to trust a folder it hasn't seen: a new session in a scratch folder
+    waits at that question, its first message behind it.
+- `pgrep -f "harness.py terminal"` also matches the shell running the loop that waits for it (its
+  command line has the text): a wait loop on it never ends.
+- macOS's `grep` has no `\|` in basic patterns: use `grep -E 'a|b'`.
+- `launchctl setenv` reaches apps Launch Services starts from then on (the end-to-end test's
+  `ASIDES_HOME`); `launchctl unsetenv` when done, or every later launch keeps it.
 
 ## Commits
 
