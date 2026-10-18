@@ -268,8 +268,8 @@ in your pull request what you tried.
     menu bar shows `[×]` for a moment, nothing beside it
   - a tap on `⌃⌥Space` while it's open adds it all, like Done
   - the entry says where you were (`**In:** Safari · "…" · http://…`) where you started talking,
-    and again after you switched apps live and talked there; a screenshot with only measurements
-    says it too
+    and again, before what you said there, after you switched apps live and talked there; a
+    screenshot with only measurements says it too
 - [ ] **Agent replies:** an agent's `resolve_aside` flashes `[✓] #N` in the menu bar (`dismiss_aside`
   `[–] #N`, `reply_to_aside` `[?] #N`) and shows under Agent Replies; the note line counts the open
   asides.

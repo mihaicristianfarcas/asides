@@ -51,6 +51,9 @@ pub struct RecordingJob {
     pub auto_new_note: bool,
     /// The session it was spoken to, written to `routes.jsonl` before the entry.
     pub route: Option<Route>,
+    /// Where each take is in `samples` (start and length, in seconds) when they're several takes
+    /// joined: what's said in each is kept in it (`takes::fit_segments`).
+    pub takes: Vec<(f32, f32)>,
 }
 
 pub struct ImageJob {
@@ -187,7 +190,29 @@ fn process_recording(
             "The microphone delivered only silence. Check System Settings → Privacy & Security → Microphone.".into(),
         ));
     }
-    let segments = transcribe_pcm(&pcm, &job.model, &job.languages, models, transcriber)?;
+    let segments = match job.takes.as_slice() {
+        [] | [_] => transcribe_pcm(&pcm, &job.model, &job.languages, models, transcriber)?,
+        takes => {
+            let whole = transcribe_pcm(&pcm, &job.model, &job.languages, models, transcriber)?;
+            match asides_core::takes::fit_segments(whole, takes) {
+                Some(segments) => segments,
+                None => {
+                    let mut segments = Vec::new();
+                    for &(start, length) in takes {
+                        let at = |seconds: f32| ((seconds * WHISPER_RATE as f32) as usize).min(pcm.len());
+                        let take = &pcm[at(start)..at(start + length)];
+                        let said = transcribe_pcm(take, &job.model, &job.languages, models, transcriber)?;
+                        segments.extend(said.into_iter().map(|s| markdown::Segment {
+                            start: s.start + start,
+                            end: s.end + start,
+                            ..s
+                        }));
+                    }
+                    segments
+                }
+            }
+        }
+    };
     let text = markdown::plain_text(&segments);
     if text.is_empty() && job.images.is_empty() && job.texts.is_empty() {
         return Ok(Outcome::NothingHeard);

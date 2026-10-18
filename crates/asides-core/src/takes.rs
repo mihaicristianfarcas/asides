@@ -4,6 +4,7 @@
 //! them (each its own paragraph), and each moment of the session placed on that recording, so a
 //! annotation sits among what was said when it was made.
 
+use crate::markdown::Segment;
 use crate::resample::resample;
 
 /// The silence between two takes, longer than a paragraph break in the transcript.
@@ -69,11 +70,47 @@ impl Joined {
         }
         previous.1 + (time - previous.0)
     }
+
+    /// Where each take is in the recording: its start and length, in seconds.
+    pub fn takes(&self) -> Vec<(f32, f32)> {
+        self.spans.iter().map(|&(_, audio, length)| (audio, length)).collect()
+    }
+}
+
+/// How far Whisper's times may run past a take (seconds) before a segment counts as running into
+/// the next one.
+const SLACK_SECS: f32 = 0.5;
+
+/// Whisper's `segments` of takes joined into one recording (`takes`: where each is, start and
+/// length), each kept within the take it's most in. Whisper runs its times through the pause
+/// between two takes, so the second's first words seemed to start before it, and before what was
+/// added as it began (where the user was). `None` when a segment runs from one take well into the
+/// next: Whisper heard the two as one, and each has to be transcribed on its own.
+pub fn fit_segments(segments: Vec<Segment>, takes: &[(f32, f32)]) -> Option<Vec<Segment>> {
+    let crosses =
+        |s: &Segment| takes.windows(2).any(|w| s.start < w[0].0 + w[0].1 - SLACK_SECS && s.end > w[1].0 + SLACK_SECS);
+    if segments.iter().any(crosses) {
+        return None;
+    }
+    let overlap = |s: &Segment, &(start, length): &(f32, f32)| s.end.min(start + length) - s.start.max(start);
+    Some(
+        segments
+            .into_iter()
+            .map(|s| match takes.iter().max_by(|a, b| overlap(&s, a).total_cmp(&overlap(&s, b))) {
+                Some(&(start, length)) => {
+                    let end = start + length;
+                    Segment { start: s.start.clamp(start, end), end: s.end.clamp(start, end), ..s }
+                }
+                None => s,
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::markdown::{Attachment, compose_entry};
 
     #[test]
     fn joins_takes_with_a_pause_and_places_moments() {
@@ -92,6 +129,27 @@ mod tests {
         // Before the first take, in it, at its end, along the pause, in the second, after it.
         assert_eq!([at(0.0), at(2.0), at(3.0), at(6.5), at(10.5), at(12.0)], [-1.0, 1.0, 2.0, 3.0, 4.5, 6.0]);
         assert!(at(3.5) < at(6.5) && at(6.5) < at(9.9) && at(9.9) < at(10.0));
+        assert_eq!(joined.takes(), [(0.0, 2.0), (4.0, 1.0)]);
+    }
+
+    fn said(start: f32, end: f32, text: &str) -> Segment {
+        Segment { start, end, text: text.into() }
+    }
+
+    #[test]
+    fn keeps_what_was_said_in_its_take() {
+        // Two takes, 0–4 s and 6–9 s: Whisper's times run through the pause between them.
+        let takes = [(0.0, 4.0), (6.0, 3.0)];
+        let fitted = fit_segments(vec![said(0.0, 4.8, "One."), said(4.8, 9.0, "Two.")], &takes).unwrap();
+        let times: Vec<(f32, f32)> = fitted.iter().map(|s| (s.start, s.end)).collect();
+        assert_eq!(times, [(0.0, 4.0), (6.0, 9.0)]);
+        // Where the user was when the second began goes before what they said in it.
+        let place = Attachment { offset: 6.0, text: Some("**In:** Calculator".into()), ..Attachment::default() };
+        let entry = compose_entry(1, "10:21", None, &fitted, &[place]);
+        assert_eq!(entry, "## 1 · 10:21\n\nOne.\n\n**In:** Calculator\n\nTwo.");
+        // One segment across both: they have to be transcribed apart.
+        assert_eq!(fit_segments(vec![said(1.0, 8.0, "x")], &takes), None);
+        assert!(fit_segments(vec![said(0.0, 4.3, "x"), said(5.8, 9.0, "y")], &takes).is_some());
     }
 
     #[test]

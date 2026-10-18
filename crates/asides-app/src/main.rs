@@ -961,6 +961,7 @@ impl App {
             languages: self.config.languages.clone(),
             auto_new_note: self.config.auto_new_note,
             route: take.route,
+            takes: Vec::new(),
         }
     }
 
@@ -1466,6 +1467,7 @@ impl App {
             add(take.images, take.texts, start);
         }
         asides_core::markdown::without_repeated_places(&mut texts);
+        let parts = joined.takes();
         self.submit(Job::Recording(Box::new(RecordingJob {
             dir: first.dir,
             samples: joined.samples,
@@ -1480,6 +1482,7 @@ impl App {
             languages: self.config.languages.clone(),
             auto_new_note: self.config.auto_new_note,
             route: first.route,
+            takes: parts,
         })));
     }
 

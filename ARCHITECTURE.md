@@ -284,7 +284,10 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    session (takes, or a recording started in it, which stops with it), `App::add_session` joins the
    takes into one recording (`takes::join`: in order, with a pause between them) and puts each item
    at its moment on it (`Joined::offset`), as text attachments (`markdown::Attachment.text`), so they
-   sit among what was said: one `Job::Recording`, one entry. Measurements made one after another,
+   sit among what was said: one `Job::Recording`, one entry. Whisper runs its segments' times through
+   the pauses between takes, so the worker keeps each segment within its take
+   (`takes::fit_segments`), and transcribes the takes one by one when a segment runs from one into
+   the next: otherwise what the second take said came before where the user was when it began. Measurements made one after another,
    with nothing said between them, stay one list (`markdown::Blocks`). Otherwise `App::add_inspection` adds
    them to the recording that was under way when the overlay opened (which goes on), or a
    `Job::Screen` writes `## N · HH:MM · Screen`, in the same order. Send also sends to the agent.
