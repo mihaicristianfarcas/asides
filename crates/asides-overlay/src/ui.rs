@@ -2190,6 +2190,8 @@ fn toolbar_panel(
 ) -> AnyElement {
     let measure = overlay.clone();
     let grab = overlay.clone();
+    // Open, the list is read: nothing shows through.
+    let alpha = if list.is_some() { 0.98 } else { style::PANEL_ALPHA };
     div()
         .id("toolbar")
         .occlude()
@@ -2198,7 +2200,7 @@ fn toolbar_panel(
         .flex_col()
         .p(px(5.))
         .rounded(px(14.))
-        .bg(color(style::PANEL, style::PANEL_ALPHA))
+        .bg(color(style::PANEL, alpha))
         .border_1()
         .border_color(color(0xffffff, 0.12))
         .shadow_lg()
@@ -2369,25 +2371,40 @@ impl ScreenView {
         let (w, h) = o
             .toolbar_bounds
             .map_or((420.0, 40.0), |b| (f32::from(b.size.width) as f64, f32::from(b.size.height) as f64));
-        let (x, y) = match o.toolbar_at {
-            Some((fx, fy)) => (fx * screen.width - ox, fy * screen.height - oy),
-            None => ((screen.width - w) / 2.0 - ox, top + PILL_TOP),
-        };
-        let x = x.clamp(8.0, (ww - w - 8.0).max(8.0));
-        let y = y.clamp(top + 8.0, (wh - h - 8.0).max(top + 8.0));
-        let notes = notes(div()).absolute().left(px((x + w / 2.0 - 320.0) as f32)).w(px(640.));
-        let notes = if y + h / 2.0 < wh / 2.0 {
-            notes.top(px((y + h + 8.0) as f32)).justify_start()
-        } else {
-            notes.bottom(px((wh - y + 8.0) as f32)).justify_end()
-        };
+        // Where the user put it, kept on the screen below the menu bar, with what goes with it toward
+        // the middle of the screen.
+        if let Some((fx, fy)) = o.toolbar_at {
+            let x = (fx * screen.width - ox).clamp(8.0, (ww - w - 8.0).max(8.0));
+            let y = (fy * screen.height - oy).clamp(top + 8.0, (wh - h - 8.0).max(top + 8.0));
+            let notes = notes(div()).absolute().left(px((x + w / 2.0 - 320.0) as f32)).w(px(640.));
+            let notes = if y + h / 2.0 < wh / 2.0 {
+                notes.top(px((y + h + 8.0) as f32)).justify_start()
+            } else {
+                notes.bottom(px((wh - y + 8.0) as f32)).justify_end()
+            };
+            return div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .child(notes)
+                .child(div().absolute().left(px(x as f32)).top(px(y as f32)).child(bar))
+                .into_any_element();
+        }
+        // At the top in the middle (laid out centered, so it never waits on its last width), what
+        // goes with it below.
+        let middle = (screen.width / 2.0 - ox) as f32;
         div()
             .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .child(notes)
-            .child(div().absolute().left(px(x as f32)).top(px(y as f32)).child(bar))
+            .top(px((top + PILL_TOP) as f32))
+            .left(px(middle - 2000.))
+            .w(px(4000.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(8.))
+            .child(bar)
+            .child(notes(div()))
             .into_any_element()
     }
 

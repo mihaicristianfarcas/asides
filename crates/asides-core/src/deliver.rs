@@ -74,9 +74,15 @@ fn diri(id: &str, parts: &[&Part], submit: SubmitKey, dirijor: &Path) -> Vec<Ste
     };
     let mut steps = Vec::new();
     let mut clipboard = false;
-    for part in parts {
+    for (i, part) in parts.iter().enumerate() {
         match part {
-            Part::Text(text) => steps.push(run(&["session", "send", id, "--no-submit"], Some(text.clone()))),
+            // Apart from the screenshots around it by a blank line, in the paste itself (Diri
+            // doesn't send text that's only whitespace).
+            Part::Text(text) => {
+                let before = if i > 0 { "\n\n" } else { "" };
+                let after = if i + 1 < parts.len() { "\n\n" } else { "" };
+                steps.push(run(&["session", "send", id, "--no-submit"], Some(format!("{before}{text}{after}"))));
+            }
             Part::Image(path) => {
                 clipboard = true;
                 steps.push(Step::ClipboardImage(PathBuf::from(path)));
@@ -84,10 +90,7 @@ fn diri(id: &str, parts: &[&Part], submit: SubmitKey, dirijor: &Path) -> Vec<Ste
                 steps.push(Step::Wait(ATTACH));
             }
         }
-        // Text and screenshots apart, as typed.
-        steps.push(run(&["session", "send", id, "--no-submit"], Some("\n".into())));
     }
-    steps.pop();
     if clipboard {
         steps.push(Step::RestoreClipboard);
     }
@@ -296,13 +299,11 @@ mod tests {
         assert_eq!(
             steps,
             [
-                send("The \"Pay\" button is too low."),
-                send("\n"),
+                send("The \"Pay\" button is too low.\n\n"),
                 Step::ClipboardImage("/h/1.png".into()),
                 key(&["v", "--ctrl"]),
                 Step::Wait(ATTACH),
-                send("\n"),
-                send("### 1. button"),
+                send("\n\n### 1. button"),
                 Step::RestoreClipboard,
                 Step::Wait(BEFORE_SUBMIT),
                 key(&["tab"]),

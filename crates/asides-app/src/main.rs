@@ -419,7 +419,7 @@ impl App {
                 self.agents = Some(agents);
                 self.tell_overlay_targets();
             }
-            UserEvent::Delivered { id, delivery } => self.delivered(&id, delivery),
+            UserEvent::Delivered { id, delivery } => self.delivered(&id, delivery, true),
             UserEvent::CommandLinked(CommandLink::Linked) => {
                 let status = format!("You can now run `asides` in any terminal ({})", install::LINK);
                 self.flash(SENT_FLASH, Mark::Check, status);
@@ -578,16 +578,18 @@ impl App {
                 self.sound("Glass");
             }
             Some(Target::Session { id: session }) => {
+                // Started since the last look (a few seconds ago, at most): look again.
+                if !self.sessions.iter().any(|s| s.id() == session) {
+                    self.sessions = sessions::discover();
+                }
                 let found = self.sessions.iter().find(|s| s.id() == session).cloned();
                 let Some(session) = found else {
-                    return self.fail("That session ended: the aside is in History (Asides window → Send to…)".into());
+                    let delivery =
+                        Delivery { at_ms: history::now_ms(), to: format!("session {session}"), ..Delivery::default() };
+                    let error = "that session has ended".to_string();
+                    return self.delivered(&id, Delivery { error: Some(error), ..delivery }, false);
                 };
                 let label = session.label();
-                let plan = match deliver::plan(&session, &aside.parts(), &terminal::dirijor()) {
-                    Ok(plan) => plan,
-                    Err(message) => return self.fail(format!("{message} The aside is in History.")),
-                };
-                self.remember_dir(&session.dir);
                 let delivery = Delivery {
                     at_ms: history::now_ms(),
                     to: label.clone(),
@@ -596,6 +598,11 @@ impl App {
                     app: session.host.name().to_string(),
                     error: None,
                 };
+                let plan = match deliver::plan(&session, &aside.parts(), &terminal::dirijor()) {
+                    Ok(plan) => plan,
+                    Err(message) => return self.delivered(&id, Delivery { error: Some(message), ..delivery }, false),
+                };
+                self.remember_dir(&session.dir);
                 self.sending += 1;
                 self.flash(SENT_FLASH, Mark::Ellipsis, format!("Sending to {label}…"));
                 let proxy = self.proxy.clone();
@@ -633,8 +640,11 @@ impl App {
     }
 
     /// An aside reached its session (or didn't): say so, and note it in the history.
-    fn delivered(&mut self, id: &str, delivery: Delivery) {
-        self.sending = self.sending.saturating_sub(1);
+    /// `started`: it was typed (or tried), counted in `sending`; otherwise it failed before.
+    fn delivered(&mut self, id: &str, delivery: Delivery, started: bool) {
+        if started {
+            self.sending = self.sending.saturating_sub(1);
+        }
         match &delivery.error {
             None => {
                 let number = asides_today(id);
@@ -873,9 +883,13 @@ impl App {
     }
 
     /// A Wispr Flow dictation made while the screen is frozen joins the aside, when it was made.
+    /// (The watcher reports it a moment later: one made before Asides opened isn't its.)
     fn add_dictation(&mut self, dictation: Dictation) {
         let Some(overlay) = self.overlay.as_ref().filter(|o| o.frozen && !o.over) else { return };
         let at = dictation.at.with_timezone(&Local);
+        if at < wall_clock(overlay.origin()) {
+            return;
+        }
         let ago = (Local::now() - at).to_std().unwrap_or_default();
         let when = Instant::now().checked_sub(ago).unwrap_or_else(Instant::now);
         let offset = overlay::seconds_between(overlay.origin(), when);
