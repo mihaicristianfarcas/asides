@@ -224,6 +224,11 @@ in your pull request what you tried.
   - over a glass menu on a bright wallpaper (a sky with clouds), distances go through what the glass
     blurs to the menu's edges and separators; on the empty sky they reach the clouds, and an area
     there finds nothing
+  - on a photo or a wallpaper (a painted one, a grainy iMac one), distances go past its grain and
+    specks (and a faint haze) to what's drawn: outlines, dots, a faint card's border, a cloud's soft
+    edge
+  - on a light UI, a faint selected item (#F3F4F6 on #F9FAFB) stops a distance across it near its
+    rounded corners too, and an area around a faint hairline snaps to all of it
   - on a notched display, nothing the overlay draws (the "Not bound" banner, labels, cards, menus,
     the toolbar dragged up, live or frozen) goes over the menu bar or under the notch
 - [ ] **Measure & Annotate, annotating and drawing:**

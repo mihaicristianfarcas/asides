@@ -382,7 +382,26 @@ The user may record a request and ask you to "implement the note". Find it with
   jumps were edges (phantom stops on an empty sky, objects in a blur behind glass) until edges had to
   be visible (OKLab). `screencapture` saves the display's colors, so it doesn't show this: test
   measuring on what a freeze captures (`dumps_a_freeze` in `capture.rs`), or convert with `sips
-  --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`.
+  --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`. A desktop picture alone is
+  `screencapture -l` of the Dock's `Wallpaper-` window (its file may be gone).
+- Visible isn't enough: a painted wallpaper's grain made single-pixel edges as visible as a faint
+  card's border (OKLab 0.01 to 0.03), so faint changes must go on along a contour. With grain, the
+  channel that changes most flips from row to row where all three change alike (a gray hairline):
+  compare the next row along this change's channel, not by which of its own changes most.
+- A contour rule alone loses faint edges and keeps dense grain. Faint rounded corners and a 2 px
+  hairline's ends are too short or too slanted to follow (snapping then leaked into a faint card
+  through its corners and swallowed the hairline): a faint change also counts where it touches an
+  edge the other way. In heavy grain (iMac wallpapers) the next row nearly always has a like change
+  somewhere close: the window is from where it starts to a pixel after, the colors on each side must
+  match, and a faint change that doesn't stand out from its grain must go on across 15 rows. Judge
+  the grain beyond all a change spreads over: a soft cloud edge's own ramp changes as much at every
+  pixel, and compared with it the edge never stood out. Measure such changes on many pictures at
+  once (wallpapers, photos, light and dark UI, a scaled-down aside image), not one.
+- Snapping an area must find the edges measuring from a point does (`snapping_finds_the_edges_measuring_does`).
+  Tracing each change's contour from every pixel tripled a full-screen snap; `measure::Contours`
+  works out all of them in two passes over a block. Its records are sparse (most pixels have no
+  change), and one change ends at a pixel at most (from the pixel before, else two before): records
+  for every pixel, and for both, were slower than the tracing they replaced.
 - Whisper's segment times run through silence: two takes joined with a 2 s pause came back as
   segments with no gap between them, or as one. Keep each take's segments in it (`fit_segments`).
 - On a notched display, the notch sits in the menu bar (the screen's safe area, 38 pt; the menu bar

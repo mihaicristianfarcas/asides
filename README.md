@@ -687,7 +687,9 @@ language (often a short one, or an accent), Asides keeps the language it was las
   anti-aliased pixels) by more than the tolerance, visibly (compared as the eye sees colors, in
   OKLab), and within a few pixels; slow changes aren't edges, however far they go, so measuring works
   on glass and frosted surfaces, over gradients and through soft shadows, and on colors only the
-  display can show. An area
+  display can show. A faint change is an edge only where it goes on along an outline, the further
+  the fainter (further still in grain), or meets one, so grain and specks in a photo or a wallpaper
+  don't stop it, while a faint card's rounded corners and a hairline's ends do. An area
   snaps to the bounds of what's drawn inside it: whatever its outline can't reach without crossing
   an edge. The same Rust code measures in the overlay, in `asides measure` and in `measure_image`.
 - **Sessions.** Each agent session has a small record in `~/Library/Application Support/Asides/sessions/`.

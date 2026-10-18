@@ -502,13 +502,36 @@ Break these only on purpose, and update this document when you do.
   gradients and soft shadows are the same. Comparing with the scan's first pixel instead stopped
   wherever the drift passed the tolerance. Over a bright, high-contrast background (a cloud behind a
   menu), the blur can change faster than the tolerance, but it keeps changing that way for tens of
-  pixels: an edge's change spreads over at most a dozen (`measure::EDGE_WIDTH`; a soft edge in a
-  painting scaled up to the screen takes about seven). And a change must be one the eye can see:
+  pixels, while an edge's steep part (changing at least half as fast as where it's steepest) spans at
+  most a dozen (`measure::EDGE_WIDTH`: a soft edge in a painting scaled up to the screen takes seven
+  to ten, then a slower tail as long again, which doesn't count; a Gaussian blur is an edge up to
+  σ = 5 px). Measured to a quarter as fast, the tail left gaps in a cloud's outline. And a change must be one the eye can see:
   the screen shows colors sRGB can't (Display P3), and converted to sRGB their clipped channels
   jump by 3 to 6 levels from one pixel to the next where the screen changes by one. Two colors
   closer than 0.008 in OKLab look the same (`measure::INVISIBLE`; a 6-level step between light grays
-  is 0.015, that jitter 0.003). The edge masks are worked out a band of rows per thread
-  (`measure::by_rows`), since areas are snapped on every frame of a drag.
+  is 0.018, that jitter 0.003). And a faint change must go on along a contour: wallpapers and photos
+  have grain, compression specks and dust, single pixels as visible as a faint UI border (0.01 to
+  0.03), and the eye tells them apart by their length. A change of 0.05 or more is an edge on its own
+  pixel (`measure::STRONG`: a dot, a flower in a field); a fainter one must have a change like it on
+  each of the next rows (or columns), more of them the fainter it is, up to 7 (`lines_needed`): a
+  6-level gray step needs 3, so a card's border, a hairline or text are edges and grain isn't. Like
+  it (`Change::like`): along its strongest channel, the same way, at least half as much, between
+  colors as near its own as they are to each other (a contour parts the same two things all along;
+  grain changes from shade to shade at random), ending from where it starts to a pixel after where
+  it ends (`near`; three pixels before to two after let dense grain line up by chance). Where grain
+  changes as much from every pixel to the next (an iMac wallpaper's, a photo's), a faint change that
+  doesn't stand out from the line on each side of all it spreads over (4 times the middling step
+  over 6 pixels, `stands_out`; a soft edge's own pixels change alike) must go on across 15 rows
+  (`THROUGH_GRAIN`): a line drawn on grain does. And a faint change that doesn't go on still counts
+  where it touches one across the line that does (`joins`, hysteresis as in Canny's edge detector):
+  where a contour runs nearly along the line it moves too far from a row to the next to follow, but
+  crosses the columns steeply, at the top of a faint card's rounded corner, at a hairline's ends.
+  Measuring from a point follows each change's contour (`continues`); snapping an area finds every
+  change of a block first, along its rows and its columns, then each one's contour length in two
+  passes, top-down and bottom-up (`measure::Contours`), then the faint ones that touch an edge the
+  other way (`Contours::touch`), which gives the same edges (a test checks it on grain) in a pass over
+  the area. The work is shared by threads a band of rows at a time, each taking the next as it
+  finishes (`measure::by_rows`), since areas are snapped on every frame of a drag.
   An area's content is whatever the background on its outline can't reach without crossing an
   edge (a scanline fill), so no background color is needed: the outline's background is its longest
   stretch without an edge, those colored like it, and any as long as a quarter of it, so a button
