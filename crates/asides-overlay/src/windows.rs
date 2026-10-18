@@ -335,6 +335,36 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     }
 }
 
+/// Choose Folder…: its panel, after the click that asked for it (`native::choose_folder`). Live,
+/// the keyboard goes back to the user's app once it closes; frozen, to the screen under the pointer.
+pub fn ask_folder(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
+    let Ok(Some(start)) = cx.update(|cx| overlay.update(cx, |o, _| o.take_folder_request())) else { return };
+    let live = cx.update(|cx| overlay.read(cx).live).unwrap_or_default();
+    let front = if live { native::front_app() } else { None };
+    let (chosen, folder) = futures::channel::oneshot::channel();
+    native::choose_folder(Some(&start), move |dir| {
+        let _ = chosen.send(dir);
+    });
+    let overlay = overlay.clone();
+    cx.spawn(async move |cx| {
+        let dir = folder.await.ok().flatten();
+        let key = cx.update(|cx| {
+            overlay.update(cx, |o, cx| {
+                o.folder_chosen(dir);
+                cx.notify();
+                let key = pointer_screen(&o.spec().screens).unwrap_or(0);
+                (!o.live).then(|| o.windows.get(key).map(|w| w.view)).flatten()
+            })
+        });
+        match key {
+            Ok(Some(view)) => native::show(view, true),
+            _ if live => native::give_focus(front),
+            _ => {}
+        }
+    })
+    .detach();
+}
+
 /// The frozen screens, drawn, in place of the live toolbar; the one under the pointer takes the
 /// keyboard, and the overlay's app the system (`native::kiosk`).
 fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {

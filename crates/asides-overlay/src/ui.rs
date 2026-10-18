@@ -6,7 +6,7 @@
 //! window's `ScreenView` draws its screen from it and feeds it the mouse and keyboard.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -226,6 +226,9 @@ pub struct Overlay {
     pub targets_open: bool,
     /// The agent a new session starts (the list's chips).
     new_agent: AgentKind,
+    /// Choose Folder… was clicked (the clock opens the panel, after the click), or its panel shows.
+    pub folder_asked: bool,
+    pub folder_panel: bool,
     /// The app was asked to download the speech model.
     asked_model: bool,
     /// Seconds recorded when the app last said so, and when it did.
@@ -341,6 +344,8 @@ impl Overlay {
             target: spec.targets.chosen.clone(),
             chose_target: false,
             targets_open: false,
+            folder_asked: false,
+            folder_panel: false,
             new_agent: spec.targets.agents.first().copied().unwrap_or(AgentKind::Claude),
             asked_model: false,
             recording,
@@ -558,6 +563,25 @@ impl Overlay {
         self.chose_target = true;
         self.targets_open = false;
         io::emit(&Event::Target { target });
+    }
+
+    /// Choose Folder… was clicked: where its panel opens (beside the latest folder). `None` unless
+    /// it was just asked for, or while the panel shows.
+    pub fn take_folder_request(&mut self) -> Option<PathBuf> {
+        if !std::mem::take(&mut self.folder_asked) || self.folder_panel {
+            return None;
+        }
+        self.folder_panel = true;
+        let latest = self.spec.targets.folders.first().and_then(|f| f.path.parent().map(Path::to_path_buf));
+        Some(latest.or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")))
+    }
+
+    /// The folder chosen in the panel (`None`: cancelled): a new session there, with the agent picked.
+    pub fn folder_chosen(&mut self, dir: Option<PathBuf>) {
+        self.folder_panel = false;
+        if let Some(dir) = dir {
+            self.choose_target(Target::New { agent: self.new_agent, dir });
+        }
     }
 
     /// Tab: the next session the aside can go to.
@@ -2036,11 +2060,18 @@ fn tool_icon(tool: Tool) -> &'static str {
     }
 }
 
+/// What a row of the pill's list does.
+#[derive(Clone)]
+enum Pick {
+    Target(Target),
+    ChooseFolder,
+}
+
 /// The pill's list: the sessions running (the ones Asides can't type into, dimmed, with why), New
-/// session in… (the agent, then the folder), and History only.
+/// session in… (the agent, then the folder, or Choose Folder…), and History only.
 fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let targets = &o.spec.targets;
-    let row = |id: String, chosen: bool, enabled: bool, content: AnyElement, target: Option<Target>| {
+    let row = |id: String, chosen: bool, enabled: bool, content: AnyElement, action: Option<Pick>| {
         let pick = overlay.clone();
         div()
             .id(SharedString::from(id))
@@ -2058,11 +2089,17 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             .when(!enabled, |d| d.opacity(0.45))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
-                if let Some(target) = target.clone() {
-                    pick.update(cx, |o, cx| {
+                match action.clone() {
+                    Some(Pick::Target(target)) => pick.update(cx, |o, cx| {
                         o.choose_target(target);
                         cx.notify();
-                    });
+                    }),
+                    Some(Pick::ChooseFolder) => pick.update(cx, |o, cx| {
+                        o.targets_open = false;
+                        o.folder_asked = true;
+                        cx.notify();
+                    }),
+                    None => {}
                 }
             })
             .child(div().w(px(10.)).child(if chosen { "✓" } else { "" }))
@@ -2097,7 +2134,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 .child(div().max_w(px(300.)).truncate().child(s.label.clone()))
                 .child(div().text_size(px(10.5)).opacity(0.6).max_w(px(300.)).truncate().child(detail))
                 .into_any_element(),
-            s.unreachable.is_none().then_some(target),
+            s.unreachable.is_none().then_some(Pick::Target(target)),
         ));
     }
     if targets.looking {
@@ -2111,7 +2148,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 .into_any_element(),
         );
     }
-    if !targets.folders.is_empty() {
+    if !targets.agents.is_empty() {
         rows.push(heading("New session in…").into_any_element());
         // The agent it starts: one chip each.
         let chips = targets.agents.iter().map(|&agent| {
@@ -2136,10 +2173,19 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 .child(agent.name())
         });
         rows.push(div().flex().flex_wrap().gap(px(4.)).px(px(26.)).py(px(3.)).children(chips).into_any_element());
-        for (i, f) in targets.folders.iter().enumerate() {
-            let target = Target::New { agent: o.new_agent, dir: f.path.clone() };
+        // A folder chosen in the panel isn't among the app's: it leads.
+        let picked = match &o.target {
+            Some(Target::New { dir, .. }) if !targets.folders.iter().any(|f| &f.path == dir) => Some(dir.clone()),
+            _ => None,
+        };
+        let folders = picked
+            .iter()
+            .map(|dir| (dir.clone(), dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
+            .chain(targets.folders.iter().map(|f| (f.path.clone(), f.name.clone())));
+        for (i, (dir, name)) in folders.enumerate() {
+            let path = asides_core::paths::tilde(&dir);
+            let target = Target::New { agent: o.new_agent, dir };
             let chosen = o.target.as_ref() == Some(&target);
-            let path = asides_core::paths::tilde(&f.path);
             rows.push(row(
                 format!("folder-{i}"),
                 chosen,
@@ -2149,12 +2195,19 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                     .items_center()
                     .gap(px(6.))
                     .child(icon("folder", gpui::white()))
-                    .child(f.name.clone())
+                    .child(name)
                     .child(div().text_size(px(10.5)).opacity(0.5).max_w(px(220.)).truncate().child(path))
                     .into_any_element(),
-                Some(target),
+                Some(Pick::Target(target)),
             ));
         }
+        rows.push(row(
+            "choose-folder".into(),
+            false,
+            !o.folder_panel,
+            div().pl(px(22.)).child("Choose Folder…").into_any_element(),
+            (!o.folder_panel).then_some(Pick::ChooseFolder),
+        ));
     }
     rows.push(div().h(px(1.)).mx(px(6.)).my(px(4.)).bg(color(0xffffff, 0.12)).into_any_element());
     let history = Target::History;
@@ -2163,7 +2216,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         o.target.as_ref() == Some(&history),
         true,
         div().child("History only: send it later").into_any_element(),
-        Some(history),
+        Some(Pick::Target(history)),
     ));
     div()
         .id("targets")
@@ -2724,6 +2777,7 @@ pub fn run_clock(overlay: &Entity<Overlay>, cx: &mut App) {
                 eprintln!("asides-overlay: {err:#}");
                 break;
             }
+            crate::windows::ask_folder(&overlay, cx);
             // Handing the system back, the frozen screens give way as soon as it's back.
             let handing = cx
                 .update(|cx| {

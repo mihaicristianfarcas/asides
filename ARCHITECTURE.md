@@ -217,9 +217,12 @@ when Asides opens, and again before sending to a session it doesn't know yet.
 2. **The pill**: at the top of the screen under the pointer, in the middle, below the menu bar (or
    where the user dragged it: `pill_at`): the microphone (listening and its time, or muted; without a
    model, a download), where the aside goes (`Targets::label`; a click opens the list: the sessions,
-   those asides can't type into dimmed, New session in… with an agent chip and the recent folders,
-   History only; `Tab` on a frozen screen picks the next), the tool when it isn't Annotate, send and
-   close. Frozen, it's drawn in the screen's window, centered by layout; live, it's a small GPUI
+   those asides can't type into dimmed, New session in… with an agent chip, the recent folders and
+   Choose Folder…, History only; `Tab` on a frozen screen picks the next), the tool when it isn't
+   Annotate, send and close. Choose Folder… opens an open panel above the overlay's windows
+   (`native::choose_folder`, from the clock after the click), and live gives the keyboard back to
+   the user's app once it closes. Frozen, the pill is drawn in the screen's window, centered by
+   layout; live, it's a small GPUI
    pop-up window (a non-activating panel that never becomes key, `native::make_toolbar`), sized to
    the pill and its list (`follow_toolbar`; it grows down from the top). The user's apps keep the
    mouse and keyboard. The pill moves when it's dragged anywhere but its buttons.

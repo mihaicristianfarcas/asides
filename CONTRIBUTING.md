@@ -175,7 +175,9 @@ and say in your pull request what you tried.
   held it talks about that pin.
 - [ ] **The pill:** `Tab` switches the session (with a note of where it now goes); a click on its
   name lists the sessions (one in Warp or VS Code dimmed, with why), New session in… (agent chips,
-  recent folders) and History only. Drag it by its body; it stays there next time. `M`, `D`, `S`
+  recent folders, Choose Folder…) and History only. Choose Folder…, frozen and live: its panel is
+  above everything and takes the keyboard; the folder chosen leads the list, checked, and the pill
+  names it; Cancel changes nothing; live, the app you were in has the keyboard back. Drag it by its body; it stays there next time. `M`, `D`, `S`
   switch tools (the pill shows which; a click on it goes back to Annotate).
 - [ ] **The microphone:** a click mutes and unmutes it; muted, hold `Space` to talk; with
   **Listen as soon as Asides opens** off, it opens muted.

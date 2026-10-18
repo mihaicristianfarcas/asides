@@ -483,6 +483,11 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - `pgrep -f "harness.py terminal"` also matches the shell running the loop that waits for it (its
   command line has the text): a wait loop on it never ends.
 - macOS's `grep` has no `\|` in basic patterns: use `grep -E 'a|b'`.
+- An `NSOpenPanel` runs in a service of its own (the open and save panel service), drawn in the
+  app's window list: keys posted to the app's process (`CGEvent.postToPid`) never reach it. To drive
+  it in a test, press its buttons through accessibility (`AXPress` on "Start Here" picks the folder
+  it shows). Opened at the normal level it sat under the frozen screens (the screen saver level):
+  `native::choose_folder` puts it one above.
 - `launchctl setenv` reaches apps Launch Services starts from then on (the end-to-end test's
   `ASIDES_HOME`); `launchctl unsetenv` when done, or every later launch keeps it.
 

@@ -122,9 +122,9 @@ list:
 - **Sessions**: every agent running in a terminal, the one you typed into last first. Those in an
   app Asides can't type into (Warp, iTerm, VS Code's terminal…) are listed, dimmed.
 - **New session in…**: pick an agent (Claude Code, Codex, OpenCode) and a folder: your recent
-  projects, from your sessions, your asides and the projects your agents know. Sending starts the
-  agent there, in a new window of Terminal (or Ghostty, or Diri: Settings), with the aside as its
-  first message.
+  projects, from your sessions, your asides and the projects your agents know, or any other with
+  **Choose Folder…**. Sending starts the agent there, in a new window of Terminal (or Ghostty, or
+  Diri: Settings), with the aside as its first message.
 - **History only**: keep it, send it later.
 
 How the aside gets in, by app: in **Diri**, through its command (`dirijor`); in **Ghostty**, with

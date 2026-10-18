@@ -1,7 +1,11 @@
 //! What GPUI's windows need to be an overlay: borderless, above everything (the menu bar and
 //! the Dock too), on every space, exactly over their screen; and an app without a Dock icon.
 
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+
 use asides_core::inspect::PtRect;
+use block2::RcBlock;
 use gpui::Window;
 use objc2::MainThreadMarker;
 use objc2::msg_send;
@@ -9,10 +13,11 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSApplicationPresentationOptions,
-    NSEvent, NSEventType, NSPanel, NSRunningApplication, NSScreen, NSScreenSaverWindowLevel, NSView, NSWindow,
-    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSEvent, NSEventType, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSPanel, NSRunningApplication, NSScreen,
+    NSScreenSaverWindowLevel, NSView, NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior,
+    NSWindowStyleMask, NSWorkspace,
 };
-use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// Asides is a menu-bar app; GPUI makes its apps regular ones (a Dock icon, a menu bar).
@@ -257,6 +262,37 @@ pub fn give_focus(pid: Option<i32>) {
         // It quit meanwhile: macOS picks the next.
         None => ns.deactivate(),
     }
+}
+
+/// The open panel for a folder, above the overlay's windows (theirs is the screen saver's level)
+/// and with the keyboard; `done` gets the folder, or `None` when it's cancelled. It isn't modal: the
+/// overlay's clock keeps going, and `done` runs from the main run loop once it closes.
+pub fn choose_folder(start: Option<&Path>, done: impl FnOnce(Option<PathBuf>) + 'static) {
+    let Some(mtm) = MainThreadMarker::new() else { return done(None) };
+    let panel = NSOpenPanel::openPanel(mtm);
+    panel.setCanChooseDirectories(true);
+    panel.setCanChooseFiles(false);
+    panel.setAllowsMultipleSelection(false);
+    panel.setCanCreateDirectories(true);
+    panel.setPrompt(Some(&NSString::from_str("Start Here")));
+    panel.setMessage(Some(&NSString::from_str("The folder the new session starts in")));
+    if let Some(start) = start {
+        panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(&start.to_string_lossy()))));
+    }
+    panel.setLevel(NSScreenSaverWindowLevel + 1);
+    activate();
+    let done = Cell::new(Some(done));
+    let chosen = panel.clone();
+    let handler = RcBlock::new(move |response: NSModalResponse| {
+        let Some(done) = done.take() else { return };
+        let folder = (response == NSModalResponseOK)
+            .then(|| chosen.URL())
+            .flatten()
+            .and_then(|url| url.path())
+            .map(|path| PathBuf::from(path.to_string()));
+        done(folder);
+    });
+    panel.beginWithCompletionHandler(&handler);
 }
 
 /// The screens: each one's display and frame (AppKit's coordinates), as the app describes them.
