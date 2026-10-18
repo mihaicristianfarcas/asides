@@ -383,6 +383,9 @@ The user may record a request and ask you to "implement the note". Find it with
   be visible (OKLab). `screencapture` saves the display's colors, so it doesn't show this: test
   measuring on what a freeze captures (`dumps_a_freeze` in `capture.rs`), or convert with `sips
   --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`.
+- On a notched display, the notch sits in the menu bar (the screen's safe area, 38 pt; the menu bar
+  is 39). A banner centered at the top of a frozen screen was half under it.
+- `NSRunningApplication.hide()` from a command-line tool returns false: it can't hide other apps.
 - `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
   run --help`, which does print help) before trying its commands.
 

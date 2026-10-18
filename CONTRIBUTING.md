@@ -223,6 +223,8 @@ in your pull request what you tried.
   - over a glass menu on a bright wallpaper (a sky with clouds), distances go through what the glass
     blurs to the menu's edges and separators; on the empty sky they reach the clouds, and an area
     there finds nothing
+  - on a notched display, nothing the overlay draws (the "Not bound" banner, labels, cards, menus,
+    the toolbar dragged up, live or frozen) goes over the menu bar or under the notch
 - [ ] **Measure & Annotate, annotating and drawing:**
   - `A`, then click a button in Safari or Chrome: marker 1, the card takes typing right away (with
     diacritics, an input method, and ⌘V), long text wraps and the card grows, the dots and

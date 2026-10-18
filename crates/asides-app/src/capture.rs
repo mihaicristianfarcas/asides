@@ -29,6 +29,8 @@ pub struct ScreenInfo {
     pub scale: f64,
     /// Top-left corner in CoreGraphics' global coordinates (y down), points.
     pub origin: (f64, f64),
+    /// How far down the menu bar reaches, and the notch (points).
+    pub menu_bar: f64,
 }
 
 /// The displays, in AppKit's order (the main one first).
@@ -40,12 +42,15 @@ pub fn screens(mtm: objc2::MainThreadMarker) -> Vec<ScreenInfo> {
             let number = screen.deviceDescription().objectForKey(&key)?;
             let display = number.downcast_ref::<objc2_foundation::NSNumber>()?.unsignedIntValue();
             let bounds = objc2_core_graphics::CGDisplayBounds(display);
+            let (frame, visible) = (screen.frame(), screen.visibleFrame());
+            let menu_bar = frame.origin.y + frame.size.height - visible.origin.y - visible.size.height;
             Some(ScreenInfo {
                 display,
                 name: Some(screen.localizedName().to_string()),
-                frame: screen.frame(),
+                frame,
                 scale: screen.backingScaleFactor(),
                 origin: (bounds.origin.x, bounds.origin.y),
+                menu_bar: menu_bar.max(screen.safeAreaInsets().top),
             })
         })
         .collect()

@@ -83,6 +83,10 @@ pub struct SpecScreen {
     /// Where the user was, when the window they were in is on this screen (`**In:** …`).
     #[serde(default)]
     pub place: Option<String>,
+    /// How far down from its top the menu bar reaches, the notch with it, in points: what the overlay
+    /// draws stays below it.
+    #[serde(default)]
+    pub menu_bar: f64,
 }
 
 /// From the overlay to the app.

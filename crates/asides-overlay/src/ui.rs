@@ -1443,6 +1443,14 @@ impl Render for ScreenView {
         let accent = o.accent;
         let thin = (1.0 / window.scale_factor() as f64).max(0.5);
         let to = |(x, y): (f64, f64)| (x - ox, y - oy);
+        // Where the menu bar ends (and the notch): nothing of the overlay's goes above it.
+        let menu_bar = o.spec.screens[screen].menu_bar;
+        let top = (menu_bar - oy).max(0.0);
+        // A label's place, below the menu bar.
+        let label = |at: (f64, f64)| {
+            let (x, y) = to(at);
+            (x, y.max(top + 12.0))
+        };
         let rect = |r: PtRect| PtRect::new(r.x - ox, r.y - oy, r.width, r.height);
         let cursor = o.session.cursor.filter(|c| c.0 == screen).map(|c| (c.1, c.2));
         let session = &o.session;
@@ -1482,7 +1490,7 @@ impl Render for ScreenView {
                     if gap >= 16.0 {
                         let mid = (pair[0] + pair[1]) / 2.0;
                         let at = if axis == Axis::X { (mid, 14.0) } else { (28.0, mid) };
-                        labels.push(pill(n(gap), to(at)));
+                        labels.push(pill(n(gap), label(at)));
                     }
                 }
             }
@@ -1499,7 +1507,7 @@ impl Render for ScreenView {
                                 }
                             }
                             let ly = if *y < 30.0 { y + 14.0 } else { y - 14.0 };
-                            labels.push(pill(n(across.len()), to(((across.start + across.end) / 2.0, ly))));
+                            labels.push(pill(n(across.len()), label(((across.start + across.end) / 2.0, ly))));
                         }
                         if !down.is_empty() {
                             vline(&mut prims, down.start, down.end, *x, accent_c, thin);
@@ -1511,7 +1519,7 @@ impl Render for ScreenView {
                             let text = n(down.len());
                             let w = pill_width(&text);
                             let lx = if x + w + 16.0 > sw { x - w / 2.0 - 8.0 } else { x + w / 2.0 + 8.0 };
-                            labels.push(pill(text, to((lx, (down.start + down.end) / 2.0))));
+                            labels.push(pill(text, label((lx, (down.start + down.end) / 2.0))));
                         }
                     }
                     Measurement::Area { rect: r, .. } => {
@@ -1519,7 +1527,7 @@ impl Render for ScreenView {
                         prims.push(Prim::Border(rect(*r), accent_c, thin as f32, false));
                         let text = format!("{} × {}", n(r.width), n(r.height));
                         let at = style::area_label(*r, pill_width(&text), sh);
-                        labels.push(pill(text, to(at)));
+                        labels.push(pill(text, label(at)));
                         // Over a held object: its camera.
                         let over = cursor.is_some_and(|(x, y)| r.contains(x, y))
                             && session.drag.is_none()
@@ -1654,7 +1662,7 @@ impl Render for ScreenView {
                     let w = pill_width(&text);
                     let lx = if x + 14.0 + w > sw { x - 14.0 - w / 2.0 } else { x + 14.0 + w / 2.0 };
                     let ly = if y + 34.0 > sh { y - 18.0 } else { y + 22.0 };
-                    labels.push(pill(text, to((lx, ly))));
+                    labels.push(pill(text, label((lx, ly))));
                 }
             }
             if let Some(drag) = session.drag.as_ref().filter(|d| d.screen == screen) {
@@ -1698,7 +1706,7 @@ impl Render for ScreenView {
                             ));
                             let text = format!("{} × {}", n(r.width), n(r.height));
                             let at = style::area_label(r, pill_width(&text), sh);
-                            labels.push(pill(text, to(at)));
+                            labels.push(pill(text, label(at)));
                         }
                     }
                 }
@@ -1719,8 +1727,8 @@ impl Render for ScreenView {
                 let name: String = h.name.chars().take(60).collect();
                 let w = pill_width(&name);
                 let x = (h.frame.x + h.frame.width / 2.0).clamp(w / 2.0 + 4.0, sw - w / 2.0 - 4.0);
-                let y = if h.frame.y > 24.0 { h.frame.y - 12.0 } else { h.frame.bottom() + 12.0 };
-                labels.push(pill(name, to((x, y))));
+                let y = if h.frame.y > menu_bar + 24.0 { h.frame.y - 12.0 } else { h.frame.bottom() + 12.0 };
+                labels.push(pill(name, label((x, y))));
             }
         }
 
@@ -1730,14 +1738,15 @@ impl Render for ScreenView {
         };
         let shows_toolbar = o.session.cursor.map_or(screen == 0, |c| c.0 == screen);
         let card = o.card.as_ref().filter(|c| c.screen == screen).map(|c| self.card(o, c, (ox, oy), (ww, wh)));
-        let menu = o.menu.as_ref().filter(|m| m.screen == screen).map(|m| self.menu(m, (ox, oy), (ww, wh)));
+        let menu = o.menu.as_ref().filter(|m| m.screen == screen).map(|m| self.menu(m, (ox, oy), (ww, wh), top));
         let shows_help = (o.help || o.help_hover) && shows_toolbar;
         let bottom = (shows_toolbar && !session.hidden).then(|| self.bottom(o, shows_help, (ox, oy), (ww, wh)));
-        let hidden_hint = (session.hidden && shows_toolbar)
-            .then(|| pill(format!("Hidden · {} shows everything again", o.keys.label(Cmd::Hide)), (ww / 2.0, 20.0)));
+        let hidden_hint = (session.hidden && shows_toolbar).then(|| {
+            pill(format!("Hidden · {} shows everything again", o.keys.label(Cmd::Hide)), (ww / 2.0, top + 20.0))
+        });
         // Nowhere to add the aside: said when it opens, not after the work's done.
         let banner = (o.spec.bound.is_none() && shows_toolbar && !session.hidden).then(|| {
-            div().absolute().top(px(14.)).left_0().right_0().flex().justify_center().child(
+            div().absolute().top(px(top as f32 + 14.)).left_0().right_0().flex().justify_center().child(
                 div()
                     .flex()
                     .items_center()
@@ -2246,28 +2255,29 @@ impl ScreenView {
                 .children(toast.clone().map(small))
                 .children(tip.clone().map(small))
         };
-        let screen = &o.spec.screens[self.screen].screen;
+        let spec = &o.spec.screens[self.screen];
+        let (screen, top) = (&spec.screen, (spec.menu_bar - oy).max(0.0));
         match o.toolbar_at.filter(|_| o.toolbar) {
-            // Where the user put it, kept on the screen, with what goes with it above it.
+            // Where the user put it, kept on the screen below the menu bar, with what goes with it
+            // toward the middle of the screen: above it, or below it in the top half.
             Some((fx, fy)) => {
                 let (w, h) = o
                     .toolbar_bounds
                     .map_or((560.0, 40.0), |b| (f32::from(b.size.width) as f64, f32::from(b.size.height) as f64));
                 let x = (fx * screen.width - ox).clamp(8.0, (ww - w - 8.0).max(8.0));
-                let y = (fy * screen.height - oy).clamp(8.0, (wh - h - 8.0).max(8.0));
+                let y = (fy * screen.height - oy).clamp(top + 8.0, (wh - h - 8.0).max(top + 8.0));
+                let notes = notes(div()).absolute().left(px((x + w / 2.0 - 320.0) as f32)).w(px(640.));
+                let notes = if y + h / 2.0 < wh / 2.0 {
+                    notes.top(px((y + h + 8.0) as f32)).justify_start()
+                } else {
+                    notes.bottom(px((wh - y + 8.0) as f32)).justify_end()
+                };
                 div()
                     .absolute()
                     .top_0()
                     .left_0()
                     .size_full()
-                    .child(
-                        notes(div())
-                            .absolute()
-                            .left(px((x + w / 2.0 - 320.0) as f32))
-                            .w(px(640.))
-                            .bottom(px((wh - y + 8.0) as f32))
-                            .justify_end(),
-                    )
+                    .child(notes)
                     .child(div().absolute().left(px(x as f32)).top(px(y as f32)).children(bar))
                     .into_any_element()
             }
@@ -2297,7 +2307,8 @@ impl ScreenView {
         let has_said = !a.said.is_empty() || transcribing || recording_here;
         let width = CARD_WIDTH + if has_said { TRASH_WIDTH } else { 0.0 };
         let x = (a.at.0 - ox + MARKER / 2.0 + 6.0).clamp(8.0, (ww - CARD_WIDTH - TRASH_WIDTH - 8.0).max(8.0));
-        let below = (a.at.1 - oy + MARKER / 2.0 + 6.0).max(8.0);
+        let top = (o.spec.screens[card.screen].menu_bar - oy).max(0.0);
+        let below = (a.at.1 - oy + MARKER / 2.0 + 6.0).max(top + 8.0);
         // Near the bottom, above the annotation, growing upward: what was said goes above the text
         // field, so the field stays put.
         let above = (wh - (a.at.1 - oy - MARKER / 2.0 - 6.0)).max(8.0);
@@ -2434,10 +2445,12 @@ impl ScreenView {
             .into_any_element()
     }
 
-    fn menu(&self, menu: &Menu, (ox, oy): (f64, f64), (ww, wh): (f64, f64)) -> AnyElement {
+    /// The right-click menu, at the pointer, on the window (`ww` × `wh`, below `top`).
+    fn menu(&self, menu: &Menu, (ox, oy): (f64, f64), (ww, wh): (f64, f64), top: f64) -> AnyElement {
         let height = menu.items.len() as f64 * 26.0 + 10.0;
         let x = (menu.at.0 - ox).min(ww - MENU_WIDTH - 6.0).max(6.0);
-        let y = if menu.at.1 - oy + height > wh - 6.0 { (menu.at.1 - oy - height).max(6.0) } else { menu.at.1 - oy };
+        let y = if menu.at.1 - oy + height > wh - 6.0 { menu.at.1 - oy - height } else { menu.at.1 - oy };
+        let y = y.max(top + 6.0);
         let rows = menu.items.iter().enumerate().map(|(i, (label, key, item))| {
             let (overlay, hover) = (self.overlay.clone(), self.overlay.clone());
             let item = *item;

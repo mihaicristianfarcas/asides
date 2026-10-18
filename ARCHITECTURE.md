@@ -267,6 +267,9 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
    says so (`bound: None`): the overlay shows it from the start and won't record or finish. Errors the
    app raises while the overlay covers the menu bar are also sent to it (`notice`). The toolbar
    moves by its handle and folds; where, and whether, is remembered (`toolbar_placed`, `state.json`).
+   Nothing the overlay draws goes above a screen's menu bar, where the notch is: the app measures it
+   (`SpecScreen::menu_bar`, from the visible frame and the safe area), and labels, banners, cards,
+   menus and the toolbar, live or frozen, stay below it.
 5. **Finish** (Done, Return on a frozen screen, or the shortcut tapped, which the app forwards as
    `finish`): for each freeze, and each screen with something on it, the overlay renders the
    screenshot cropped around what's there

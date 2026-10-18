@@ -121,20 +121,26 @@ fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
     }
 }
 
-/// Where the live toolbar's window goes on `screen`, `w` × `h`: where the user put the toolbar, or
-/// at the bottom in the middle, `lift` above the screen's bottom edge (the Dock's height, when it
-/// shows) (AppKit's coordinates).
+/// Where the live toolbar's window goes on `screen`, `w` × `h`: where the user put the toolbar, below
+/// the menu bar, or at the bottom in the middle, `lift` above the screen's bottom edge (the Dock's
+/// height, when it shows) (AppKit's coordinates).
 fn toolbar_frame(screen: &SpecScreen, at: Option<(f64, f64)>, lift: f64, (w, h): (f64, f64)) -> PtRect {
     let f = screen.frame;
     match at {
         Some((fx, fy)) => {
             let x = (f.x + fx * f.width - TOOLBAR_MARGIN).clamp(f.x, (f.x + f.width - w).max(f.x));
             let top = f.y + f.height - fy * f.height + TOOLBAR_MARGIN;
-            let y = (top - h).clamp(f.y, (f.y + f.height - h).max(f.y));
+            let y = (top - h).clamp(f.y, (below_menu_bar(screen) - h).max(f.y));
             PtRect::new(x, y, w, h)
         }
         None => PtRect::new(f.x + (f.width - w) / 2.0, f.y + lift + TOOLBAR_LIFT - TOOLBAR_MARGIN, w, h),
     }
+}
+
+/// The highest the top of the live toolbar's window goes on `screen`: its toolbar (inside its
+/// margin) stays below the menu bar and the notch (AppKit's coordinates).
+fn below_menu_bar(screen: &SpecScreen) -> f64 {
+    screen.frame.y + screen.frame.height - (screen.menu_bar - TOOLBAR_MARGIN).max(0.0)
 }
 
 /// The toolbar over the live screen, in a window of its own on the screen under the pointer
@@ -441,9 +447,10 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
         let fits = o
             .live_toolbar_bounds
             .map(|b| (f32::from(b.size.width) as f64 + margin, f32::from(b.size.height) as f64 + margin));
-        o.toolbar_window.as_ref().map(|t| (t.view, fits, o.moving_toolbar, o.toolbar_at.is_some()))
+        let screens = o.spec().screens.clone();
+        o.toolbar_window.as_ref().map(|t| (t.view, fits, o.moving_toolbar, o.toolbar_at.is_some(), screens))
     })?;
-    let Some((view, fits, moving, placed)) = state else { return Ok(()) };
+    let Some((view, fits, moving, placed, screens)) = state else { return Ok(()) };
     let Some(frame) = native::frame(view) else { return Ok(()) };
     let mut f = frame;
     if let Some((w, h)) = fits
@@ -463,6 +470,13 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
             let (mx, my) = native::mouse();
             f.x = mx - gx - TOOLBAR_MARGIN;
             f.y = my + gy + TOOLBAR_MARGIN - f.height;
+            // Never over the menu bar of the screen under the pointer.
+            if let Some(s) = screens.iter().find(|s| {
+                let r = s.frame;
+                mx >= r.x && mx < r.x + r.width && my >= r.y && my <= r.y + r.height
+            }) {
+                f.y = f.y.min(below_menu_bar(s) - f.height);
+            }
             moved = Some(f);
         } else {
             let_go = true;

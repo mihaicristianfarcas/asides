@@ -2267,6 +2267,7 @@ impl App {
             width: frame.width,
             height: frame.height,
             place: None,
+            menu_bar: 0.0,
         };
         let spec = Spec { screens: vec![screen], script: Some(script), ..self.overlay_spec() };
         self.open_overlay(spec, &[frame], Vec::new())
@@ -2327,6 +2328,7 @@ fn spec_screens(
                     cx >= s.origin.0 && cx < s.origin.0 + w && cy >= s.origin.1 && cy < s.origin.1 + h
                 })
                 .map(|(place, _)| place.clone()),
+            menu_bar: s.menu_bar,
         });
         frames.push(capture.frame);
     }
