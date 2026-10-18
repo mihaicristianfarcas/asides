@@ -22,11 +22,14 @@ mkdir -p "$SUPPORT" "$ASIDES_HOME"
 cp "$CONFIG" "$WORK/config.toml.saved" 2>/dev/null || true
 cp "$STATE" "$WORK/state.json.saved" 2>/dev/null || true
 AGENT_TTY=""
+DIRI_SESSION=""
 cleanup() {
     [ -f "${AGENT_LOG:-}" ] && { echo "--- agent log"; cat "$AGENT_LOG"; }
     "$CLI" quit >/dev/null 2>&1 || true
     launchctl unsetenv ASIDES_HOME 2>/dev/null || true
     pkill -f "$WORK/bin/claude" 2>/dev/null || true
+    # A run that stops early leaves its Diri session behind, exited, unless it's removed here.
+    if [ -n "$DIRI_SESSION" ]; then "$DIRIJOR" session release "$DIRI_SESSION" --remove >/dev/null 2>&1 || true; fi
     if [ -n "$AGENT_TTY" ] && [ "$AGENT_TTY" != diri ]; then
         osascript -e "tell application \"Terminal\" to close (every window whose tabs's tty contains \"$AGENT_TTY\")" >/dev/null 2>&1 || true
     fi
@@ -262,7 +265,11 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
     "$CLI" simulate-measure "$SHOT" "$WORK/session.json" --to "$SESSION" >/dev/null
     for _ in $(seq 1 60); do grep -q "Area 110" "$AGENT_LOG" && break; sleep 0.5; done
     check "an aside from the screen goes straight to the session" grep -q "### 2. Area 110 × 50 at (250, 40)" "$AGENT_LOG"
-    if [ "$HOST" = Diri ]; then "$DIRIJOR" session release "$DIRI_SESSION" --remove >/dev/null 2>&1 || true; AGENT_TTY=""; fi
+    if [ "$HOST" = Diri ]; then
+        "$DIRIJOR" session release "$DIRI_SESSION" --remove >/dev/null 2>&1 || true
+        DIRI_SESSION=""
+        AGENT_TTY=""
+    fi
 fi
 
 echo "The MCP server (asides mcp)"
