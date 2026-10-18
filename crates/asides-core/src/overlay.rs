@@ -307,14 +307,14 @@ impl Session {
     }
 
     /// A frozen screen as the app described it, and its pixels.
-    pub fn from_spec(spec: &crate::helper::SpecScreen, frame: Frame) -> ScreenState {
+    pub fn from_spec(spec: &crate::helper::SpecScreen, frame: impl Into<Arc<Frame>>) -> ScreenState {
         ScreenState { place: spec.place.clone(), ..Session::screen(spec.screen.clone(), frame) }
     }
 
-    pub fn screen(screen: Screen, frame: Frame) -> ScreenState {
+    pub fn screen(screen: Screen, frame: impl Into<Arc<Frame>>) -> ScreenState {
         ScreenState {
             screen,
-            frame: Arc::new(frame),
+            frame: frame.into(),
             edges: EdgeCache::default(),
             place: None,
             guides: Vec::new(),

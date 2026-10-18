@@ -26,7 +26,8 @@ asides is a macOS menu-bar app plus a CLI.
   (Space) while doing it; ▶ or `⌃⌥P` goes back to live, and a session can freeze many times. Done
   adds it all as one aside: each freeze's screenshot, each measurement and annotation where the
   user was speaking, and what's said from an annotation's card in that annotation. The toolbar
-  moves (its handle) and folds. Its overlay is a separate GPUI process, `asides-overlay`. Web-only (Agentation's toolbar, React
+  moves (its handle) and folds. Its overlay is a separate GPUI process, `asides-overlay`, the next
+  one started ahead of time (`--standby`). Web-only (Agentation's toolbar, React
   names) and CleanShot-only (PixelSnap's hand-offs) features are out of scope: it works on
   anything on screen.
 - With the Wispr Flow integration on, Wispr Flow dictations become entries too.
@@ -408,6 +409,34 @@ The user may record a request and ask you to "implement the note". Find it with
   edges, the longest being its background, so one edge more or less near a corner changes what it
   snaps to: a frozen screen's edges, found once for all of it, keep where each anti-aliased one
   starts and ends, for each area to leave out those reaching past it (`for_area`).
+- Opening Asides took 262 ms (now 109), and nothing in it was the measuring:
+  - `CGPreflightScreenCaptureAccess` takes 11 ms every call: once allowed, the app doesn't ask
+    again until a capture fails.
+  - ScreenCaptureKit's `getShareableContent` takes 30 to 50 ms. With nothing to leave out, macOS 26's
+    `captureImageInRect` needs no content (its rect is in CoreGraphics' coordinates, y down from the
+    main display's top), has the windows' shadows and leaves the pointer out like
+    `captureScreenshotWithRect`, and is 20 ms quicker (45 ms for a screen). Freezing again from live
+    still lists the content, to leave out the overlay's windows.
+  - Converting a screen to sRGB (`NSBitmapImageRep`, ColorSync) takes 25 ms on one thread. Converted
+    in strips (`CGImageCreateWithImageInRect`), one per thread, the pixels are the same
+    (`converts_in_strips_as_whole`).
+  - A new overlay process took 150 ms to show: 20 to start, 40 for GPUI, 30 for its window (with
+    `runtime_shaders`, Metal compiles GPUI's shaders for each window, and GPUI draws a window as it
+    opens), 30 reading and copying a screen's pixels, and drawing. The app keeps one standing by,
+    with the screens' windows open (`windows::Spare`). A window opened once to warm Metal didn't
+    help a second later: its compiler had gone idle. A spare window's first draw of the frozen
+    screen was 7 ms longer until it drew text first (font matching, glyphs in its atlas). App Nap,
+    the main thread's QoS and preloading AppKit's text input UI made no difference.
+  - To time its parts, print timestamps from the overlay and run `--standby` with a `windowed`
+    session (spares are for whole screens, so give them the development window's frame while
+    timing), then send `{"type":"open","dir":…}`. `sample` adds tens of milliseconds to every
+    library loaded while it's attached.
+  - To time it on screen (it covers the user's screen: ask), post `⌃⌥Space` as a whole chord through
+    a private `CGEventSource` (your terminal needs Accessibility), poll the window list for the
+    frozen screens' windows, and close with Esc. Find them by their process (`proc_name` of
+    `kCGWindowOwnerPID`): their owner name is the bundle's, `Asides`. Never post `⌃⌥Space` while one
+    is up: a tap with Asides open is Done, and a harness that missed the window added an aside to
+    the user's notes.
 - Whisper's segment times run through silence: two takes joined with a 2 s pause came back as
   segments with no gap between them, or as one. Keep each take's segments in it (`fit_segments`).
 - On a notched display, the notch sits in the menu bar (the screen's safe area, 38 pt; the menu bar

@@ -12,7 +12,7 @@ use objc2_app_kit::{
     NSEvent, NSEventType, NSPanel, NSRunningApplication, NSScreen, NSScreenSaverWindowLevel, NSView, NSWindow,
     NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 /// Asides is a menu-bar app; GPUI makes its apps regular ones (a Dock icon, a menu bar).
@@ -257,6 +257,21 @@ pub fn give_focus(pid: Option<i32>) {
         // It quit meanwhile: macOS picks the next.
         None => ns.deactivate(),
     }
+}
+
+/// The screens: each one's display and frame (AppKit's coordinates), as the app describes them.
+pub fn screens() -> Vec<(u32, PtRect)> {
+    let Some(mtm) = MainThreadMarker::new() else { return Vec::new() };
+    let key = NSString::from_str("NSScreenNumber");
+    NSScreen::screens(mtm)
+        .iter()
+        .filter_map(|screen| {
+            let number = screen.deviceDescription().objectForKey(&key)?;
+            let display = number.downcast_ref::<NSNumber>()?.unsignedIntValue();
+            let f = screen.frame();
+            Some((display, PtRect::new(f.origin.x, f.origin.y, f.size.width, f.size.height)))
+        })
+        .collect()
 }
 
 /// The part of the screen at `frame` (AppKit's coordinates) that the Dock and the menu bar leave.

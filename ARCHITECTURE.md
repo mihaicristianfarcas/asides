@@ -16,7 +16,7 @@ How asides fits together, for anyone about to change it. User-facing behavior is
       │                       └─────────────────────────────────────────────────────────────┘
       │ path / open / export                │ appends            ▲ JSON lines (stdin/stdout)
       ▼                                      ▼                    ▼
-                                                     asides-overlay (GPUI, while Asides is open)
+                                         asides-overlay (GPUI, while Asides is open; the next one waits)
             <repo>/.asides/<YYYY-MM-DD-HHMM Title>/notes.md, images/, audio/
       ▲
       │ reads entries; state.json (batch sends), config.toml (delivery mode)
@@ -48,10 +48,11 @@ How asides fits together, for anyone about to change it. User-facing behavior is
   its agent only its own. `asides claude` (and the menu's New Agent Session, which runs it in a
   terminal) starts an agent already listening, with the MCP server on the agent's command line.
 - **Asides is one mode, frozen or live, in its own process.** The shortcut captures every display
-  (ScreenCaptureKit) and starts `asides-overlay`, which shows the screenshots in borderless GPUI
-  windows above everything; going live leaves only its toolbar, over the live screen, until the
+  (ScreenCaptureKit) and hands the screenshots to `asides-overlay`, which shows them in borderless
+  GPUI windows above everything; going live leaves only its toolbar, over the live screen, until the
   screen freezes again. GPUI runs its own event loop, so it can't share the
-  app's (tao's) process. The session's logic (`asides-core/overlay.rs`, `measure.rs`,
+  app's (tao's) process. The app starts the next overlay ahead of time, so the shortcut doesn't wait
+  for a process, GPUI and its windows to start. The session's logic (`asides-core/overlay.rs`, `measure.rs`,
   `inspect.rs`) is platform-independent; the overlay feeds it events and draws it. Permissions stay
   in the app: it hands the overlay the pixels, and names what's under an annotation when asked. The result
   reaches the worker like a screenshot does, inside the recording if one is under way.
@@ -81,7 +82,8 @@ crates/
     overlay.rs        the Measure & Annotate session state machine (Measure, Annotate, Draw, Shot; drags, holds,
                       guides, markers, annotated sections, screenshots, restore; when each was made), scripts
     takes.rs          what's said during a Measure & Annotate session, joined into one recording; its moments on it
-    helper.rs         the app ↔ overlay protocol: session.json (Spec), Events, Commands, result.json (Outcome)
+    helper.rs         the app ↔ overlay protocol: session.json (Spec), Events, Commands, result.json (Outcome);
+                      `--standby` and `Command::Open` for an overlay started ahead of time
     keys.rs           the overlay's key chords (`[measure.keys]`): parsing, matching, labels
     install.rs        where a hand-installed app links the `asides` command, and whether one is set up
     wispr.rs          Wispr Flow's dictation history (flow.sqlite through the system's sqlite3)
@@ -103,18 +105,20 @@ crates/
     listen.rs         `asides listen`: deliveries on stdout, for agents watching it in the background
     measure.rs        `asides measure` and measure_image: PNG decoding and the measurement as text
   asides-overlay/  binary `asides-overlay`, shipped as Asides.app/Contents/MacOS/asides-overlay (GPUI)
-    main.rs           reads the session, opens the live toolbar or a window per screen (or plays a script)
+    main.rs           reads the session, opens the live toolbar or a window per screen (or plays a script);
+                      `--standby`: starts GPUI and the screens' windows, then waits for the session
     ui.rs             Overlay (the session, live and frozen, and around it), ScreenView (drawing, mouse, keys)
                       and ToolbarView: the toolbar, the annotation card, the context menu, the keys sheet,
                       toasts, talking, finishing
-    windows.rs        the windows: opened, shown and hidden by mode, the live toolbar fitted and moved
+    windows.rs        the windows: opened (or taken from those opened while standing by), shown and hidden by
+                      mode, the live toolbar fitted and moved
     input.rs          the card's text field (GPUI's input example: IME, selection, clipboard; wraps and grows)
     export.rs         the images that leave it (aside, Shot, clipboard), drawn with AppKit into a bitmap
     finish.rs         result.json: the screen images, each measurement's and annotation's Markdown, the screenshots, by time
     style.rs          colors and shapes shared by the windows and the exported images
     native.rs         what GPUI's windows need to be an overlay (borderless, screen-saver level, all spaces),
                       and the live toolbar's panel (never key)
-    io.rs             Events on stdout, Commands from stdin
+    io.rs             Events on stdout, Commands from stdin; the session's spec and pixels
     replay.rs         development: plays mouse and key steps as AppKit events and captures the windows
     assets.rs         the toolbar's icons (SVG)
   asides-app/      binary `asides-app`, renamed Asides inside the bundle
@@ -128,7 +132,8 @@ crates/
     watch.rs          polling threads: Wispr Flow's history, agent sessions and listeners, the latest note's threads
     terminal.rs       New Agent Session: a script for Terminal, Ghostty (a tab), iTerm or Diri; the login shell (PATH, agents)
     capture.rs        ScreenCaptureKit screenshots (sRGB) → frames; the Screen Recording permission; displays
-    overlay.rs        starts asides-overlay with a session directory, relays its messages, reads its result
+    overlay.rs        hands asides-overlay a session directory (the one standing by, or a new one), relays its
+                      messages, reads its result; starts the next one ahead of time (`Standby`)
     elements.rs       what's under an annotation: the window list, and the accessibility tree (AXUIElement)
     stt.rs            ModelManager (download, verify, wait), Transcriber (whisper-rs), language choice
     clipboard.rs      NSPasteboard: images (PNG, TIFF, file URLs), change counter, copy text
@@ -162,7 +167,7 @@ Casks/asides.rb       the Homebrew cask; the repository doubles as a tap
 | Background launch (per launch) | runs `asides claude --background` in the login shell | `UserEvent::Launched` |
 | Threads watcher | checks the bound directory's latest `threads.jsonl` every second | `UserEvent::Threads` |
 | ScreenCaptureKit queues | turn each display's screenshot into a frame | `UserEvent::Captured` |
-| Overlay reader (while it's open) | reads `asides-overlay`'s standard output | `UserEvent::Overlay` |
+| Overlay reader (while it's open, or standing by) | reads `asides-overlay`'s standard output | `UserEvent::Overlay` (with its process id) |
 | global-hotkey, muda, tray-icon | | `UserEvent::HotKey`, `UserEvent::Menu`, `UserEvent::MenuOpened` |
 
 Background threads never touch AppKit objects. They send `UserEvent`s through the
@@ -220,14 +225,26 @@ Choosing a directory from the menu goes through `bind_from_menu`, which applies 
 
 1. **Open** (`App::open_asides`, on `⌃⌥Space`, `⌃⌥N`, `⌃⌥P`, the menu or `asides annotate`): Asides
    opens frozen. `capture_screens` checks the Screen Recording permission (asking for it the first
-   time), lists the displays and snapshots the window list and the frontmost app, then asks
-   ScreenCaptureKit for one sRGB screenshot per display, and looks up where the user is (as a
-   recording does) while it does: it goes with the screen holding that window (`SpecScreen::place`),
-   said with its screenshot when no annotation says where it is. On `UserEvent::Captured`, `show_overlay`:
-   `overlay::start` writes each display's pixels and `session.json` (`helper::Spec`: the screens, the
-   settings and keys, the last session's guides, the toolbar's place, whether a recording is under
-   way; `live` opens it over the live screen instead, for development) into a temporary session
-   directory, and starts `asides-overlay` with it. With `measure.record`, recording starts too.
+   time; once allowed, not again until a capture fails: asking takes 11 ms), lists the displays and
+   the frontmost app, and asks ScreenCaptureKit for one screenshot per display: with nothing to leave
+   out, macOS 26 takes the part of the screen each display shows (`captureImageInRect`) without
+   listing what's shareable first; freezing again from live leaves out the overlay's windows, through
+   a content filter. Each is converted to sRGB in strips, a thread each. Meanwhile it snapshots the
+   window list and looks up where the user is (as a recording does): it goes with the screen holding
+   that window (`SpecScreen::place`), said with its screenshot when no annotation says where it is.
+   On `UserEvent::Captured`, `show_overlay`: `overlay::start` writes each display's pixels and
+   `session.json` (`helper::Spec`: the screens, the settings and keys, the last session's guides, the
+   toolbar's place, whether a recording is under way; `live` opens it over the live screen instead,
+   for development) into a temporary session directory, and hands it to the overlay standing by
+   (`Command::Open`), or starts `asides-overlay` with it. With `measure.record`, recording starts too.
+   The app starts an overlay ahead of time (`overlay::Standby`, `asides-overlay --standby`) when it
+   launches and when a session's ends: it starts GPUI, opens a hidden window for each screen (Metal
+   compiles GPUI's shaders for each window, 25 ms, and GPUI draws it as it opens) and waits on its
+   standard input, without a timer. Given the session, it reads the pixels (a few threads at once),
+   and the frozen screens take those windows (`windows::Spare`); screens that changed since get new
+   ones. With the quicker screenshot, opening takes 109 ms instead of 262. It stays an accessory
+   app with no window shown, using no CPU while it waits; if it quits, the next session starts its
+   own, and the app starts the next one after that session ends.
    While it's open, the Asides shortcut tapped adds it all (`finish`), and held, talks until it's
    let go (`App::held`, from the clock), from the press that opened it too: that recording is the
    session's (`started_recording`).
@@ -546,9 +563,20 @@ Break these only on purpose, and update this document when you do.
 - **GPUI, in its own process.** The overlay is the richest UI Asides has (a toolbar, cards, menus,
   live measuring at display refresh rate), and GPUI draws it on the GPU from Rust. GPUI owns its
   event loop and `NSApplication`, as tao does for the app, so the overlay is a second binary in the
-  bundle, started per session and talking JSON lines. The screenshot is taken before it starts, so
+  bundle, one process per session, talking JSON lines. The screenshot is taken before it shows, so
   the app being tested keeps its active look in it; when the overlay exits, that app gets the focus
   back.
+- **The next overlay waits, started ahead of time.** Opening Asides took 262 ms from the
+  shortcut to the frozen screens on screen (0.7.3, the median of 10). On its own, each part took:
+  11 ms asking about the permission, 140 ms for the screenshot (50 listing what's shareable, 25
+  converting to sRGB on one thread), and for the overlay a process (20), GPUI (40), its window (30,
+  Metal compiling GPUI's shaders), reading and copying the pixels (30) and drawing. Waiting, an
+  overlay has already started GPUI and opened the screens' windows, which costs 53 MB and no CPU;
+  a session in it still gets a process of its own, so ending one ends all its state, as before. The
+  screenshot comes from macOS 26's quickest call (`captureImageInRect`, which has the shadows and
+  leaves the pointer out, as the screen shows it) and is converted by several threads: about 55 ms.
+  Opening now takes 109 ms (94 to 116), the first time after launching Asides and right after
+  closing it too, and freezing again from live 129 ms instead of 186.
 - **Talking is the main input, in the order it happened.** Annotations made while recording don't
   open a card, and each annotation, measurement and screenshot carries the seconds into the session
   it was made, so it lands in the transcript where the user was speaking about it, never gathered

@@ -19,6 +19,7 @@ serde_json.workspace = true
 # Shaders compiled at launch (Metal caches them): building needs no Metal toolchain (full Xcode).
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 block2 = "0.6"
+futures = "0.3"
 image = { version = "0.25", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = "0.3"

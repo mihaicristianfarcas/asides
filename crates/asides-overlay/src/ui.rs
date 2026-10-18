@@ -193,7 +193,7 @@ struct Hovered {
 /// shows.
 struct Keeping {
     session: Session,
-    frames: Vec<Frame>,
+    frames: Vec<Arc<Frame>>,
     exporter: Option<Exporter>,
     shots: Vec<(f32, String)>,
     /// Which freeze it was, and the screen under the pointer.
@@ -207,7 +207,7 @@ pub struct Overlay {
     keys: Keys,
     accent: u32,
     images: Vec<Arc<RenderImage>>,
-    frames: Vec<Frame>,
+    frames: Vec<Arc<Frame>>,
     exporter: Option<Exporter>,
     pub windows: Vec<ScreenWindow>,
     dir: PathBuf,
@@ -300,16 +300,20 @@ pub struct Overlay {
     /// The frozen screens just showed: the system is the overlay's once they're on screen (taken
     /// at once, the menu bar hid a frame before they covered it), and since when.
     pub taking_over: Option<Instant>,
+    /// Windows opened for the screens before the session (`windows::Spare`).
+    pub spares: Vec<crate::windows::Spare>,
 }
 
 impl Overlay {
     pub fn new(spec: Spec, frames: Vec<Frame>, dir: PathBuf, commands: Receiver<Command>) -> Overlay {
+        // The session's pixels: shared, a screen's are tens of megabytes.
+        let frames: Vec<Arc<Frame>> = frames.into_iter().map(Arc::new).collect();
         let screens = spec.screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
         let mut session = Session::new(screens, Tolerance(spec.tolerance.min(100)), spec.units);
         session.tool = Tool::Measure;
         // Opened over the live screen, there are no frozen screens yet.
         session.cursor = pointer(&spec).filter(|_| !spec.live);
-        let images = frames.iter().map(render_image).collect();
+        let images = frames.iter().map(|f| render_image(f)).collect();
         let visible = visible_frames(&spec.screens);
         let accent = style::rgb_hex(style::parse_color(&spec.color));
         let recording = spec.recording.map(|s| (s, Instant::now()));
@@ -371,6 +375,7 @@ impl Overlay {
             closing: false,
             live_toolbar_frame: None,
             taking_over: None,
+            spares: Vec::new(),
             spec,
         }
     }
@@ -401,11 +406,9 @@ impl Overlay {
         let tool = self.freezing.take().flatten();
         let mut frames = Vec::new();
         for s in &screens {
-            match std::fs::read(self.dir.join(&s.pixels)) {
-                Ok(rgba) if rgba.len() >= (s.width * s.height * 4) as usize => {
-                    frames.push(Frame { width: s.width, height: s.height, rgba })
-                }
-                _ => return self.notice("Could not freeze the screen."),
+            match io::pixels(&self.dir, s) {
+                Ok(frame) => frames.push(Arc::new(frame)),
+                Err(_) => return self.notice("Could not freeze the screen."),
             }
         }
         let states = screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
@@ -413,7 +416,7 @@ impl Overlay {
         if let Some(tool) = tool {
             self.session.set_tool(tool);
         }
-        let images = frames.iter().map(render_image).collect();
+        let images = frames.iter().map(|f| render_image(f)).collect();
         self.stale_images.extend(std::mem::replace(&mut self.images, images));
         self.frames = frames;
         self.exporter = None;
@@ -473,7 +476,7 @@ impl Overlay {
             return Ok(());
         }
         let exporter = k.exporter.unwrap_or_else(|| {
-            let frames: Vec<&Frame> = k.frames.iter().collect();
+            let frames: Vec<&Frame> = k.frames.iter().map(|f| &**f).collect();
             Exporter::new(&frames, style::parse_color(&self.spec.color))
         });
         let items =
@@ -504,7 +507,7 @@ impl Overlay {
 
     fn exporter(&mut self) -> &Exporter {
         if self.exporter.is_none() {
-            let frames: Vec<&Frame> = self.frames.iter().collect();
+            let frames: Vec<&Frame> = self.frames.iter().map(|f| &**f).collect();
             self.exporter = Some(Exporter::new(&frames, style::parse_color(&self.spec.color)));
         }
         self.exporter.as_ref().unwrap()
@@ -1171,6 +1174,8 @@ impl Overlay {
             Command::Frozen { screens } => self.frozen(screens),
             Command::Close => self.cancel(cx),
             Command::Notice { text } => self.notice(text),
+            // Already open.
+            Command::Open { .. } => {}
         }
         cx.notify();
     }
@@ -1273,12 +1278,19 @@ fn arrow(key: &str) -> Option<f64> {
     }
 }
 
-/// A frame as GPUI wants it: BGRA.
+/// A frame as GPUI wants it: BGRA, swapped by a few threads at once.
 fn render_image(frame: &Frame) -> Arc<RenderImage> {
-    let mut bgra = frame.rgba.clone();
-    for px in bgra.as_chunks_mut::<4>().0 {
-        px.swap(0, 2);
-    }
+    let mut bgra = vec![0; frame.rgba.len()];
+    let part = (bgra.len() / 4).div_ceil(io::threads()).max(1) * 4;
+    std::thread::scope(|scope| {
+        for (to, from) in bgra.chunks_mut(part).zip(frame.rgba.chunks(part)) {
+            scope.spawn(move || {
+                for (to, px) in to.as_chunks_mut::<4>().0.iter_mut().zip(from.as_chunks::<4>().0) {
+                    *to = [px[2], px[1], px[0], px[3]];
+                }
+            });
+        }
+    });
     let buffer = image::RgbaImage::from_raw(frame.width, frame.height, bgra)
         .unwrap_or_else(|| image::RgbaImage::new(frame.width.max(1), frame.height.max(1)));
     Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]))

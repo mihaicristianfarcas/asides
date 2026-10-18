@@ -5,6 +5,9 @@
 //! standard output, `Command`s on its standard input. When the user is done, the overlay writes
 //! `result.json` (`Outcome`) and the images it names into the same directory.
 //!
+//! The app starts the next overlay ahead of time, with `STANDBY` in place of the directory: it
+//! starts GPUI and waits, and the app opens the session with `Command::Open`.
+//!
 //! Everything that needs a permission stays in the app: the screenshots (Screen Recording) and
 //! naming elements (Accessibility), which the overlay asks for with `Event::Identify`.
 
@@ -16,6 +19,8 @@ use crate::overlay::{Saved, Script};
 
 pub const SPEC: &str = "session.json";
 pub const RESULT: &str = "result.json";
+/// The overlay's argument to start ahead of time, without a session.
+pub const STANDBY: &str = "--standby";
 
 /// What the overlay shows and how (`session.json`).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -128,6 +133,10 @@ pub enum Event {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
+    /// Open the session in this directory (to an overlay started with `STANDBY`).
+    Open {
+        dir: std::path::PathBuf,
+    },
     Element {
         id: u64,
         element: Option<Box<Element>>,
@@ -217,6 +226,10 @@ mod tests {
         assert_eq!(said, Command::Said { annotation: 2, take: 7, text: "Bigger.".into() });
         let element: Command = serde_json::from_str(r#"{"type":"element","id":1,"element":null}"#).unwrap();
         assert_eq!(element, Command::Element { id: 1, element: None });
+        assert_eq!(
+            line(&Command::Open { dir: "/tmp/asides-overlay-1-0".into() }),
+            r#"{"type":"open","dir":"/tmp/asides-overlay-1-0"}"#
+        );
         let spec: Spec = serde_json::from_str(r#"{"screens": [], "tolerance": 4}"#).unwrap();
         assert_eq!((spec.tolerance, spec.identify, spec.keys.annotate.as_str()), (4, false, "a"));
     }

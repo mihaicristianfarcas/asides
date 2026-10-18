@@ -1,7 +1,6 @@
 //! Freezing the screen for Asides: one screenshot per display, taken with ScreenCaptureKit, in sRGB
 //! (so colors read like CSS colors). Needs the Screen Recording permission.
 
-use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
 use asides_core::measure::Frame;
@@ -9,9 +8,9 @@ use block2::RcBlock;
 use objc2::AnyThread;
 use objc2::runtime::AnyClass;
 use objc2_app_kit::{NSBitmapImageRep, NSColorRenderingIntent, NSColorSpace};
-use objc2_core_foundation::CFRetained;
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    CGDataProvider, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGPreflightScreenCaptureAccess,
+    CGDataProvider, CGDisplayBounds, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGPreflightScreenCaptureAccess,
     CGRequestScreenCaptureAccess, kCGColorSpaceSRGB,
 };
 use objc2_foundation::{NSArray, NSError};
@@ -80,6 +79,8 @@ pub fn open_settings() {
 }
 
 type Done = Arc<dyn Fn(Result<Vec<Capture>, String>) + Send + Sync>;
+/// A display's screenshot, or why there's none.
+type Shot = Arc<dyn Fn(Result<Frame, String>) + Send + Sync>;
 /// Screens still to come, the captures so far, and the last error.
 type Results = Arc<Mutex<(usize, Vec<Capture>, Option<String>)>>;
 
@@ -91,6 +92,29 @@ pub fn capture(
     done: impl Fn(Result<Vec<Capture>, String>) + Send + Sync + 'static,
 ) {
     let done: Done = Arc::new(done);
+    if displays.is_empty() {
+        return done(Err("No screen to capture.".into()));
+    }
+    // When nothing is left out, macOS 26 captures a part of the screen without listing what's
+    // shareable first (30 to 50 ms of opening Asides). Its quickest way (20 ms quicker than with a
+    // configuration) has windows' shadows and leaves the pointer out; a picture that isn't 8 bits
+    // a channel at the screen's size (the screen showing HDR) is taken again the other way.
+    if without.is_none() && AnyClass::get(c"SCScreenshotConfiguration").is_some() {
+        let ids: Vec<u32> = displays.iter().map(|d| d.0).collect();
+        for ((id, width, height), shot) in displays.into_iter().zip(shots(&ids, done)) {
+            let rect = CGDisplayBounds(id);
+            let handler = RcBlock::new(move |image: *mut CGImage, _: *mut NSError| {
+                let image = unsafe { image.as_ref() }
+                    .filter(|i| (CGImage::width(Some(i)), CGImage::height(Some(i))) == (width, height));
+                match image.and_then(srgb_frame) {
+                    Some(frame) => shot(Ok(frame)),
+                    None => screenshot_in(rect, width, height, shot.clone()),
+                }
+            });
+            unsafe { SCScreenshotManager::captureImageInRect_completionHandler(rect, Some(&handler)) };
+        }
+        return;
+    }
     let block = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
         let Some(content) = (unsafe { content.as_ref() }) else {
             return done(Err(describe(error, "Could not list the screens to capture")));
@@ -103,7 +127,6 @@ pub fn capture(
         if wanted.is_empty() {
             return done(Err("No screen to capture.".into()));
         }
-        let results: Results = Arc::new(Mutex::new((wanted.len(), Vec::new(), None)));
         let left_out: Vec<objc2::rc::Retained<SCWindow>> = match without {
             Some(pid) => unsafe { content.windows() }
                 .iter()
@@ -112,47 +135,19 @@ pub fn capture(
             None => Vec::new(),
         };
         let left_out = NSArray::from_retained_slice(&left_out);
-        for (id, width, height, display) in wanted {
+        let ids: Vec<u32> = wanted.iter().map(|w| w.0).collect();
+        for ((_, width, height, display), shot) in wanted.into_iter().zip(shots(&ids, done.clone())) {
             let filter = unsafe {
                 SCContentFilter::initWithDisplay_excludingWindows(SCContentFilter::alloc(), &display, &left_out)
             };
-            let (results, done) = (results.clone(), done.clone());
-            let captured = Arc::new(move |image: Option<CFRetained<CGImage>>, error: *mut NSError| {
-                let mut state = results.lock().unwrap();
-                state.0 -= 1;
-                match image {
-                    Some(image) => match to_frame(&image) {
-                        Some(frame) => state.1.push(Capture { display: id, frame }),
-                        None => state.2 = Some("The screenshot had an unexpected pixel format.".into()),
-                    },
-                    None => state.2 = Some(describe(error, "Could not capture the screen")),
-                }
-                if state.0 == 0 {
-                    let (_, captures, error) = std::mem::take(&mut *state);
-                    drop(state);
-                    done(if captures.is_empty() { Err(error.unwrap_or_default()) } else { Ok(captures) });
-                }
-            });
-            // macOS 26's screenshots have windows' shadows, as the screen shows them; the older
-            // ones leave them out, so a frozen screen was lighter under every window than the
-            // live one. Its images are in the display's color space: in sRGB, colors read like CSS.
             if AnyClass::get(c"SCScreenshotConfiguration").is_some() {
-                let config = unsafe { SCScreenshotConfiguration::new() };
-                unsafe {
-                    config.setWidth(width as isize);
-                    config.setHeight(height as isize);
-                    config.setShowsCursor(false);
-                    config.setIgnoreShadows(false);
-                    config.setDynamicRange(SCScreenshotDynamicRange::SDR);
-                }
                 let handler = RcBlock::new(move |output: *mut SCScreenshotOutput, error: *mut NSError| {
-                    let image = unsafe { output.as_ref() }.and_then(|o| unsafe { o.sdrImage() }).and_then(|i| srgb(&i));
-                    captured(image, error);
+                    shot(screenshot(output, error));
                 });
                 unsafe {
                     SCScreenshotManager::captureScreenshotWithFilter_configuration_completionHandler(
                         &filter,
-                        &config,
+                        &screenshot_configuration(width, height),
                         Some(&handler),
                     )
                 };
@@ -166,7 +161,10 @@ pub fn capture(
                 config.setColorSpaceName(kCGColorSpaceSRGB);
             }
             let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
-                captured(NonNull::new(image).map(|image| unsafe { CFRetained::retain(image) }), error);
+                shot(match unsafe { image.as_ref() } {
+                    Some(image) => to_frame(image).ok_or_else(|| UNEXPECTED_FORMAT.into()),
+                    None => Err(describe(error, "Could not capture the screen")),
+                });
             });
             unsafe {
                 SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
@@ -178,6 +176,95 @@ pub fn capture(
         }
     });
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
+}
+
+const UNEXPECTED_FORMAT: &str = "The screenshot had an unexpected pixel format.";
+
+/// One `Shot` per display in `ids`: `done` gets them all once the last is in.
+fn shots(ids: &[u32], done: Done) -> Vec<Shot> {
+    let results: Results = Arc::new(Mutex::new((ids.len(), Vec::new(), None)));
+    ids.iter()
+        .map(|&id| {
+            let (results, done) = (results.clone(), done.clone());
+            Arc::new(move |shot: Result<Frame, String>| {
+                let mut state = results.lock().unwrap();
+                state.0 -= 1;
+                match shot {
+                    Ok(frame) => state.1.push(Capture { display: id, frame }),
+                    Err(error) => state.2 = Some(error),
+                }
+                if state.0 == 0 {
+                    let (_, captures, error) = std::mem::take(&mut *state);
+                    drop(state);
+                    done(if captures.is_empty() { Err(error.unwrap_or_default()) } else { Ok(captures) });
+                }
+            }) as Shot
+        })
+        .collect()
+}
+
+/// The part of the screen at `rect` (CoreGraphics' coordinates) as macOS 26 takes a screenshot,
+/// `width` × `height` pixels.
+fn screenshot_in(rect: CGRect, width: usize, height: usize, shot: Shot) {
+    let handler = RcBlock::new(move |output: *mut SCScreenshotOutput, error: *mut NSError| {
+        shot(screenshot(output, error));
+    });
+    unsafe {
+        SCScreenshotManager::captureScreenshotWithRect_configuration_completionHandler(
+            rect,
+            &screenshot_configuration(width, height),
+            Some(&handler),
+        )
+    };
+}
+
+/// macOS 26's screenshots have windows' shadows, as the screen shows them; the older ones leave
+/// them out, so a frozen screen was lighter under every window than the live one.
+fn screenshot_configuration(width: usize, height: usize) -> objc2::rc::Retained<SCScreenshotConfiguration> {
+    let config = unsafe { SCScreenshotConfiguration::new() };
+    unsafe {
+        config.setWidth(width as isize);
+        config.setHeight(height as isize);
+        config.setShowsCursor(false);
+        config.setIgnoreShadows(false);
+        config.setDynamicRange(SCScreenshotDynamicRange::SDR);
+    }
+    config
+}
+
+/// A macOS 26 screenshot's pixels. Its images are in the display's color space: in sRGB, colors
+/// read like CSS.
+fn screenshot(output: *mut SCScreenshotOutput, error: *mut NSError) -> Result<Frame, String> {
+    match unsafe { output.as_ref() }.and_then(|o| unsafe { o.sdrImage() }) {
+        Some(image) => srgb_frame(&image).ok_or_else(|| UNEXPECTED_FORMAT.into()),
+        None => Err(describe(error, "Could not capture the screen")),
+    }
+}
+
+/// `image`'s pixels in sRGB, as `to_frame` gives them. Converting a screen takes ColorSync 25 ms,
+/// so each thread converts a strip of it: a pixel's color doesn't depend on its neighbors', so
+/// they're the same as converted whole.
+fn srgb_frame(image: &CGImage) -> Option<Frame> {
+    let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+    let rows = height.div_ceil(threads).max(1);
+    let mut rgba = vec![0; width * height * 4];
+    let converted = std::thread::scope(|scope| {
+        let strips: Vec<_> = rgba
+            .chunks_mut(rows * width * 4)
+            .enumerate()
+            .map(|(i, out)| {
+                let size = CGSize::new(width as f64, (out.len() / (width * 4)) as f64);
+                let strip =
+                    CGImage::with_image_in_rect(Some(image), CGRect::new(CGPoint::new(0.0, (i * rows) as f64), size));
+                scope.spawn(move || {
+                    objc2::rc::autoreleasepool(|_| strip.and_then(|s| srgb(&s)).and_then(|s| copy_rgba(&s, out)))
+                })
+            })
+            .collect();
+        strips.into_iter().all(|s| s.join().ok().flatten().is_some())
+    });
+    if converted { Frame::new(width as u32, height as u32, rgba) } else { None }
 }
 
 /// `image` in sRGB.
@@ -199,13 +286,26 @@ fn describe(error: *mut NSError, what: &str) -> String {
 
 /// The image's pixels as straight RGBA (8-bit, 4 bytes per pixel), whatever their byte order.
 pub fn to_frame(image: &CGImage) -> Option<Frame> {
+    let (width, height) = (CGImage::width(Some(image)), CGImage::height(Some(image)));
+    let mut rgba = vec![0; width * height * 4];
+    copy_rgba(image, &mut rgba)?;
+    Frame::new(width as u32, height as u32, rgba)
+}
+
+/// Writes the image's pixels into `out` (its width × height × 4 bytes) as `to_frame` gives them.
+fn copy_rgba(image: &CGImage, out: &mut [u8]) -> Option<()> {
     let image = Some(image);
     let (width, height) = (CGImage::width(image), CGImage::height(image));
-    if CGImage::bits_per_pixel(image) != 32 || CGImage::bits_per_component(image) != 8 {
+    if CGImage::bits_per_pixel(image) != 32
+        || CGImage::bits_per_component(image) != 8
+        || out.len() != width * height * 4
+    {
         return None;
     }
     let row = CGImage::bytes_per_row(image);
-    let data = CGDataProvider::data(CGImage::data_provider(image).as_deref())?.to_vec();
+    let data = CGDataProvider::data(CGImage::data_provider(image).as_deref())?;
+    // SAFETY: the data is ours (a copy) and isn't changed while it's read.
+    let data = unsafe { data.as_bytes_unchecked() };
     let little = CGImage::byte_order_info(image) == CGImageByteOrderInfo::Order32Little;
     let alpha = CGImage::alpha_info(image);
     let alpha_first = [CGImageAlphaInfo::PremultipliedFirst, CGImageAlphaInfo::First, CGImageAlphaInfo::NoneSkipFirst]
@@ -220,18 +320,66 @@ pub fn to_frame(image: &CGImage) -> Option<Frame> {
     if data.len() < row * height.saturating_sub(1) + width * 4 {
         return None;
     }
-    let mut rgba = Vec::with_capacity(width * height * 4);
-    for y in 0..height {
-        for px in data[y * row..y * row + width * 4].as_chunks::<4>().0 {
-            rgba.extend_from_slice(&[px[r], px[g], px[b], 255]);
+    for (y, line) in out.chunks_exact_mut(width * 4).enumerate() {
+        let pixels = data[y * row..y * row + width * 4].as_chunks::<4>().0;
+        for (px, to) in pixels.iter().zip(line.as_chunks_mut::<4>().0) {
+            *to = [px[r], px[g], px[b], 255];
         }
     }
-    Frame::new(width as u32, height as u32, rgba)
+    Some(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use objc2_core_foundation::CFData;
+    use objc2_core_graphics::{CGBitmapInfo, CGColorRenderingIntent, CGColorSpace, kCGColorSpaceDisplayP3};
+
+    /// A screenshot as macOS 26 gives one: Display P3, BGRA, alpha first and premultiplied.
+    fn display_p3(width: usize, height: usize) -> CFRetained<CGImage> {
+        let mut seed = 7u32;
+        let bytes: Vec<u8> = (0..width * height)
+            .flat_map(|i| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                // Smooth ramps (like a screen) with noise on them, saturated colors included.
+                let (x, y) = ((i % width) as u32, (i / width) as u32);
+                let noise = (seed >> 16) as u8;
+                [(x * 255 / width as u32) as u8 ^ (noise & 7), (y * 255 / height as u32) as u8, noise, 255]
+            })
+            .collect();
+        let provider = CGDataProvider::with_cf_data(Some(&CFData::from_bytes(&bytes))).unwrap();
+        let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceDisplayP3 })).unwrap();
+        let info = CGBitmapInfo(CGImageByteOrderInfo::Order32Little.0 | CGImageAlphaInfo::PremultipliedFirst.0);
+        unsafe {
+            CGImage::new(
+                width,
+                height,
+                8,
+                32,
+                width * 4,
+                Some(&space),
+                info,
+                Some(&provider),
+                std::ptr::null(),
+                false,
+                CGColorRenderingIntent::RenderingIntentDefault,
+            )
+        }
+        .unwrap()
+    }
+
+    #[test]
+    fn converts_in_strips_as_whole() {
+        // 333 rows don't split evenly: the last strip is shorter.
+        let image = display_p3(301, 333);
+        let whole = to_frame(&srgb(&image).unwrap()).unwrap();
+        let strips = srgb_frame(&image).unwrap();
+        assert_eq!((strips.width, strips.height), (301, 333));
+        assert!(strips.rgba == whole.rgba, "converted in strips, the pixels changed");
+        // It did convert: P3's saturated colors aren't sRGB's.
+        let raw = to_frame(&image).unwrap();
+        assert!(raw.rgba != whole.rgba);
+    }
 
     /// Captures the main display as a freeze does (in sRGB, 2 pixels a point) into
     /// `$ASIDES_CAPTURE_DUMP/freeze-<width>x<height>.rgba`: the pixels Measure works on, which a

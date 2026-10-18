@@ -322,6 +322,7 @@ dependencies = [
  "anyhow",
  "asides-core",
  "block2",
+ "futures",
  "gpui",
  "image",
  "objc2",

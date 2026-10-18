@@ -62,7 +62,7 @@ use crate::environment::Environment;
 use crate::hotkeys::{Action, Hotkeys};
 use crate::icons::{Icons, Mark};
 use crate::macos::{CommandLink, Mic};
-use crate::overlay::{Message as OverlayMessage, Overlay};
+use crate::overlay::{Message as OverlayMessage, Overlay, Standby};
 use crate::stt::{ModelManager, ModelState};
 use crate::tray::{MenuAction, TargetRow, Tray, View};
 use crate::worker::{CapturedImage, DictationJob, ImageJob, Job, Outcome, RecordingJob, ScreenJob, TranscribeJob};
@@ -101,8 +101,8 @@ enum UserEvent {
     CommandLinked(CommandLink),
     /// The screens, frozen for Measure & Annotate.
     Captured(Result<Vec<Capture>, String>),
-    /// What Measure & Annotate's overlay said.
-    Overlay(OverlayMessage),
+    /// What Measure & Annotate's overlay (its process id) said.
+    Overlay(u32, OverlayMessage),
     /// The latest note's threads (what agents said about its asides), when they change.
     Threads(PathBuf, Vec<ThreadEvent>),
     /// The status item was clicked: its menu opens.
@@ -250,8 +250,13 @@ struct App {
     /// Measure & Annotate: when the screens were asked for, the screens, and the windows on them
     /// when the shortcut was pressed (until the capture arrives).
     capturing: Option<Capturing>,
-    /// Measure & Annotate's overlay, while it's open.
+    /// Screen Recording is allowed. Asking takes 11 ms each time, so it's asked until it is, and
+    /// again after a capture fails.
+    screen_permitted: bool,
+    /// Measure & Annotate's overlay, while it's open...
     overlay: Option<Overlay>,
+    /// ...and the next one, started ahead of time.
+    standby: Option<Standby>,
     /// What was said in the open Measure & Annotate session, until it ends.
     takes: Vec<Take>,
     /// What was said about its annotations: (annotation key, take, transcript once it's back).
@@ -388,7 +393,9 @@ impl App {
             command_link_declined,
             wispr: None,
             capturing: None,
+            screen_permitted: false,
             overlay: None,
+            standby: None,
             takes: Vec::new(),
             said: Vec::new(),
             next_take: 1,
@@ -441,6 +448,7 @@ impl App {
             proxy.send_event(UserEvent::Threads(note, events)).is_ok()
         });
         self.link_command();
+        self.stand_by();
         self.refresh_latest();
         self.refresh();
         self.publish();
@@ -515,9 +523,10 @@ impl App {
             UserEvent::Captured(Ok(captures)) => self.show_overlay(captures),
             UserEvent::Captured(Err(message)) => {
                 self.capturing = None;
+                self.screen_permitted = false;
                 self.fail(message);
             }
-            UserEvent::Overlay(message) => self.on_overlay(message),
+            UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
             UserEvent::Threads(note, events) => self.on_threads(note, events),
         }
     }
@@ -1073,7 +1082,7 @@ impl App {
         if self.capturing.as_ref().is_some_and(|c| c.at.elapsed() < CAPTURE_TIMEOUT) {
             return;
         }
-        if !capture::permitted() {
+        if !self.screen_permitted && !capture::permitted() {
             capture::request();
             return self.fail(
                 "Asides needs to see the screen to freeze it: allow it in System Settings → Privacy & Security → \
@@ -1081,6 +1090,7 @@ impl App {
                     .into(),
             );
         }
+        self.screen_permitted = true;
         let screens = capture::screens(self.mtm);
         let displays = screens
             .iter()
@@ -1089,21 +1099,21 @@ impl App {
                 (s.display, px(s.frame.size.width), px(s.frame.size.height))
             })
             .collect();
-        // The windows as they are now, before the overlay covers them (and without its toolbar), and
-        // the app the user is in, to give the keyboard back to when the screen goes live again.
+        // The app the user is in, to give the keyboard back to when the screen goes live again.
         let overlay = self.overlay.as_mut();
         let without = overlay.as_ref().map(|o| o.pid());
         let front = macos::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
         if let Some(overlay) = overlay {
             overlay.previous_app = front;
         }
-        // Where the user is, for the screenshot's aside, looked up while the screens are taken.
-        let place = look_up_place(front, self.config.measure.identify_elements);
-        self.capturing = Some(Capturing { at: Instant::now(), screens, windows: elements::windows(without), place });
         let proxy = Mutex::new(self.proxy.clone());
         capture::capture(displays, without, move |result| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::Captured(result));
         });
+        // While the screens are taken: where the user is, for the screenshot's aside, and the
+        // windows as they are now, before the overlay covers them (and without its toolbar).
+        let place = look_up_place(front, self.config.measure.identify_elements);
+        self.capturing = Some(Capturing { at: Instant::now(), screens, windows: elements::windows(without), place });
     }
 
     /// Asides, open over the live screen, frozen: the screenshots go to its overlay.
@@ -1133,6 +1143,7 @@ impl App {
         let tips = !self.overlay_tips_seen;
         let spec = Spec { screens: spec_screens, tips, ..self.overlay_spec() };
         if let Err(err) = self.open_overlay(spec, &frames, windows) {
+            self.stand_by();
             return self.fail(format!("Could not open Asides: {err:#}"));
         }
         if tips {
@@ -1179,11 +1190,9 @@ impl App {
         frames: &[asides_core::measure::Frame],
         windows: Vec<WindowInfo>,
     ) -> anyhow::Result<()> {
-        let proxy = Mutex::new(self.proxy.clone());
-        let notify = move |message| {
-            let _ = proxy.lock().unwrap().send_event(UserEvent::Overlay(message));
-        };
-        let mut overlay = overlay::start(spec, frames, windows, notify)?;
+        // A script plays without windows, in a process of its own: the one standing by stays.
+        let standby = if spec.script.is_none() { self.standby.take() } else { None };
+        let mut overlay = overlay::start(spec, frames, windows, standby, self.overlay_notify())?;
         overlay.previous_app = macos::frontmost_app();
         // Talking from the press that opened it: the session's, like one started in it.
         overlay.started_recording = self.held_talking && self.recording.is_some();
@@ -1200,8 +1209,33 @@ impl App {
         }
     }
 
-    fn on_overlay(&mut self, message: OverlayMessage) {
-        let Some(overlay) = &mut self.overlay else { return };
+    /// Starts the next overlay ahead of time (`overlay::Standby`), unless one is open or waiting.
+    fn stand_by(&mut self) {
+        if self.overlay.is_some() || self.standby.is_some() {
+            return;
+        }
+        match overlay::standby(self.overlay_notify()) {
+            Ok(standby) => self.standby = Some(standby),
+            Err(err) => eprintln!("asides: no overlay standing by: {err:#}"),
+        }
+    }
+
+    fn overlay_notify(&self) -> impl overlay::Notify {
+        let proxy = Mutex::new(self.proxy.clone());
+        move |pid, message| {
+            let _ = proxy.lock().unwrap().send_event(UserEvent::Overlay(pid, message));
+        }
+    }
+
+    fn on_overlay(&mut self, pid: u32, message: OverlayMessage) {
+        // The one standing by quit: Asides opens in a process of its own, until the next session ends.
+        if self.standby.as_ref().is_some_and(|s| s.pid() == pid) {
+            if matches!(message, OverlayMessage::Exited) {
+                self.standby = None;
+            }
+            return;
+        }
+        let Some(overlay) = self.overlay.as_mut().filter(|o| o.pid() == pid as i32) else { return };
         match message {
             OverlayMessage::Event(OverlayEvent::Ready) => overlay.opened = Some(Instant::now()),
             OverlayMessage::Event(OverlayEvent::Identify { id, x, y }) => {
@@ -1323,6 +1357,7 @@ impl App {
                 if crashed {
                     self.fail("Asides' overlay closed unexpectedly.".into());
                 }
+                self.stand_by();
                 self.refresh();
             }
         }

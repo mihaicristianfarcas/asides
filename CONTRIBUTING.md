@@ -121,7 +121,8 @@ in it, and `asides simulate --annotation N` about annotation N, as the end-to-en
 `overlay::Action`.
 
 To see and drive the overlay itself, run `target/debug/asides-overlay <dir>` on a session
-directory of your own: `session.json` (`helper::Spec`) with a screen whose `pixels` file holds
+directory of your own (or `asides-overlay --standby`, then send `{"type":"open","dir":"<dir>"}` on
+its standard input, as the app does): `session.json` (`helper::Spec`) with a screen whose `pixels` file holds
 raw RGBA, plus `"windowed": {"x": …, "y": …, "width": …, "height": …}` for a small window instead
 of the whole screen, and `"replay": [...]` with steps like `{"move": [200, 140]}`,
 `{"down": [50, 160]}`, `{"drag": [175, 205]}`, `{"up": [175, 205]}`, `{"key": "shift+h"}`,
@@ -197,8 +198,10 @@ in your pull request what you tried.
   reopening Asides), it freezes every screen.
 - [ ] **Live and frozen** (with a browser in front, on a laptop and a second display, and over a
   full-screen app):
-  - opening freezes every screen within a second; keys work without clicking first; no Dock icon
-    appears; the keys sheet shows the first time only
+  - opening freezes every screen at once (the overlay waits, started ahead of time), the first time
+    after launching Asides too, and after connecting or disconnecting a display; keys work without
+    clicking first; no Dock icon appears; the keys sheet shows the first time only
+  - after closing it, `asides-overlay` is running again (Activity Monitor), with no window and 0% CPU
   - frozen, the Dock doesn't slide in (pointer at the screen's edge); ⌘Tab, the three- and
     four-finger swipes (Mission Control, App Exposé, switching spaces), the Show Desktop pinch and
     hot corners do nothing; Force Quit still works; live, everything works again

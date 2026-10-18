@@ -698,7 +698,8 @@ language (often a short one, or an accent), Asides keeps the language it was las
 - **The overlay.** Asides' toolbar and frozen screens are drawn with [GPUI](https://gpui.rs), Zed's
   GPU-accelerated UI framework, in a process of its own (`asides-overlay`), since GPUI runs its own
   event loop. The app freezes the screens, hands it their pixels, answers what's under an
-  annotation, records you, and writes what it returns into the note.
+  annotation, records you, and writes what it returns into the note. The next one is started ahead
+  of time and waits, hidden (about 50 MB, no CPU), so the shortcut freezes the screen at once.
 
 ## Contributing
 

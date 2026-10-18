@@ -1,8 +1,10 @@
 //! Measure & Annotate's overlay runs in its own process, `asides-overlay` (drawn with GPUI, which
 //! needs its own event loop), next to the app's binary. This module gives it a session directory
 //! (the frozen screens and the settings, see `asides_core::helper`), relays its requests (what's
-//! under an annotation, talking) to the app, and reads what it adds to the aside. Main thread.
+//! under an annotation, talking) to the app, and reads what it adds to the aside. The next one is
+//! started ahead of time (`Standby`). Main thread.
 
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command as Process, Stdio};
@@ -10,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 use anyhow::Context as _;
-use asides_core::helper::{Command, Event, Outcome, RESULT, SPEC, Spec, SpecScreen};
+use asides_core::helper::{Command, Event, Outcome, RESULT, SPEC, STANDBY, Spec, SpecScreen};
 use asides_core::measure::Frame;
 #[cfg(feature = "dev-hooks")]
 use objc2_app_kit::NSBitmapImageRep;
@@ -28,6 +30,67 @@ pub enum Message {
     Event(Event),
     /// The process ended.
     Exited,
+}
+
+/// Tells the app what the overlay with this process id says (from a thread of its own).
+pub trait Notify: Fn(u32, Message) + Send + 'static {}
+impl<F: Fn(u32, Message) + Send + 'static> Notify for F {}
+
+/// An overlay started ahead of time, waiting for a session: its GPUI started and a window open for
+/// each screen. Opening Asides doesn't wait for them, about 120 ms. Dropped, it quits (its standard
+/// input ends).
+pub struct Standby {
+    child: Child,
+    stdin: ChildStdin,
+}
+
+impl Standby {
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Opens the session in `dir`: the process is the session's now. `None` if it quit.
+    fn open(mut self, dir: &Path) -> Option<(Child, ChildStdin)> {
+        let open = asides_core::helper::line(&Command::Open { dir: dir.to_path_buf() });
+        if writeln!(self.stdin, "{open}").and_then(|_| self.stdin.flush()).is_err() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            return None;
+        }
+        Some((self.child, self.stdin))
+    }
+}
+
+/// Starts an overlay ahead of time, telling `notify` what it says.
+pub fn standby(notify: impl Notify) -> anyhow::Result<Standby> {
+    let (child, stdin) = spawn(STANDBY, notify)?;
+    Ok(Standby { child, stdin })
+}
+
+/// Starts `asides-overlay` with `arg` (a session directory, or `STANDBY`), relaying what it says to
+/// `notify`.
+fn spawn(arg: impl AsRef<OsStr>, notify: impl Notify) -> anyhow::Result<(Child, ChildStdin)> {
+    let mut child = Process::new(helper())
+        .arg(arg)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("could not start {}", helper().display()))?;
+    let stdin = child.stdin.take().context("no stdin")?;
+    let stdout = child.stdout.take().context("no stdout")?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            match serde_json::from_str::<Event>(&line) {
+                Ok(event) => notify(pid, Message::Event(event)),
+                Err(err) => eprintln!("overlay said {line:?}: {err}"),
+            }
+        }
+        notify(pid, Message::Exited);
+    });
+    Ok((child, stdin))
 }
 
 pub struct Overlay {
@@ -59,13 +122,14 @@ pub fn helper() -> PathBuf {
     exe.with_file_name("asides-overlay")
 }
 
-/// Starts the overlay on these screens (`spec.screens[i].pixels` is filled in), telling `notify`
-/// what it says.
+/// Opens the overlay on these screens (`spec.screens[i].pixels` is filled in): in `standby`, or a
+/// process of its own, telling `notify` what it says.
 pub fn start(
     mut spec: Spec,
     frames: &[Frame],
     windows: Vec<WindowInfo>,
-    notify: impl Fn(Message) + Send + 'static,
+    standby: Option<Standby>,
+    notify: impl Notify,
 ) -> anyhow::Result<Overlay> {
     static SESSIONS: AtomicU32 = AtomicU32::new(0);
     let n = SESSIONS.fetch_add(1, Ordering::Relaxed);
@@ -78,25 +142,11 @@ pub fn start(
     }
     let frozen = !spec.live;
     std::fs::write(dir.join(SPEC), serde_json::to_string(&spec)?)?;
-    let mut child = Process::new(helper())
-        .arg(&dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("could not start {}", helper().display()))?;
-    let stdin = child.stdin.take().context("no stdin")?;
-    let stdout = child.stdout.take().context("no stdout")?;
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            match serde_json::from_str::<Event>(&line) {
-                Ok(event) => notify(Message::Event(event)),
-                Err(err) => eprintln!("overlay said {line:?}: {err}"),
-            }
-        }
-        notify(Message::Exited);
-    });
+    let (child, stdin) = match standby.and_then(|s| s.open(&dir)) {
+        Some(process) => process,
+        // None waiting, or it quit.
+        None => spawn(&dir, notify)?,
+    };
     Ok(Overlay {
         child,
         stdin,

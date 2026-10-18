@@ -2,6 +2,9 @@
 //! directory (see `asides_core::helper`); it shows the frozen screens, lets the user measure,
 //! annotate, draw and take screenshots while they talk, and writes what to add to the aside.
 //!
+//! Started with `--standby`, it starts GPUI and opens the screens' windows, then waits for the app
+//! to open a session: the app keeps one waiting, so opening Asides doesn't wait for them.
+//!
 //! With a script in the session (`asides simulate-measure`), it plays it without any window and
 //! writes the result.
 
@@ -17,9 +20,9 @@ mod ui;
 mod windows;
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
 
-use anyhow::{Context as _, bail};
-use asides_core::helper::{Event, SPEC, Spec};
+use asides_core::helper::{Command, Event, STANDBY, Spec};
 use asides_core::measure::{Frame, Tolerance};
 use asides_core::overlay::{Action, Placed, Saved, Script, Session};
 use gpui::{App, AppContext, Application};
@@ -27,38 +30,26 @@ use gpui::{App, AppContext, Application};
 use crate::ui::Overlay;
 
 fn main() {
-    let Some(dir) = std::env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: asides-overlay <session directory>");
+    let Some(arg) = std::env::args_os().nth(1) else {
+        eprintln!("usage: asides-overlay <session directory> | {STANDBY}");
         std::process::exit(2);
     };
-    if let Err(err) = run(&dir) {
-        eprintln!("asides-overlay: {err:#}");
-        io::emit(&Event::Cancelled { saved: Saved::default() });
+    if arg == STANDBY {
+        return standby();
+    }
+    if let Err(err) = run(Path::new(&arg)) {
+        failed(&err);
         std::process::exit(1);
     }
 }
 
+fn failed(err: &anyhow::Error) {
+    eprintln!("asides-overlay: {err:#}");
+    io::emit(&Event::Cancelled { saved: Saved::default() });
+}
+
 fn run(dir: &Path) -> anyhow::Result<()> {
-    let text = std::fs::read_to_string(dir.join(SPEC)).with_context(|| format!("no {SPEC} in {}", dir.display()))?;
-    let spec: Spec = serde_json::from_str(&text).context("could not read the session")?;
-    if spec.screens.is_empty() {
-        bail!("no screens");
-    }
-    // Opened over the live screen, there are no frozen screens yet.
-    let frames = if spec.live {
-        Vec::new()
-    } else {
-        spec.screens
-            .iter()
-            .map(|s| {
-                let rgba = std::fs::read(dir.join(&s.pixels)).with_context(|| format!("no pixels in {}", s.pixels))?;
-                if rgba.len() < (s.width * s.height * 4) as usize {
-                    bail!("{} is too short for {} × {}", s.pixels, s.width, s.height);
-                }
-                Ok(Frame { width: s.width, height: s.height, rgba })
-            })
-            .collect::<anyhow::Result<Vec<Frame>>>()?
-    };
+    let (spec, frames) = io::session(dir)?;
     match spec.script.clone() {
         Some(script) if spec.replay.is_none() => headless(dir, &spec, frames, &script),
         _ => {
@@ -110,24 +101,76 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
 /// The overlay's windows: the toolbar's over the live screen, or one per screen, frozen (opened by
 /// the clock, `windows::sync`).
 fn gui(dir: PathBuf, spec: Spec, frames: Vec<Frame>) {
-    // The app the user is in, before the overlay's takes over.
-    let previous = native::front_app();
     native::stay_accessory_at_launch();
     Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
-        native::accessory();
-        input::bind_keys(cx);
+        launched(cx);
         let commands = io::commands(spec.replay.is_none());
-        let overlay = cx.new(|_| Overlay::new(spec.clone(), frames, dir.clone(), commands));
-        overlay.update(cx, |o, _| {
-            o.previous_app = previous;
-            o.start();
-        });
-        native::debug("ready");
-        native::monitor_keys();
-        io::emit(&Event::Ready);
-        ui::run_clock(&overlay, cx);
-        if let Some(steps) = spec.replay.clone() {
-            replay::run(overlay.clone(), steps, cx);
-        }
+        open(dir, spec, frames, commands, Vec::new(), cx);
     });
+}
+
+/// Started ahead of time: GPUI starts, and a window opens for each screen (`windows::Spare`),
+/// then it waits for the app to open a session. Opening Asides then doesn't wait for a process,
+/// GPUI and its windows, about 120 ms.
+fn standby() {
+    native::stay_accessory_at_launch();
+    Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
+        launched(cx);
+        let spares = windows::open_spares(cx);
+        let (opened, commands) = io::standby();
+        cx.spawn(async move |cx| {
+            let session = opened.await;
+            cx.update(|cx| match session {
+                Ok(Ok((dir, spec, frames))) => match spec.script.clone() {
+                    Some(script) if spec.replay.is_none() => {
+                        if let Err(err) = headless(&dir, &spec, frames, &script) {
+                            failed(&err);
+                        }
+                        cx.quit();
+                    }
+                    _ => open(dir, spec, frames, commands, spares, cx),
+                },
+                Ok(Err(err)) => {
+                    failed(&err);
+                    cx.quit();
+                }
+                // The app went away first.
+                Err(_) => cx.quit(),
+            })
+        })
+        .detach();
+    });
+}
+
+/// GPUI has started: the overlay's app is an accessory one, with its keys.
+fn launched(cx: &mut App) {
+    native::accessory();
+    input::bind_keys(cx);
+}
+
+/// Opens the session: the clock opens its windows, or takes the spare ones.
+fn open(
+    dir: PathBuf,
+    spec: Spec,
+    frames: Vec<Frame>,
+    commands: Receiver<Command>,
+    spares: Vec<windows::Spare>,
+    cx: &mut App,
+) {
+    // The app the user is in, before the overlay's takes over.
+    let previous = native::front_app();
+    let replay = spec.replay.clone();
+    let overlay = cx.new(|_| Overlay::new(spec, frames, dir, commands));
+    overlay.update(cx, |o, _| {
+        o.previous_app = previous;
+        o.spares = spares;
+        o.start();
+    });
+    native::debug("ready");
+    native::monitor_keys();
+    io::emit(&Event::Ready);
+    ui::run_clock(&overlay, cx);
+    if let Some(steps) = replay {
+        replay::run(overlay.clone(), steps, cx);
+    }
 }

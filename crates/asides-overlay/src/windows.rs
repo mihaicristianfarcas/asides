@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use asides_core::helper::SpecScreen;
 use asides_core::inspect::PtRect;
 use gpui::{
-    App, AppContext, AsyncApp, Bounds, Entity, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions,
+    AnyWindowHandle, App, AppContext, AsyncApp, Bounds, Context, DisplayId, Entity, FontWeight, IntoElement,
+    ParentElement, Render, Styled, Window, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div,
     point, px, size,
 };
 
@@ -56,6 +57,81 @@ pub fn pointer_screen(screens: &[SpecScreen]) -> Option<usize> {
     })
 }
 
+/// A screen's window opened while standing by, hidden. Opening a window takes 25 ms (Metal compiles
+/// GPUI's shaders for each, longer once its compiler has gone idle), and GPUI draws it as it opens:
+/// the frozen screens take these instead.
+pub struct Spare {
+    handle: AnyWindowHandle,
+    display: u32,
+    frame: PtRect,
+    number: isize,
+    view: usize,
+}
+
+/// What a spare window draws as it opens (hidden): text in the sizes and weights the overlay's
+/// labels and toolbar use, so the frozen screen it becomes finds the font matched and the glyphs
+/// drawn in its atlas (its first draw took 7 ms longer).
+struct WarmUp;
+
+impl Render for WarmUp {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let text = "Measure Annotate Draw Shot Done Send 0123456789 px pt × · \
+                    abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let line = |size: f32, weight: FontWeight| div().text_size(px(size)).font_weight(weight).child(text);
+        div()
+            .child(line(11., FontWeight::NORMAL))
+            .child(line(12., FontWeight::NORMAL))
+            .child(line(13., FontWeight::NORMAL))
+            .child(line(12., FontWeight::SEMIBOLD))
+            .child(line(12., FontWeight::BOLD))
+    }
+}
+
+/// A spare window for each screen.
+pub fn open_spares(cx: &mut App) -> Vec<Spare> {
+    native::screens()
+        .into_iter()
+        .filter_map(|(display, frame)| {
+            let display_id = cx.displays().into_iter().find(|d| u32::from(d.id()) == display).map(|d| d.id());
+            let mut made = (0, 0);
+            let opened = cx.open_window(screen_options(display_id, (frame.width, frame.height)), |window, cx| {
+                made = native::make_overlay(window, frame);
+                cx.new(|_| WarmUp)
+            });
+            match opened {
+                Ok(handle) => Some(Spare { handle: handle.into(), display, frame, number: made.0, view: made.1 }),
+                Err(err) => {
+                    eprintln!("asides-overlay: no spare window: {err:#}");
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+/// A frozen screen's window, `w` × `h` points (hidden until `sync` shows it).
+fn screen_options(display_id: Option<DisplayId>, (w, h): (f64, f64)) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+            point(px(0.), px(0.)),
+            size(px(w as f32), px(h as f32)),
+        ))),
+        titlebar: None,
+        focus: false,
+        show: false,
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        is_resizable: false,
+        is_minimizable: false,
+        display_id,
+        // Not opaque, though the screenshot covers every pixel: an opaque window occludes the
+        // apps under it, and many (web views, Electron, terminals) stop drawing while occluded,
+        // then show a stale, blurred frame for a moment when it goes.
+        window_background: WindowBackgroundAppearance::Transparent,
+        ..Default::default()
+    }
+}
+
 /// A window per screen, to show it frozen (hidden until `sync` shows them).
 fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
     let spec = overlay.read(cx).spec().clone();
@@ -70,8 +146,17 @@ fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
             ScreenWindow { handle: None, focus: None, screen: s.frame, offset, size, number: 0, view: 0 }
         })
         .collect();
-    overlay.update(cx, |o, _| o.windows = windows);
+    let mut spares = overlay.update(cx, |o, _| {
+        o.windows = windows;
+        std::mem::take(&mut o.spares)
+    });
     for (i, s) in spec.screens.iter().enumerate() {
+        if spec.windowed.is_none()
+            && let Some(at) = spares.iter().position(|w| w.display == s.display && w.frame == s.frame)
+            && take_spare(overlay, i, spares.swap_remove(at), cx)
+        {
+            continue;
+        }
         let (offset, (w, h)) = {
             let o = overlay.read(cx);
             (o.windows[i].offset, o.windows[i].size)
@@ -82,27 +167,8 @@ fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
             None => s.frame,
         };
         let display_id = cx.displays().into_iter().find(|d| u32::from(d.id()) == s.display).map(|d| d.id());
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                point(px(0.), px(0.)),
-                size(px(w as f32), px(h as f32)),
-            ))),
-            titlebar: None,
-            focus: false,
-            show: false,
-            kind: WindowKind::PopUp,
-            is_movable: false,
-            is_resizable: false,
-            is_minimizable: false,
-            display_id,
-            // Not opaque, though the screenshot covers every pixel: an opaque window occludes the
-            // apps under it, and many (web views, Electron, terminals) stop drawing while occluded,
-            // then show a stale, blurred frame for a moment when it goes.
-            window_background: WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        };
         let o = overlay.clone();
-        let opened = cx.open_window(options, move |window, cx| {
+        let opened = cx.open_window(screen_options(display_id, (w, h)), move |window, cx| {
             let (number, view_pointer) = native::make_overlay(window, frame);
             let view = cx.new(|cx| ScreenView::new(o.clone(), i, cx));
             let focus = view.read(cx).focus_handle();
@@ -119,6 +185,27 @@ fn open_screens(overlay: &Entity<Overlay>, cx: &mut App) {
             Err(err) => eprintln!("asides-overlay: no window for screen {i}: {err:#}"),
         }
     }
+    // The screens changed since they were opened.
+    for spare in spares {
+        let _ = spare.handle.update(cx, |_, window, _| window.remove_window());
+    }
+}
+
+/// Makes a spare window screen `i`'s; false if it's gone.
+fn take_spare(overlay: &Entity<Overlay>, i: usize, spare: Spare, cx: &mut App) -> bool {
+    let o = overlay.clone();
+    let focus = spare.handle.update(cx, |_, window, cx| {
+        let view = window.replace_root(cx, |_, cx| ScreenView::new(o, i, cx));
+        let focus = view.read(cx).focus_handle();
+        window.focus(&focus);
+        focus
+    });
+    let Ok(focus) = focus else { return false };
+    overlay.update(cx, |o, _| {
+        let w = &mut o.windows[i];
+        (w.handle, w.focus, w.number, w.view) = (Some(spare.handle), Some(focus), spare.number, spare.view);
+    });
+    true
 }
 
 /// Where the live toolbar's window goes on `screen`, `w` × `h`: where the user put the toolbar, below
