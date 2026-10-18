@@ -1,4 +1,5 @@
-//! `state.json`: what the running app publishes for the CLI (`asides status`, bind confirmation).
+//! `state.json`: what the running app publishes for the CLI (`asides status`, `asides sessions`) and
+//! the Asides window, and what it keeps between launches.
 
 use std::fs;
 use std::io;
@@ -6,14 +7,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::sessions::AgentSession;
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppState {
     pub pid: u32,
-    pub bound_dir: Option<PathBuf>,
-    /// Set by `asides new [TITLE]`: the next recording starts a new note.
-    pub pending_new: Option<PendingNew>,
-    /// `idle`, `recording`, `transcribing`, `downloading`, `error`.
+    /// `idle`, `open` (Asides is on screen), `recording`, `transcribing`, `sending`,
+    /// `downloading`, `error`.
     pub status: String,
     /// Human-readable detail, e.g. the download progress or the last error.
     pub detail: Option<String>,
@@ -21,60 +22,36 @@ pub struct AppState {
     pub microphone: String,
     /// Echo of the `req` parameter of the last link the app handled.
     pub last_request: Option<String>,
-    /// Directories bound recently, most recent first (shown in the menu for quick switching).
+    /// The agent sessions running, as the app last found them (`sessions::discover`).
+    pub sessions: Vec<AgentSession>,
+    /// The session the user picked last (its id), which stays the target while it runs.
+    pub target: Option<String>,
+    /// Folders where the user sent asides or started sessions, most recent first (New session in…).
     pub recent_dirs: Vec<PathBuf>,
-    /// The last Send to Agent in each directory, newest first. Agents listening in batch mode
-    /// deliver everything up to the newest; an agent that starts listening in a directory begins
-    /// its first batch after that directory's last one.
-    pub agent_sends: Vec<AgentSend>,
-    /// The session the user's asides go to (`sessions::Session`); `None` for Notes Only.
-    pub target_session: Option<String>,
+    /// The id of the last aside, and whether it got to its session.
+    pub last_aside: Option<String>,
+    /// The speech model is on disk (asides can listen).
+    pub model_ready: bool,
+    /// The microphones (input devices), for the window's settings.
+    pub input_devices: Vec<String>,
     /// The user declined to put the `asides` command in /usr/local/bin; don't ask again.
     pub command_link_declined: bool,
     /// Asides showed its keys once, the first time a screen was frozen.
     pub overlay_tips_seen: bool,
-    /// Where the user put Asides' toolbar: its center, as a fraction of the screen's width and
-    /// height (`None`: at the bottom, in the middle).
-    pub toolbar_at: Option<(f64, f64)>,
-    /// The toolbar folded to its handle and microphone.
-    pub toolbar_collapsed: bool,
+    /// Where the user put Asides' pill: its center, as a fraction of the screen's width and height
+    /// (`None`: at the top, in the middle).
+    pub pill_at: Option<(f64, f64)>,
     pub updated_ms: u64,
 }
 
-/// The end of a batch: the entries of `dir`'s notes up to entry `entry` of `note` (a note
-/// folder), all of them transcribed by the time it was published.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AgentSend {
-    /// Milliseconds since the Unix epoch; tells one send from the next, across app restarts.
-    pub at_ms: u64,
-    pub dir: PathBuf,
-    pub note: Option<PathBuf>,
-    pub entry: u32,
-    /// The session it was sent to; `None` (sends from older versions) means every agent there.
-    pub session: Option<String>,
-}
-
-/// How many directories the menu offers for quick switching.
-pub const MAX_RECENT_DIRS: usize = 8;
-
-/// Puts `send` first in `sends`, replacing its directory's previous one, within the limit.
-pub fn remember_send(sends: &mut Vec<AgentSend>, send: AgentSend) {
-    sends.retain(|s| s.dir != send.dir);
-    sends.insert(0, send);
-    sends.truncate(MAX_RECENT_DIRS);
-}
+/// How many folders New session in… offers.
+pub const MAX_RECENT_DIRS: usize = 10;
 
 /// Moves `dir` to the front of `recent`, dropping duplicates and the oldest beyond the limit.
 pub fn remember_dir(recent: &mut Vec<PathBuf>, dir: &Path) {
     recent.retain(|d| d != dir);
     recent.insert(0, dir.to_path_buf());
     recent.truncate(MAX_RECENT_DIRS);
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct PendingNew {
-    pub title: Option<String>,
 }
 
 impl AppState {
@@ -104,19 +81,11 @@ mod tests {
         assert_eq!(AppState::read(&path), None);
         let state = AppState {
             pid: 42,
-            bound_dir: Some("/x".into()),
-            pending_new: Some(PendingNew { title: Some("T".into()) }),
             status: "idle".into(),
             last_request: Some("abc".into()),
             recent_dirs: vec!["/x".into(), "/y".into()],
-            agent_sends: vec![AgentSend {
-                at_ms: 7,
-                dir: "/x".into(),
-                note: Some("/x/.asides/n".into()),
-                entry: 3,
-                session: Some("s1".into()),
-            }],
-            target_session: Some("s1".into()),
+            target: Some("123".into()),
+            pill_at: Some((0.5, 0.1)),
             ..Default::default()
         };
         state.write(&path).unwrap();
@@ -127,32 +96,17 @@ mod tests {
     fn older_state_files_still_load() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("state.json");
-        fs::write(&path, r#"{"pid": 1, "status": "idle"}"#).unwrap();
+        fs::write(&path, r#"{"pid": 1, "status": "idle", "bound_dir": "/x", "agent_sends": []}"#).unwrap();
         let state = AppState::read(&path).unwrap();
-        assert_eq!((state.recent_dirs, state.agent_sends), (Vec::<PathBuf>::new(), Vec::new()));
+        assert_eq!((state.pid, state.recent_dirs), (1, Vec::<PathBuf>::new()));
     }
 
     #[test]
-    fn remembers_the_last_send_in_each_dir() {
-        let send = |at_ms, dir: &str| AgentSend { at_ms, dir: dir.into(), ..Default::default() };
-        let mut sends = Vec::new();
-        for (at, dir) in [(1, "/a"), (2, "/b"), (3, "/a")] {
-            remember_send(&mut sends, send(at, dir));
-        }
-        assert_eq!(sends, [send(3, "/a"), send(2, "/b")]);
-    }
-
-    #[test]
-    fn remembers_recent_dirs_newest_first() {
+    fn remembers_recent_dirs() {
         let mut recent = Vec::new();
-        for d in ["/a", "/b", "/a", "/c"] {
-            remember_dir(&mut recent, Path::new(d));
+        for dir in ["/a", "/b", "/a"] {
+            remember_dir(&mut recent, Path::new(dir));
         }
-        assert_eq!(recent, [PathBuf::from("/c"), "/a".into(), "/b".into()]);
-        for i in 0..20 {
-            remember_dir(&mut recent, Path::new(&format!("/d{i}")));
-        }
-        assert_eq!(recent.len(), MAX_RECENT_DIRS);
-        assert_eq!(recent[0], PathBuf::from("/d19"));
+        assert_eq!(recent, [PathBuf::from("/a"), PathBuf::from("/b")]);
     }
 }

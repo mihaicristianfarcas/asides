@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "Asides";
 pub const BUNDLE_ID: &str = "io.github.mihaicristianfarcas.asides";
 pub const URL_SCHEME: &str = "asides";
-/// Folder created inside the bound directory that holds one sub-folder per note.
-pub const NOTES_DIR: &str = ".asides";
-pub const NOTE_FILE: &str = "notes.md";
 
 /// `~/Library/Application Support/Asides`
 pub fn support_dir() -> PathBuf {
@@ -24,14 +21,9 @@ pub fn models_dir() -> PathBuf {
     support_dir().join("models")
 }
 
-/// One record per agent session listening through `asides mcp` (see `listening::Listener`).
-pub fn listeners_dir() -> PathBuf {
-    support_dir().join("listeners")
-}
-
-/// One record per agent session (see `sessions::Session`).
-pub fn sessions_dir() -> PathBuf {
-    support_dir().join("sessions")
+/// Launch scripts for new sessions (each removes itself once it runs).
+pub fn launch_dir() -> PathBuf {
+    std::env::temp_dir().join("asides-sessions")
 }
 
 /// `/Users/me/code/shop` → `~/code/shop`.

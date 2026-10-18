@@ -107,12 +107,6 @@ pub fn request_trust() -> bool {
     unsafe { AXIsProcessTrustedWithOptions(Retained::as_ptr(&options).cast()) != 0 }
 }
 
-pub fn open_settings() {
-    let _ = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-        .spawn();
-}
-
 /// What's at the global point `(x, y)`: the window (always), and with `deep` (and the permission)
 /// the element under it, its frame in global points.
 pub fn identify(windows: &[WindowInfo], x: f64, y: f64, deep: bool) -> Option<Element> {

@@ -9,16 +9,10 @@ use global_hotkey::hotkey::HotKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// Opens Asides; while it's open, a tap adds it all to the aside and a hold talks.
+    /// Opens Asides frozen; while it's open, sends the aside.
     Asides,
-    /// The same, into a new note.
-    NewNote,
-    AttachImage,
-    SendToAgent,
-    /// Freezes the screen, or goes back to live.
+    /// Freezes the screen, or goes back to live; closed, opens Asides live.
     Freeze,
-    /// Switch the target to the next agent session.
-    NextTarget,
 }
 
 pub struct Hotkeys {
@@ -29,32 +23,21 @@ pub struct Hotkeys {
 }
 
 impl Hotkeys {
-    pub fn new(shortcuts: &Shortcuts, send: bool, sessions: bool) -> anyhow::Result<Hotkeys> {
+    pub fn new(shortcuts: &Shortcuts) -> anyhow::Result<Hotkeys> {
         let mut hotkeys = Hotkeys { manager: GlobalHotKeyManager::new()?, bindings: Vec::new(), errors: Vec::new() };
-        hotkeys.apply(shortcuts, send, sessions);
+        hotkeys.apply(shortcuts);
         Ok(hotkeys)
     }
 
-    /// (Re)registers all shortcuts: Send to Agent only with `send` (batch delivery), and
-    /// switching sessions only while there are `sessions`, so those shortcuts stay free for other
-    /// apps otherwise.
-    pub fn apply(&mut self, shortcuts: &Shortcuts, send: bool, sessions: bool) {
+    /// (Re)registers the shortcuts.
+    pub fn apply(&mut self, shortcuts: &Shortcuts) {
         for (hotkey, _) in self.bindings.drain(..) {
             let _ = self.manager.unregister(hotkey);
         }
         self.errors.clear();
-        let send = send.then_some((&shortcuts.send_to_agent, Action::SendToAgent));
-        let next = sessions.then_some((&shortcuts.next_target, Action::NextTarget));
-        for (text, action) in [
-            (&shortcuts.asides, Action::Asides),
-            (&shortcuts.new_note, Action::NewNote),
-            (&shortcuts.attach_image, Action::AttachImage),
-            (&shortcuts.freeze, Action::Freeze),
-        ]
-        .into_iter()
-        .chain(send)
-        .chain(next)
-        .filter(|(text, _)| !text.trim().is_empty())
+        for (text, action) in [(&shortcuts.asides, Action::Asides), (&shortcuts.freeze, Action::Freeze)]
+            .into_iter()
+            .filter(|(text, _)| !text.trim().is_empty())
         {
             match HotKey::from_str(text) {
                 Ok(hotkey) => match self.manager.register(hotkey) {

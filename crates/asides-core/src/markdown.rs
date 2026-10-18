@@ -66,7 +66,16 @@ pub fn compose_entry(
     if let Some(audio) = audio_rel_path {
         heading.push_str(&format!(" · [audio]({audio})"));
     }
-    let mut blocks = Blocks::new(heading);
+    compose(Blocks::new(heading), segments, attachments)
+}
+
+/// An aside's message: the verbatim transcript, with what was attached (screenshots, annotations,
+/// measurements) where it was made, as in [`compose_entry`] but without a heading.
+pub fn compose_message(segments: &[Segment], attachments: &[Attachment]) -> String {
+    compose(Blocks { list: Vec::new(), attached: false }, segments, attachments)
+}
+
+fn compose(mut blocks: Blocks, segments: &[Segment], attachments: &[Attachment]) -> String {
     let mut attachments: Vec<&Attachment> = attachments.iter().collect();
     attachments.sort_by(|a, b| a.offset.total_cmp(&b.offset));
     let mut pending = attachments.into_iter().peekable();
@@ -152,6 +161,45 @@ impl Blocks {
         }
         self.attached = true;
     }
+}
+
+/// A message as it's typed into an agent's session: text, and screenshots (their paths) where they
+/// were made.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Part {
+    Text(String),
+    Image(String),
+}
+
+/// Splits a message into its text and its images (lines that are only `![label](path)`), in order.
+pub fn message_parts(message: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    let mut text: Vec<&str> = Vec::new();
+    let flush = |text: &mut Vec<&str>, parts: &mut Vec<Part>| {
+        let joined = text.join("\n");
+        let joined = joined.trim_matches('\n');
+        if !joined.trim().is_empty() {
+            parts.push(Part::Text(joined.to_string()));
+        }
+        text.clear();
+    };
+    for line in message.lines() {
+        let image = line
+            .trim()
+            .strip_prefix("![")
+            .and_then(|rest| rest.split_once("]("))
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .filter(|path| !path.is_empty() && !path.contains(' '));
+        match image {
+            Some(path) => {
+                flush(&mut text, &mut parts);
+                parts.push(Part::Image(path.to_string()));
+            }
+            None => text.push(line),
+        }
+    }
+    flush(&mut text, &mut parts);
+    parts
 }
 
 /// `## 6 · 14:40 · Wispr Flow` followed by text another app transcribed, exactly as it came.
@@ -259,6 +307,28 @@ mod tests {
             compose_dictation_entry(6, "14:40", "Wispr Flow", "\nThe card needs padding.\n\nAnd a border.\n"),
             "## 6 · 14:40 · Wispr Flow\n\nThe card needs padding.\n\nAnd a border."
         );
+    }
+
+    #[test]
+    fn messages_have_no_heading_and_split_into_text_and_images() {
+        let segments = [seg(0.0, 2.0, "This one."), seg(5.0, 7.0, "Too much padding.")];
+        let shot =
+            Attachment { offset: 1.0, rel_path: "images/1.png".into(), label: "Screenshot 1".into(), text: None };
+        let message = compose_message(&segments, &[shot]);
+        assert_eq!(message, "This one.\n\n![Screenshot 1](images/1.png)\n\nToo much padding.");
+        assert_eq!(
+            message_parts(&message),
+            [
+                Part::Text("This one.".into()),
+                Part::Image("images/1.png".into()),
+                Part::Text("Too much padding.".into())
+            ]
+        );
+        assert_eq!(
+            message_parts("![a](x.png)\n![b](y.png)"),
+            [Part::Image("x.png".into()), Part::Image("y.png".into())]
+        );
+        assert_eq!(message_parts("Look at ![this](x.png) here"), [Part::Text("Look at ![this](x.png) here".into())]);
     }
 
     #[test]

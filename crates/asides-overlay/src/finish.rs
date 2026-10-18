@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use asides_core::helper::{Item, Outcome, RESULT, Spec};
+use asides_core::helper::{Item, Outcome, RESULT, Spec, Target};
 use asides_core::overlay::{Saved, Session, markdown};
 
 use crate::export::{self, Exporter};
@@ -55,8 +55,8 @@ pub fn items(
     Ok(items)
 }
 
-pub fn outcome(items: Vec<Item>, saved: Saved, send: bool) -> Outcome {
-    Outcome { send, saved, items }
+pub fn outcome(items: Vec<Item>, saved: Saved, target: Option<Target>) -> Outcome {
+    Outcome { target, saved, items }
 }
 
 pub fn write(dir: &Path, outcome: &Outcome) -> anyhow::Result<()> {

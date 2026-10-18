@@ -1,4 +1,4 @@
-//! The toolbar's icons (24 × 24, drawn as masks in the text color).
+//! The pill's and the menus' icons (24 × 24, drawn as masks in the text color).
 
 use std::borrow::Cow;
 
@@ -62,6 +62,19 @@ const ICONS: &[(&str, &str)] = &[
     ("unfold", icon(r#"<path d="M9.5 6.5 15 12l-5.5 5.5"/>"#)),
     ("live", icon(r#"<path d="M8 5.5v13L18.5 12z"/>"#)),
     ("pause", icon(r#"<path d="M9 6v12M15 6v12"/>"#)),
+    (
+        "mic-off",
+        icon(
+            r#"<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M4 4l16 16"/>"#,
+        ),
+    ),
+    ("chevron", icon(r#"<path d="M7 10l5 5 5-5"/>"#)),
+    (
+        "folder",
+        icon(
+            r#"<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>"#,
+        ),
+    ),
     ("trash", icon(r#"<path d="M4.5 7h15M9.5 7V5h5v2M6.5 7l1 12.5h9l1-12.5"/><path d="M10.5 10.5v6M13.5 10.5v6"/>"#)),
 ];
 

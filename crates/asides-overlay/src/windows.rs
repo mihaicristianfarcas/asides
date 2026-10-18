@@ -20,8 +20,6 @@ use crate::ui::{Overlay, ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView};
 
 /// The live toolbar's window before it's drawn (it then fits the toolbar).
 const TOOLBAR_GUESS: (f64, f64) = (420.0, 56.0);
-/// The live toolbar's default place: this far above the bottom of the screen's visible part.
-pub const TOOLBAR_LIFT: f64 = 18.0;
 /// Back in front, an app redraws as the active one (macOS draws one in the background
 /// differently): the frozen screens stay up this much longer...
 const HANDOFF_SETTLE: Duration = Duration::from_millis(50);
@@ -208,10 +206,9 @@ fn take_spare(overlay: &Entity<Overlay>, i: usize, spare: Spare, cx: &mut App) -
     true
 }
 
-/// Where the live toolbar's window goes on `screen`, `w` × `h`: where the user put the toolbar, below
-/// the menu bar, or at the bottom in the middle, `lift` above the screen's bottom edge (the Dock's
-/// height, when it shows) (AppKit's coordinates).
-fn toolbar_frame(screen: &SpecScreen, at: Option<(f64, f64)>, lift: f64, (w, h): (f64, f64)) -> PtRect {
+/// Where the live pill's window goes on `screen`, `w` × `h`: where the user put the pill, below the
+/// menu bar, or at the top in the middle, just below the menu bar (AppKit's coordinates).
+fn toolbar_frame(screen: &SpecScreen, at: Option<(f64, f64)>, (w, h): (f64, f64)) -> PtRect {
     let f = screen.frame;
     match at {
         Some((fx, fy)) => {
@@ -220,7 +217,12 @@ fn toolbar_frame(screen: &SpecScreen, at: Option<(f64, f64)>, lift: f64, (w, h):
             let y = (top - h).clamp(f.y, (below_menu_bar(screen) - h).max(f.y));
             PtRect::new(x, y, w, h)
         }
-        None => PtRect::new(f.x + (f.width - w) / 2.0, f.y + lift + TOOLBAR_LIFT - TOOLBAR_MARGIN, w, h),
+        None => PtRect::new(
+            f.x + (f.width - w) / 2.0,
+            below_menu_bar(screen) - crate::ui::PILL_TOP - h + 2.0 * TOOLBAR_MARGIN,
+            w,
+            h,
+        ),
     }
 }
 
@@ -239,8 +241,7 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
     };
     let Some(index) = pointer_screen(&spec.screens).or((!spec.screens.is_empty()).then_some(0)) else { return };
     let screen = &spec.screens[index];
-    let lift = overlay.read(cx).lift(index);
-    let frame = toolbar_frame(screen, at, lift, TOOLBAR_GUESS);
+    let frame = toolbar_frame(screen, at, TOOLBAR_GUESS);
     let display_id = cx.displays().into_iter().find(|d| u32::from(d.id()) == screen.display).map(|d| d.id());
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -543,10 +544,9 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
     if let Some((w, h)) = fits
         && ((w - f.width).abs() > 0.5 || (h - f.height).abs() > 0.5)
     {
-        // Its top-left corner stays, or, where it was never moved, its bottom middle.
-        if placed {
-            f.y += f.height - h;
-        } else {
+        // Its top-left corner stays, or, where it was never moved, its top middle: it grows down.
+        f.y += f.height - h;
+        if !placed {
             f.x += (f.width - w) / 2.0;
         }
         (f.width, f.height) = (w, h);

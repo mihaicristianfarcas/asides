@@ -1,21 +1,15 @@
-//! Starting agent sessions from the menu: in a terminal window running a script (no Automation
-//! permission), or in the background through the user's login shell. Either way the work is
-//! `asides <agent>`'s, the CLI in the bundle.
-//!
-//! Terminal (the default) and iTerm run a `.command` script they're asked to open, as when it's
-//! double-clicked, in a new window. A running Ghostty opens it in a new tab of its front window,
-//! through AppleScript: macOS asks the user once whether Asides may control Ghostty. Otherwise (it
-//! isn't running, or the user said no) Ghostty is started as a process of its own with the script as
-//! its initial command, since it asks before it runs a script it's asked to open, and that process
-//! quits when its window closes. Diri runs it as a session in its window, through its CLI
-//! (`dirijor session run`).
+//! Typing asides into agent sessions (a `deliver::plan`'s steps: `dirijor`, AppleScript, the
+//! clipboard), and starting new sessions: a script that runs the agent with the aside as its first
+//! message, in a new window of Terminal (the default) or Ghostty, typed into the user's own shell, or
+//! as a session of Diri. Always off the main thread: an AppleScript waits for the user to say whether
+//! Asides may control that app (the first time), up to two minutes.
 //!
 //! The app is launched by Launch Services with a bare PATH, so the agents (installed with npm,
-//! Homebrew, their own installers) are found and run through the user's login shell, which has
-//! the PATH their terminal has.
+//! Homebrew, their own installers) are found through the user's login shell, which has the PATH
+//! their terminal has.
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -23,103 +17,143 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use asides_core::agents::AgentKind;
+use asides_core::deliver::{self, Step};
+use asides_core::sessions::Host;
 
-/// The apps sessions can open in, as the menu offers them (when installed). Terminal is the
-/// default; `[agents] terminal` can also name another app that runs `.command` scripts.
-pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "iTerm", "Diri"];
+use crate::clipboard;
+
 /// How long the login shell may take to say which agents are installed.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
-/// Opens a command in a new tab of the front window of a running Ghostty (or a window, when it has
-/// none). Says "not running" instead of starting Ghostty, which would open a window of its own too.
-const GHOSTTY_TAB: &str = r#"on run {dir, cmd}
-	if not (application id "com.mitchellh.ghostty" is running) then return "not running"
-	tell application id "com.mitchellh.ghostty"
-		set surface to new surface configuration
-		set initial working directory of surface to dir
-		set command of surface to cmd
-		if (count of windows) is 0 then
-			new window with configuration surface
-		else
-			new tab in front window with configuration surface
-		end if
-		activate
-	end tell
-	return "tab"
-end run"#;
-
-/// The `asides` CLI that ships with this app: in the bundle's Helpers, or beside the binary in a
-/// build folder.
-pub fn cli() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    [dir.join("../Helpers/asides"), dir.join("asides")]
-        .into_iter()
-        .find(|p| p.is_file())
-        .and_then(|p| p.canonicalize().ok())
-}
-
-/// `command` (which runs the bundled CLI) with its links sent back to this copy of the app: Launch
-/// Services could otherwise pick another copy with the same bundle ID (a release and a build).
-pub fn from_this_app(command: &str) -> String {
-    let bundle = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
-    match bundle.filter(|b| b.extension().is_some_and(|e| e == "app")) {
-        Some(bundle) => format!("ASIDES_APP={} {command}", quote(&bundle.to_string_lossy())),
-        None => command.to_string(),
-    }
-}
+/// How long an AppleScript may run: the first, the user answers whether Asides may control the app.
+const SCRIPT_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// The app sessions open in: the configured one, or Terminal.
 pub fn app(configured: &str) -> String {
     match configured.trim() {
         "" => "Terminal".into(),
-        name => name.into(),
+        name => deliver::TERMINALS
+            .iter()
+            .find(|t| t.eq_ignore_ascii_case(name))
+            .map_or("Terminal".into(), |t| t.to_string()),
     }
 }
 
-/// The apps of [`TERMINALS`] that are installed, for the menu.
-pub fn installed() -> Vec<String> {
-    TERMINALS.iter().filter(|name| bundle(name).is_some()).map(|name| name.to_string()).collect()
+/// Diri's command (`dirijor`), in its bundle.
+pub fn dirijor() -> PathBuf {
+    deliver::app_bundle("Diri")
+        .map(|app| app.join("Contents/Resources/bin/dirijor"))
+        .unwrap_or_else(|| "dirijor".into())
 }
 
-/// Where the app `name` is installed (names match ignoring case, as the file system does).
-fn bundle(name: &str) -> Option<PathBuf> {
-    let home = std::env::home_dir().unwrap_or_default();
-    [PathBuf::from("/Applications"), home.join("Applications"), "/System/Applications/Utilities".into()]
-        .into_iter()
-        .map(|dir| dir.join(format!("{name}.app")))
-        .find(|app| app.exists())
+/// Runs a delivery plan's steps, in order. The clipboard, if a step used it, is put back even when a
+/// step fails.
+pub fn run_steps(steps: &[Step]) -> Result<()> {
+    let mut kept: Option<clipboard::Snapshot> = None;
+    let result = steps.iter().try_for_each(|step| run_step(step, &mut kept));
+    if let Some(snapshot) = kept {
+        clipboard::restore(&snapshot);
+    }
+    result
 }
 
-/// Opens a window (or, in Diri, a session titled `title`) of `terminal` in `dir`, running
-/// `command` (a shell command line) in the user's login shell. When it ends, a shell stays there.
-pub fn open(terminal: &str, dir: &Path, command: &str, title: &str) -> Result<()> {
-    let scripts = std::env::temp_dir().join("asides-sessions");
-    fs::create_dir_all(&scripts)?;
-    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let script = scripts.join(format!("{}-{}.command", safe(&name), now_ms()));
-    // Ghostty runs it directly, not through the login shell: the shell runs the command, for PATH.
-    let then = format!("{command}; exec \"${{SHELL:-/bin/zsh}}\" -l");
-    let body = format!(
-        "#!/bin/sh\n# Started by Asides: {command}\nrm -f \"$0\"\ncd {} || exit 1\nexec \"${{SHELL:-/bin/zsh}}\" -ilc {}\n",
-        quote(&dir.to_string_lossy()),
-        quote(&then)
-    );
-    fs::write(&script, body)?;
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
-    let mut open = Command::new("open");
-    match terminal.to_ascii_lowercase().as_str() {
-        "ghostty" => {
-            if ghostty_tab(dir, &script) {
-                return Ok(());
+fn run_step(step: &Step, kept: &mut Option<clipboard::Snapshot>) -> Result<()> {
+    match step {
+        Step::Run { program, args, stdin } => {
+            let mut child = Command::new(program)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .with_context(|| format!("could not run {}", program.display()))?;
+            if let Some(text) = stdin {
+                child.stdin.take().context("no stdin")?.write_all(text.as_bytes())?;
             }
-            // As an option, not a bare path: AppKit would also open a path argument as a document.
-            let initial = format!("--initial-command={}", script.display());
-            open.args(["-na", terminal, "--args", "--quit-after-last-window-closed=true", &initial]);
+            drop(child.stdin.take());
+            let out = child.wait_with_output()?;
+            if !out.status.success() {
+                bail!("{}", last_line(&out.stderr, "it failed"));
+            }
         }
-        "diri" => {
-            let app = bundle(terminal).context("Diri isn't installed")?;
-            let out = Command::new(app.join("Contents/Resources/bin/dirijor"))
-                .args(["session", "run", "--title", title, "--cwd"])
+        Step::Script(script) => applescript(script)?,
+        Step::ClipboardImage(path) => {
+            if kept.is_none() {
+                *kept = Some(clipboard::snapshot());
+            }
+            clipboard::put_png(&fs::read(path).with_context(|| format!("could not read {}", path.display()))?);
+        }
+        Step::RestoreClipboard => {
+            if let Some(snapshot) = kept.take() {
+                clipboard::restore(&snapshot);
+            }
+        }
+        Step::Wait(duration) => std::thread::sleep(*duration),
+    }
+    Ok(())
+}
+
+/// Runs an AppleScript (its source on standard input), and says what went wrong.
+fn applescript(script: &str) -> Result<()> {
+    let mut child = Command::new("/usr/bin/osascript")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not run osascript")?;
+    child.stdin.take().context("no stdin")?.write_all(script.as_bytes())?;
+    let started = Instant::now();
+    while child.try_wait()?.is_none() {
+        if started.elapsed() > SCRIPT_TIMEOUT {
+            let _ = child.kill();
+            bail!(
+                "macOS didn't let Asides control the app in time (System Settings → Privacy & Security → Automation)"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = child.wait_with_output()?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("-1743") || err.contains("Not authorized") {
+            bail!("Asides may not control that app: allow it in System Settings → Privacy & Security → Automation");
+        }
+        // `… execution error: Couldn't find its tab in Terminal. (-2700)`
+        let line = last_line(&out.stderr, "the AppleScript failed");
+        let message = line.split("execution error: ").nth(1).unwrap_or(&line);
+        bail!("{}", message.split(" (-").next().unwrap_or(message).trim());
+    }
+    Ok(())
+}
+
+fn last_line(bytes: &[u8], otherwise: &str) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(otherwise).trim().to_string()
+}
+
+/// Starts `agent` in `dir` in `terminal` ("Terminal", "Ghostty" or "Diri") with `message` as its
+/// first message; `readable`: folders it may read without asking (the aside's screenshots).
+/// Returns the launch's id (`ASIDES_LAUNCH` in the agent's environment).
+pub fn start_session(
+    terminal: &str,
+    agent: AgentKind,
+    dir: &Path,
+    message: &str,
+    extra: &[String],
+    readable: &[PathBuf],
+) -> Result<String> {
+    let scripts = asides_core::paths::launch_dir();
+    fs::create_dir_all(&scripts)?;
+    let launch = format!("{}-{}", agent.program(), now_ms());
+    let script = scripts.join(format!("{launch}.sh"));
+    fs::write(&script, deliver::launch_script(agent, dir, message, extra, &launch, readable))?;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
+    let line = deliver::launch_line(&script);
+    let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match app(terminal).as_str() {
+        "Diri" => {
+            let out = Command::new(dirijor())
+                .args(["session", "run", "--title", &format!("{} · {name}", agent.name()), "--cwd"])
                 .arg(dir)
                 .args(["--", "/bin/sh"])
                 .arg(&script)
@@ -127,47 +161,24 @@ pub fn open(terminal: &str, dir: &Path, command: &str, title: &str) -> Result<()
                 .context("could not run Diri's dirijor")?;
             if !out.status.success() {
                 let _ = fs::remove_file(&script);
-                bail!("Diri didn't start the session: {}", String::from_utf8_lossy(&out.stderr).trim());
+                bail!("Diri didn't start the session: {}", last_line(&out.stderr, "it failed"));
             }
-            // Bring it forward, where the new session is.
-            open.arg(app);
+            let _ = Command::new("open").args(["-a", "Diri"]).status();
         }
-        _ => {
-            open.arg("-a").arg(terminal).arg(&script);
+        other => {
+            let host = if other == "Ghostty" { Host::Ghostty } else { Host::Terminal };
+            let script_source = deliver::open_terminal_script(&host, dir, &line).context("no way to open it")?;
+            if let Err(err) = applescript(&script_source) {
+                let _ = fs::remove_file(&script);
+                return Err(err);
+            }
+            let _ = Command::new("open").args(["-a", other]).status();
         }
     }
-    let out = open.output()?;
-    if !out.status.success() {
-        let _ = fs::remove_file(&script);
-        bail!(
-            "{terminal} didn't open ({}). Set [agents] terminal in the settings",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
+    Ok(launch)
 }
 
-/// Whether a running Ghostty opened `script` in a new tab: not when it isn't running, or when the
-/// user didn't let Asides control it (the first time, this waits for their answer).
-fn ghostty_tab(dir: &Path, script: &Path) -> bool {
-    let out = Command::new("osascript").args(["-e", GHOSTTY_TAB]).arg(dir).arg(script).stdin(Stdio::null()).output();
-    out.is_ok_and(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "tab")
-}
-
-/// Runs `command` in the user's login shell and returns its output, or what went wrong.
-pub fn run(command: &str) -> Result<String> {
-    let out = login_shell(command).output().context("could not start the login shell")?;
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("it failed");
-        bail!("{}", last.trim().trim_start_matches("asides: "));
-    }
-    Ok(text)
-}
-
-/// The agents installed for the user: programs on their login shell's PATH (`command -v` would
-/// report an alias, which `asides <agent>` doesn't run).
+/// The agents installed for the user: programs on their login shell's PATH.
 pub fn installed_agents() -> Vec<AgentKind> {
     let mut child = match login_shell("printf '%s' \"$PATH\"").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(child) => child,
@@ -202,20 +213,6 @@ fn login_shell(command: &str) -> Command {
     process
 }
 
-/// `text` as one shell word.
-pub fn quote(text: &str) -> String {
-    if !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+@%=:,".contains(c)) {
-        text.to_string()
-    } else {
-        format!("'{}'", text.replace('\'', r"'\''"))
-    }
-}
-
-fn safe(name: &str) -> String {
-    let name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' }).collect();
-    if name.is_empty() { "session".into() } else { name }
-}
-
 fn now_ms() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
 }
@@ -225,27 +222,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quotes_and_names_safely() {
-        assert_eq!(quote("/Users/sam/My Repo"), "'/Users/sam/My Repo'");
-        assert_eq!(quote("plain/path"), "plain/path");
-        assert_eq!(safe("my shop!"), "my-shop-");
-        assert_eq!(safe(""), "session");
-        assert_eq!(app(" Warp "), "Warp");
+    fn names_the_terminal_apps() {
+        assert_eq!(app(" ghostty "), "Ghostty");
         assert_eq!(app(""), "Terminal");
-        assert!(installed().contains(&"Terminal".to_string()));
+        assert_eq!(app("Warp"), "Terminal", "only apps Asides can type into");
+        assert!(deliver::installed_terminals().contains(&"Terminal"));
     }
 
-    /// Opens a real terminal window, as New Agent Session does: run with `--ignored`, with
-    /// ASIDES_TERMINAL_DIR and ASIDES_TERMINAL_COMMAND set (and ASIDES_TERMINAL to pick the app).
     #[test]
-    #[ignore]
-    fn opens_a_terminal() {
-        let (Ok(dir), Ok(command)) = (std::env::var("ASIDES_TERMINAL_DIR"), std::env::var("ASIDES_TERMINAL_COMMAND"))
-        else {
-            return;
+    fn runs_steps_and_says_what_failed() {
+        let ok = Step::Run {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "cat >/dev/null".into()],
+            stdin: Some("hi".into()),
         };
-        let terminal = app(&std::env::var("ASIDES_TERMINAL").unwrap_or_default());
-        open(&terminal, Path::new(&dir), &command, "asides test").unwrap();
+        run_steps(&[ok, Step::Wait(Duration::from_millis(1))]).unwrap();
+        let fail = Step::Run {
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), "echo nope >&2; exit 3".into()],
+            stdin: None,
+        };
+        assert_eq!(run_steps(&[fail]).unwrap_err().to_string(), "nope");
     }
 
     #[test]

@@ -1,213 +1,145 @@
-mod codex;
-mod listen;
 mod mcp;
 mod measure;
-mod opencode;
-mod session;
-mod start;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command as Process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
-use asides_core::agents::AgentKind;
-use asides_core::config::{AgentDelivery, Config, pretty_shortcut};
-use asides_core::launch;
+use asides_core::config::{Config, pretty_shortcut};
+use asides_core::history::{self, Aside};
 use asides_core::link::Link;
-use asides_core::listening::Listener;
-use asides_core::notes::{self, Note};
+use asides_core::markdown::Part;
 use asides_core::paths::{self, BUNDLE_ID, tilde};
-use asides_core::project;
-use asides_core::sessions::{self, Session};
+use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
-use clap::{Args, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
-/// Talk through bugs while you test; Asides appends what you said to a Markdown note in this repo.
+/// Asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.
 ///
-/// Run `asides` in a repo (or any directory) to bind the menu-bar app to it, then use the
-/// global shortcuts while testing. Notes live in `<repo>/.asides/`. Run `asides claude` (or
-/// `codex`, `opencode`, `gemini`, `copilot`, `qwen`) to start a coding agent there that acts on
-/// each aside.
+/// `⌃⌥Space` opens Asides over any app: click to pin an element, drag an area, talk, and press
+/// `⌃⌥Space` again. The aside is typed into the agent session you last typed into (Claude Code,
+/// Codex, OpenCode… in Terminal, Ghostty or Diri), as your own message, and kept in
+/// ~/.asides/history. Run `asides` to open the Asides window.
 #[derive(Parser)]
 #[command(name = "asides", version)]
 struct Cli {
-    /// Run as if asides was started in DIR (like `git -C`).
-    #[arg(short = 'C', global = true, value_name = "DIR")]
-    dir: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
-    /// Start Claude Code here, listening for your asides: each one you record goes to it.
-    Claude(StartArgs),
-    /// Start Codex here, listening for your asides: each one you record goes to it.
-    Codex(StartArgs),
-    /// Start OpenCode here, listening for your asides: each one you record goes to it.
-    Opencode(StartArgs),
-    /// Start Gemini CLI here, listening for your asides: each one you record goes to it.
-    Gemini(StartArgs),
-    /// Start GitHub Copilot CLI here, listening for your asides: each one you record goes to it.
-    Copilot(StartArgs),
-    /// Start Qwen Code here, listening for your asides: each one you record goes to it.
-    Qwen(StartArgs),
-    /// Bind this directory; the next recording starts a new note, titled TITLE or "Untitled".
-    New { title: Vec<String> },
-    /// Print the path of the latest note in this directory.
-    Path,
-    /// Open the latest note in the default Markdown editor.
+    /// Open Asides on the screen, as ⌃⌥Space does (open, it sends the aside).
+    #[command(alias = "annotate")]
     Open,
-    /// Show what the menu-bar app is doing.
-    Status,
-    /// Zip the latest note folder (notes.md + images) for sharing.
-    Export {
-        /// Where to write the zip (default: ./<note folder>.zip).
-        #[arg(long, value_name = "FILE")]
-        out: Option<PathBuf>,
+    /// List the agent sessions Asides can send asides to (the default first).
+    Sessions {
+        #[arg(long)]
+        json: bool,
     },
+    /// List the asides in the history, newest first.
+    History {
+        /// How many.
+        #[arg(short = 'n', default_value_t = 20)]
+        count: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print an aside (the newest by default) as Markdown, with its screenshots' paths.
+    Show {
+        #[arg(default_value = "last")]
+        id: String,
+    },
+    /// Send an aside from the history (the newest by default) to a session again.
+    Send {
+        #[arg(default_value = "last")]
+        id: String,
+        /// The session (its id, from `asides sessions`), or "history"; by default the one typed
+        /// into last.
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Download the voice model (the one in the settings, or MODEL: small.en, medium.en,
+    /// large-v3-turbo…).
+    Download { model: Option<String> },
+    /// Show whether Asides is running and what it's doing.
+    Status,
     /// Quit the menu-bar app.
     Quit,
-    /// Send to Agent: hand the asides recorded so far to agents listening in batch mode.
-    Send,
-    /// Run the MCP server that hands your asides to coding agents (Claude Code, Codex, Cursor, …).
-    ///
-    /// Agents start it themselves; register it once, e.g. `claude mcp add asides -- asides mcp`.
-    Mcp {
-        /// How long a wait for asides lasts before the agent is told to call again, in seconds
-        /// (default: 25 min for Claude Code, 50 s for other agents).
-        #[arg(long, value_name = "SECONDS")]
-        timeout: Option<u64>,
-        /// The session this agent is (set by `asides claude` and the like); a new one otherwise.
-        #[arg(long, value_name = "ID")]
-        session: Option<String>,
-    },
-    /// Print your asides as they arrive, for an agent watching this command in the background.
-    ///
-    /// Claude Code runs it with its Monitor tool when you ask it to listen to your asides, so each
-    /// aside shows up in the chat while the agent stays free in between. Runs until stopped.
-    Listen {
-        /// Stop after this many seconds, printing the command that carries on from there.
-        #[arg(long, value_name = "SECONDS")]
-        timeout: Option<u64>,
-        /// Carry on from where an earlier `asides listen` stopped (the token it printed).
-        #[arg(long, value_name = "TOKEN")]
-        after: Option<String>,
-        /// The session to listen as (`asides mcp` gives it in its instructions).
-        #[arg(long, value_name = "ID")]
-        session: Option<String>,
-        /// Push the asides into this Codex thread instead of printing them (`asides codex`).
-        #[arg(long, value_name = "THREAD", hide = true, conflicts_with = "opencode_session")]
-        codex_thread: Option<String>,
-        /// Push the asides into this OpenCode session instead of printing them (`asides opencode`).
-        #[arg(long, value_name = "SESSION", hide = true)]
-        opencode_session: Option<String>,
-        /// When pushing: stop when this process (the agent's window) ends.
-        #[arg(long, value_name = "PID", hide = true)]
-        while_pid: Option<u32>,
-    },
-    /// Open Asides with the screen frozen, as its shortcut does; while it's open, add it all to the aside.
-    Annotate,
-    /// Measure a screenshot (PNG): distances from a point to the nearest edges, or the bounds of the
-    /// object inside an area, in the image's pixels.
+    /// Run the MCP server (stdio): agents can measure screenshots and read your asides.
+    Mcp,
+    /// Measure a screenshot: distances from a point to the nearest edges (X,Y), or the object
+    /// inside an area and the space around it (X,Y,W,H), in the image's pixels.
     Measure {
         image: PathBuf,
-        /// X,Y for the distances from a point, or X,Y,WIDTH,HEIGHT for the object inside an area.
+        /// X,Y or X,Y,W,H.
         target: String,
-        /// How different (in %) a color must be to count as an edge.
+        /// Edge tolerance in percent (2: faint borders count; 30: look through shadows).
         #[arg(long, default_value_t = asides_core::measure::Tolerance::DEFAULT.0)]
         tolerance: u8,
         /// Pixels per point, to also show points (2 for Retina screenshots).
         #[arg(long, default_value_t = 1.0)]
         scale: f64,
     },
-    /// Development: process a WAV file as if it had just been recorded.
+    /// Development: process a WAV file as if it had just been said.
     #[command(hide = true)]
     Simulate {
         wav: PathBuf,
         #[arg(long)]
-        new: bool,
-        #[arg(long)]
         image: Option<PathBuf>,
         #[arg(long, default_value_t = 0.0)]
         at: f32,
-        /// Said about this annotation of the open Measure & Annotate session.
+        /// Said about this annotation of the open Asides session.
         #[arg(long)]
         annotation: Option<u32>,
+        /// The session it goes to (outside Asides): its id; the history only otherwise.
+        #[arg(long)]
+        to: Option<String>,
     },
-    /// Development: run a Measure & Annotate session on an image, driven by a JSON script.
+    /// Development: run an Asides session on an image, driven by a JSON script.
     #[command(hide = true)]
-    SimulateMeasure { image: PathBuf, script: PathBuf },
-}
-
-#[derive(Args)]
-struct StartArgs {
-    /// Run in the background, without a terminal (Claude Code, Codex, OpenCode); the Asides menu's
-    /// Show opens it.
-    #[arg(long)]
-    background: bool,
-    /// Work in the repo itself even when another session already does (no git worktree).
-    #[arg(long)]
-    no_worktree: bool,
-    /// Arguments for the agent, e.g. `asides claude --model opus`.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "AGENT ARGS")]
-    args: Vec<String>,
+    SimulateMeasure {
+        image: PathBuf,
+        script: PathBuf,
+        /// The session it goes to: its id; the history only otherwise.
+        #[arg(long)]
+        to: Option<String>,
+    },
 }
 
 fn main() {
-    // Rust ignores SIGPIPE, which turns `asides status | head -1` into a panic. Behave like other
-    // command-line tools instead: exit quietly when the reader goes away.
-    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    if let Err(err) = run(Cli::parse()) {
+    let cli = Cli::parse();
+    if let Err(err) = run(cli) {
         eprintln!("asides: {err:#}");
         std::process::exit(1);
     }
 }
 
 fn run(cli: Cli) -> Result<()> {
-    // Inside a session `asides <agent>` started, `asides` means the session's repo, even from the
-    // worktree the agent works in.
-    let session_repo = std::env::var_os(launch::REPO_VAR).map(PathBuf::from).filter(|d| d.is_dir());
-    let start = match (&cli.dir, session_repo) {
-        (Some(dir), _) => dir.clone(),
-        (None, Some(repo)) => repo,
-        (None, None) => std::env::current_dir()?,
-    };
-    let dir = || project::resolve_bind_dir(&start).with_context(|| format!("cannot use {}", start.display()));
-    let session = |given: Option<String>| -> Result<Option<String>> {
-        let id = given.or_else(|| std::env::var(launch::SESSION_VAR).ok()).filter(|id| !id.is_empty());
-        match id {
-            Some(id) if !sessions::valid_id(&id) => bail!("\"{id}\" isn't a session id"),
-            id => Ok(id),
-        }
-    };
-    let agent = |kind: AgentKind, args: StartArgs| {
-        let options = start::Options { background: args.background, no_worktree: args.no_worktree, args: args.args };
-        start::run(kind, &start, options)
-    };
     match cli.command {
-        None => bind(&dir()?, false, None),
-        Some(Command::Claude(args)) => agent(AgentKind::Claude, args),
-        Some(Command::Codex(args)) => agent(AgentKind::Codex, args),
-        Some(Command::Opencode(args)) => agent(AgentKind::OpenCode, args),
-        Some(Command::Gemini(args)) => agent(AgentKind::Gemini, args),
-        Some(Command::Copilot(args)) => agent(AgentKind::Copilot, args),
-        Some(Command::Qwen(args)) => agent(AgentKind::Qwen, args),
-        Some(Command::New { title }) => {
-            let title = Some(title.join(" ")).filter(|t| !t.trim().is_empty());
-            bind(&dir()?, true, title)
-        }
-        Some(Command::Path) => {
-            println!("{}", latest(&dir()?)?.file().display());
+        None => {
+            send(&Link::Window { request: None })?;
             Ok(())
         }
-        Some(Command::Open) => {
-            let file = latest(&dir()?)?.file();
-            check(Process::new("open").arg(&file), "open the note")
+        Some(Command::Open) => send(&Link::Open { request: None }),
+        Some(Command::Sessions { json }) => list_sessions(json),
+        Some(Command::History { count, json }) => list_history(count, json),
+        Some(Command::Show { id }) => {
+            let aside = find(&id)?;
+            print!("{}", absolute_message(&aside));
+            Ok(())
         }
-        Some(Command::Status) => status(&dir()?),
-        Some(Command::Export { out }) => export(&dir()?, out),
+        Some(Command::Send { id, to }) => send_again(&id, to),
+        Some(Command::Download { model }) => {
+            let model = model.unwrap_or_else(|| Config::load(&paths::config_path()).unwrap_or_default().model);
+            let request = request_id();
+            send(&Link::Download { model: model.clone(), request: Some(request.clone()) })?;
+            wait_for_ack(&request)?;
+            println!("Downloading the voice model {model}: `asides status` shows how far it got.");
+            Ok(())
+        }
+        Some(Command::Status) => status(),
         Some(Command::Quit) => {
             if running_state().is_none() {
                 println!("Asides is not running.");
@@ -215,25 +147,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             send(&Link::Quit)
         }
-        Some(Command::Send) => send_batch(),
-        Some(Command::Mcp { timeout, session: id }) => mcp::run(dir()?, timeout, session(id)?),
-        Some(Command::Listen { timeout, after, session: id, codex_thread, opencode_session, while_pid }) => {
-            let (dir, id) = (dir()?, session(id)?);
-            let codex = codex_thread.map(|thread| {
-                // Loaded again after the daemon restarts, the thread gets its asides server back.
-                let config = launch::codex_thread_config(&listen::program(), &dir, id.as_deref().unwrap_or_default());
-                listen::PushTo::Codex(thread, config)
-            });
-            let push =
-                codex.or(opencode_session.map(listen::PushTo::OpenCode)).map(|to| listen::Push { to, while_pid });
-            listen::run(dir, timeout, after, id, push)
-        }
-        Some(Command::Annotate) => {
-            if running_state().is_none() {
-                bail!("Asides is not running. Run `asides` in a repo to start it.");
-            }
-            send(&Link::Measure { request: None })
-        }
+        Some(Command::Mcp) => mcp::run(),
         Some(Command::Measure { image, target, tolerance, scale }) => {
             let frame = measure::load(&image)?;
             let target = measure::parse_target(&target)?;
@@ -242,21 +156,20 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", measure::describe(&frame, &name, target, tolerance, scale)?);
             Ok(())
         }
-        Some(Command::SimulateMeasure { image, script }) => {
+        Some(Command::SimulateMeasure { image, script, to }) => {
             let request = request_id();
             let image = image.canonicalize().context("image not found")?;
             let script = script.canonicalize().context("script not found")?;
-            send(&Link::SimulateMeasure { image, script, request: Some(request.clone()) })?;
+            send(&Link::SimulateMeasure { image, script, to, request: Some(request.clone()) })?;
             wait_for_ack(&request)?;
             println!("queued");
             Ok(())
         }
-        Some(Command::Simulate { wav, new, image, at, annotation }) => {
+        Some(Command::Simulate { wav, image, at, annotation, to }) => {
             let request = request_id();
             let wav = wav.canonicalize().context("WAV file not found")?;
             let image = image.map(|i| i.canonicalize()).transpose().context("image not found")?;
-            let link =
-                Link::Simulate { wav, new_note: new, image, image_at: at, annotation, request: Some(request.clone()) };
+            let link = Link::Simulate { wav, image, image_at: at, annotation, to, request: Some(request.clone()) };
             send(&link)?;
             wait_for_ack(&request)?;
             println!("queued");
@@ -265,148 +178,166 @@ fn run(cli: Cli) -> Result<()> {
     }
 }
 
-fn bind(dir: &Path, new_note: bool, title: Option<String>) -> Result<()> {
-    if project::ensure_git_exclude(dir)? {
-        println!("Added .asides/ to .git/info/exclude (local only; .gitignore untouched).");
-    }
-    let request = request_id();
-    send(&Link::Bind { dir: dir.to_path_buf(), new_note, title: title.clone(), request: Some(request.clone()) })?;
-    let state = wait_for_ack(&request)?;
+/// The sessions: as the running app last found them, or found now.
+fn current_sessions() -> Vec<AgentSession> {
+    let mut found = sessions::discover();
+    found.sort_by_key(|s| std::cmp::Reverse(s.last_input));
+    found
+}
 
-    let config = Config::load(&paths::config_path()).unwrap_or_default();
-    let target = if new_note {
-        match &title {
-            Some(t) => format!("next recording starts a new note \"{t}\""),
-            None => format!("next recording starts a new note \"{}\"", notes::DEFAULT_TITLE),
-        }
-    } else {
-        let branch = project::current_branch(dir);
-        match notes::latest_note(dir) {
-            Some(note) => match config
-                .auto_new_note
-                .then(|| notes::moved_on(&note, branch.as_deref(), std::time::SystemTime::now()))
-                .flatten()
-            {
-                Some(why) => format!("next recording starts a new note ({why})"),
-                None => format!("appending to \"{}\" ({})", note.title, entries(note.entry_count())),
-            },
-            None => "first recording creates a note".into(),
-        }
-    };
-    println!("Asides ready in {}", tilde(dir));
-    println!("  → {target}");
-    match state.target_session.as_deref().and_then(|id| Session::read(&paths::sessions_dir(), id)) {
-        Some(session) => println!("  → your asides go to {}", session.label()),
-        None => println!("  → notes only: `asides claude` (or codex, opencode) starts an agent that gets each aside"),
+fn list_sessions(json: bool) -> Result<()> {
+    let found = current_sessions();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&found)?);
+        return Ok(());
     }
-    println!(
-        "  {} open Asides (again: add it all to the aside; hold: talk) · {} into a new note",
-        pretty_shortcut(&config.shortcuts.asides),
-        pretty_shortcut(&config.shortcuts.new_note),
-    );
-    println!(
-        "  {} back to the live screen, or freeze it again · {} attach clipboard image",
-        pretty_shortcut(&config.shortcuts.freeze),
-        pretty_shortcut(&config.shortcuts.attach_image),
-    );
-    if state.microphone == "denied" {
-        println!("  ! Microphone access is denied: System Settings → Privacy & Security → Microphone → Asides.");
+    if found.is_empty() {
+        println!("No agent sessions are running. Start Claude Code, Codex or OpenCode in Terminal, Ghostty or Diri.");
+        return Ok(());
     }
-    if (state.status == "downloading" || state.status == "error")
-        && let Some(detail) = state.detail
-    {
-        println!("  ! {detail}");
+    let default = sessions::latest(&found).map(AgentSession::id);
+    let labels = sessions::labels(&found);
+    for (session, label) in found.iter().zip(labels) {
+        let mark = if Some(session.id()) == default { "●" } else { " " };
+        let reach = if session.host.reachable() { String::new() } else { " (Asides can't type there)".into() };
+        let ago = session.last_input.map(ago).unwrap_or_default();
+        println!(
+            "{mark} {:<8} {label}  {}  in {}{reach}  {ago}",
+            session.id(),
+            tilde(&session.dir),
+            session.host.name()
+        );
     }
     Ok(())
 }
 
-fn send_batch() -> Result<()> {
+fn ago(at: SystemTime) -> String {
+    let secs = SystemTime::now().duration_since(at).unwrap_or_default().as_secs();
+    match secs {
+        0..60 => "typed into just now".into(),
+        60..3600 => format!("typed into {} min ago", secs / 60),
+        3600..86400 => format!("typed into {} h ago", secs / 3600),
+        _ => format!("typed into {} days ago", secs / 86400),
+    }
+}
+
+fn list_history(count: usize, json: bool) -> Result<()> {
+    let asides: Vec<Aside> = history::list(&history::dir()).into_iter().take(count).collect();
+    if json {
+        let rows: Vec<serde_json::Value> = asides
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "id": a.id,
+                    "created": a.created().to_rfc3339(),
+                    "title": a.record.title,
+                    "images": a.record.images.len(),
+                    "deliveries": a.record.deliveries,
+                    "dir": a.dir,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+        return Ok(());
+    }
+    if asides.is_empty() {
+        println!("No asides yet. ⌃⌥Space opens Asides.");
+    }
+    for aside in asides {
+        let sent = match aside.last_delivery() {
+            Some(d) if d.error.is_none() => format!("→ {}", d.to),
+            Some(d) => format!("✗ {}", d.to),
+            None => "· kept".into(),
+        };
+        println!("{}  {}  {sent}  {}", aside.id, aside.created().format("%H:%M"), aside.record.title);
+    }
+    Ok(())
+}
+
+fn find(id: &str) -> Result<Aside> {
+    history::find(&history::dir(), id).with_context(|| match id {
+        "last" => "there are no asides in the history yet".to_string(),
+        id => format!("there's no aside {id} in the history (`asides history` lists them)"),
+    })
+}
+
+/// An aside's message with its screenshots' absolute paths, for reading anywhere.
+fn absolute_message(aside: &Aside) -> String {
+    let mut text = String::new();
+    for part in aside.parts() {
+        match part {
+            Part::Text(t) => text.push_str(&format!("{t}\n\n")),
+            Part::Image(path) => text.push_str(&format!("![Screenshot]({path})\n\n")),
+        }
+    }
+    text
+}
+
+/// Sends an aside again and waits for it to get there (or not).
+fn send_again(id: &str, to: Option<String>) -> Result<()> {
     if running_state().is_none() {
-        bail!("Asides is not running. Run `asides` in a repo to start it.");
+        bail!("Asides is not running. Open it from Applications (or run `asides`).");
     }
-    let last_send = |state: &AppState| state.agent_sends.first().map(|s| s.at_ms);
-    let sent_before = AppState::read(&paths::state_path()).and_then(|s| last_send(&s));
+    let aside = find(id)?;
+    let before = aside.record.deliveries.len();
     let request = request_id();
-    send(&Link::Send { request: Some(request.clone()) })?;
-    let state = wait_for_ack(&request)?;
-    let sent = last_send(&state) != sent_before;
-    if sent && Config::load(&paths::config_path()).unwrap_or_default().agent_delivery == AgentDelivery::Each {
-        println!("Sent. (Agents already get each aside as it's transcribed: agent_delivery is \"each\".)");
-    } else if sent {
-        println!("Sent to the agents listening in {}.", state.bound_dir.as_deref().map(tilde).unwrap_or_default());
-    } else if state.status == "recording" || state.status == "transcribing" {
-        println!("Sending once the last recording is transcribed.");
-    } else {
-        bail!("{}", state.detail.unwrap_or_else(|| "nothing was sent".into()));
+    send(&Link::Send { id: aside.id.clone(), to, request: Some(request.clone()) })?;
+    wait_for_ack(&request)?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
+        if let Some(again) = history::find(&history::dir(), &aside.id)
+            && again.record.deliveries.len() > before
+            && let Some(delivery) = again.last_delivery()
+        {
+            return match &delivery.error {
+                None => {
+                    println!("Sent to {}", delivery.to);
+                    Ok(())
+                }
+                Some(error) => bail!("could not send it to {}: {error}", delivery.to),
+            };
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
-    Ok(())
+    bail!("Asides didn't say whether it got there; `asides status` may say why")
 }
 
-fn status(dir: &Path) -> Result<()> {
+fn status() -> Result<()> {
+    let config = Config::load(&paths::config_path()).unwrap_or_default();
     match running_state() {
-        None => println!("Asides is not running. Run `asides` in a repo to start it."),
+        None => println!("Asides is not running."),
         Some(state) => {
             println!("Asides is running (pid {}) · {}", state.pid, state.status);
             if let Some(detail) = &state.detail {
                 println!("  {detail}");
             }
-            match &state.bound_dir {
-                Some(bound) => println!("  bound to {}", tilde(bound)),
-                None => println!("  not bound to a directory"),
-            }
-            let live = live_sessions();
-            let listeners = Listener::read_all(&paths::listeners_dir());
-            let labels = sessions::labels(&live);
-            match state.target_session.as_ref().and_then(|id| live.iter().position(|s| &s.id == id)) {
-                Some(i) => println!("  asides go to {}", labels[i]),
-                None => println!("  asides go to notes only"),
-            }
-            for (session, label) in live.iter().zip(&labels) {
-                let problem = listeners.iter().filter(|l| l.session == session.id).find_map(|l| l.problem.as_ref());
-                let why = problem.map(|p| format!(" ({p})")).unwrap_or_default();
-                println!("  session {label}: {}{why}", session.state(&listeners, now_ms()).as_str());
-            }
-            if let Some(pending) = &state.pending_new {
-                let title = pending.title.as_deref().map(|t| format!(" \"{t}\"")).unwrap_or_default();
-                println!("  next recording starts a new note{title}");
+            println!(
+                "  {} opens it · {} switches frozen and live",
+                pretty_shortcut(&config.shortcuts.asides),
+                pretty_shortcut(&config.shortcuts.freeze)
+            );
+            if !state.model_ready {
+                println!("  no voice model yet: `asides download` (or click the microphone in Asides)");
             }
             if state.microphone != "granted" && !state.microphone.is_empty() {
                 println!("  microphone: {}", state.microphone);
             }
+            let found = current_sessions();
+            match sessions::latest(&found) {
+                Some(session) => println!("  asides go to {} (the session typed into last)", session.label()),
+                None => println!("  no agent session to send to: asides stay in the history"),
+            }
         }
     }
-    match notes::latest_note(dir) {
-        Some(note) => println!("Latest note here: {} ({})", tilde(&note.file()), entries(note.entry_count())),
-        None => println!("No notes in {} yet.", tilde(dir)),
+    if let Some(aside) = history::list(&history::dir()).first() {
+        let sent = match aside.last_delivery() {
+            Some(d) if d.error.is_none() => format!("sent to {}", d.to),
+            Some(d) => format!("not sent to {}: {}", d.to, d.error.clone().unwrap_or_default()),
+            None => "kept in the history".into(),
+        };
+        println!("Last aside: {} ({}), {sent}", aside.record.title, aside.id);
     }
     Ok(())
-}
-
-fn export(dir: &Path, out: Option<PathBuf>) -> Result<()> {
-    let note = latest(dir)?;
-    let name = note.dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    let out = match out {
-        Some(out) => out,
-        None => std::env::current_dir()?.join(format!("{name}.zip")),
-    };
-    notes::export_zip(&note, &out).with_context(|| format!("could not write {}", out.display()))?;
-    println!("{}", out.display());
-    Ok(())
-}
-
-fn latest(dir: &Path) -> Result<Note> {
-    notes::latest_note(dir).with_context(|| format!("no notes in {} yet", tilde(dir)))
-}
-
-/// The agent sessions that are listening and still running, oldest first.
-pub(crate) fn live_sessions() -> Vec<Session> {
-    let listeners = Listener::read_all(&paths::listeners_dir());
-    let now = now_ms();
-    Session::read_all(&paths::sessions_dir())
-        .into_iter()
-        .filter(|s| s.listening)
-        .filter(|s| if s.pid == 0 { !s.expired(&listeners, now) } else { is_running(s.pid) })
-        .collect()
 }
 
 pub(crate) fn is_running(pid: u32) -> bool {
@@ -462,52 +393,22 @@ pub(crate) fn running_state() -> Option<AppState> {
     is_running(state.pid).then_some(state)
 }
 
-fn check(cmd: &mut Process, what: &str) -> Result<()> {
-    let status = cmd.status().with_context(|| format!("failed to {what}"))?;
-    if !status.success() {
-        bail!("failed to {what}");
-    }
-    Ok(())
-}
-
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
 pub(crate) fn request_id() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
     format!("{}-{nanos}", std::process::id())
-}
-
-fn entries(n: u32) -> String {
-    if n == 1 { "1 entry".into() } else { format!("{n} entries") }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn start_args(line: &[&str]) -> (bool, bool, Vec<String>) {
-        match Cli::try_parse_from(line).unwrap().command {
-            Some(Command::Claude(a) | Command::Codex(a) | Command::Opencode(a)) => {
-                (a.background, a.no_worktree, a.args)
-            }
-            _ => panic!("not an agent command"),
-        }
-    }
-
     #[test]
-    fn agent_commands_pass_the_agents_own_arguments_through() {
-        assert_eq!(start_args(&["asides", "claude"]), (false, false, vec![]));
-        assert_eq!(
-            start_args(&["asides", "claude", "--model", "opus"]),
-            (false, false, vec!["--model".into(), "opus".into()])
-        );
-        assert_eq!(
-            start_args(&["asides", "-C", "/r", "claude", "--background", "--no-worktree", "--effort", "high"]),
-            (true, true, vec!["--effort".into(), "high".into()])
-        );
-        assert_eq!(start_args(&["asides", "codex", "-m", "o3"]).2, ["-m", "o3"]);
-        assert_eq!(start_args(&["asides", "opencode", "--", "--agent", "plan"]).2, ["--agent", "plan"]);
+    fn parses_the_commands() {
+        let parse = |line: &[&str]| Cli::try_parse_from(std::iter::once("asides").chain(line.iter().copied()));
+        assert!(parse(&[]).unwrap().command.is_none());
+        assert!(matches!(parse(&["annotate"]).unwrap().command, Some(Command::Open)));
+        let Some(Command::Send { id, to }) = parse(&["send", "--to", "4242"]).unwrap().command else { panic!() };
+        assert_eq!((id.as_str(), to.as_deref()), ("last", Some("4242")));
+        assert!(parse(&["claude"]).is_err(), "agents start in their own terminals now");
     }
 }

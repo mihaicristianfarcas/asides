@@ -102,8 +102,6 @@ pub struct Overlay {
     /// When it was started, and when its windows came up: annotations carry the seconds since.
     pub created: Instant,
     pub opened: Option<Instant>,
-    /// A recording was started from it (it ends with it).
-    pub started_recording: bool,
     /// It finished or was cancelled (the process is ending).
     pub over: bool,
     /// The app that was frontmost (when it opened, or last froze), to give the focus back to.
@@ -154,7 +152,6 @@ pub fn start(
         windows,
         created: Instant::now(),
         opened: None,
-        started_recording: false,
         over: false,
         previous_app: None,
         frozen,
@@ -209,12 +206,6 @@ impl Overlay {
     /// When its annotations' seconds count from: its windows coming up (or, without windows, its start).
     pub fn origin(&self) -> Instant {
         self.opened.unwrap_or(self.created)
-    }
-
-    /// Seconds from the start of a recording (started at `started`) to when the overlay opened;
-    /// negative when the recording started after.
-    pub fn offset_from(&self, started: Instant) -> f32 {
-        seconds_between(started, self.origin())
     }
 }
 

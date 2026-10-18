@@ -93,7 +93,7 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
         let alone = items.is_empty();
         items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freezes, alone)?);
     }
-    finish::write(dir, &finish::outcome(items, session.saved(), false))?;
+    finish::write(dir, &finish::outcome(items, session.saved(), spec.targets.chosen.clone()))?;
     io::emit(&Event::Finished);
     Ok(())
 }

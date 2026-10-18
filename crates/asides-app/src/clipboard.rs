@@ -1,88 +1,51 @@
-//! Reading images from (and writing text to) the general pasteboard.
+//! The general pasteboard, while an aside's screenshots are pasted into a session (Ctrl+V): a
+//! screenshot put on it, and what the user had there kept, to put back.
 
-use objc2_app_kit::{
-    NSBitmapImageFileType, NSBitmapImageRep, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
-    NSPasteboardTypeString,
-};
-use objc2_foundation::{NSData, NSDictionary, NSString, NSURL};
+use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypePNG, NSPasteboardWriting};
+use objc2_foundation::{NSArray, NSData, NSString};
 
-/// Kept as-is when copied from Finder; anything else is converted to PNG.
-const PORTABLE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
-const CONVERTIBLE_EXTENSIONS: &[&str] = &["heic", "heif", "tif", "tiff", "bmp"];
+/// What the pasteboard holds: each item's data, of each of its types.
+pub struct Snapshot(Vec<Vec<(String, Vec<u8>)>>);
 
-pub struct ClipboardImage {
-    pub bytes: Vec<u8>,
-    pub extension: String,
-}
-
-/// Increments whenever anything is copied. Reading it never triggers the paste-privacy prompt.
-pub fn change_count() -> isize {
-    NSPasteboard::generalPasteboard().changeCount()
-}
-
-/// Checks the advertised types only (no content read, so no privacy prompt).
-pub fn has_image() -> bool {
+/// Keeps what the pasteboard holds, to put back with [`restore`].
+pub fn snapshot() -> Snapshot {
     let pasteboard = NSPasteboard::generalPasteboard();
-    let Some(types) = pasteboard.types() else { return false };
-    let image_types = ["public.png", "public.tiff", "public.jpeg", "public.heic"];
-    types.iter().any(|t| {
-        let t = t.to_string();
-        image_types.contains(&t.as_str()) || (t == "public.file-url" && file_image(&pasteboard).is_some())
-    })
+    let items = pasteboard.pasteboardItems().map(|items| items.to_vec()).unwrap_or_default();
+    Snapshot(
+        items
+            .iter()
+            .map(|item| {
+                item.types().iter().filter_map(|t| Some((t.to_string(), item.dataForType(&t)?.to_vec()))).collect()
+            })
+            .collect(),
+    )
 }
 
-pub fn read_image() -> Option<ClipboardImage> {
-    let pasteboard = NSPasteboard::generalPasteboard();
-    let types: Vec<String> = pasteboard.types()?.iter().map(|t| t.to_string()).collect();
-    let has = |t: &str| types.iter().any(|x| x == t);
-
-    // A file copied in Finder also carries a TIFF of its icon, so check the file first.
-    if has("public.file-url")
-        && let Some(path) = file_image(&pasteboard)
-    {
-        let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
-        let bytes = std::fs::read(&path).ok()?;
-        if PORTABLE_EXTENSIONS.contains(&extension.as_str()) {
-            return Some(ClipboardImage {
-                bytes,
-                extension: if extension == "jpeg" { "jpg".into() } else { extension },
-            });
-        }
-        return to_png(&NSData::with_bytes(&bytes));
-    }
-    if has("public.png") {
-        let data = pasteboard.dataForType(unsafe { NSPasteboardTypePNG })?;
-        return Some(ClipboardImage { bytes: data.to_vec(), extension: "png".into() });
-    }
-    for t in ["public.tiff", "public.jpeg", "public.heic"] {
-        if has(t) {
-            let data = pasteboard.dataForType(&NSString::from_str(t))?;
-            return to_png(&data);
-        }
-    }
-    None
-}
-
-pub fn copy_text(text: &str) {
+/// Puts back what [`snapshot`] kept.
+pub fn restore(snapshot: &Snapshot) {
     let pasteboard = NSPasteboard::generalPasteboard();
     pasteboard.clearContents();
-    pasteboard.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString });
+    let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = snapshot
+        .0
+        .iter()
+        .map(|types| {
+            let item = NSPasteboardItem::new();
+            for (t, data) in types {
+                item.setData_forType(&NSData::with_bytes(data), &NSString::from_str(t));
+            }
+            ProtocolObject::from_retained(item)
+        })
+        .collect();
+    if !items.is_empty() {
+        pasteboard.writeObjects(&NSArray::from_retained_slice(&items));
+    }
 }
 
-fn file_image(pasteboard: &NSPasteboard) -> Option<std::path::PathBuf> {
-    let url = pasteboard.stringForType(unsafe { NSPasteboardTypeFileURL })?;
-    let url = NSURL::URLWithString(&url)?;
-    // Finder puts file *reference* URLs (file:///.file/id=…) on the pasteboard.
-    let path = url.filePathURL()?.path()?.to_string();
-    let path = std::path::PathBuf::from(path);
-    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    let supported =
-        PORTABLE_EXTENSIONS.contains(&extension.as_str()) || CONVERTIBLE_EXTENSIONS.contains(&extension.as_str());
-    supported.then_some(path)
-}
-
-fn to_png(data: &NSData) -> Option<ClipboardImage> {
-    let rep = NSBitmapImageRep::imageRepWithData(data)?;
-    let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?;
-    Some(ClipboardImage { bytes: png.to_vec(), extension: "png".into() })
+/// Puts a PNG on the pasteboard, as a screenshot is copied.
+pub fn put_png(bytes: &[u8]) {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+    pasteboard.setData_forType(Some(&NSData::with_bytes(bytes)), unsafe { NSPasteboardTypePNG });
 }

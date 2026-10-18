@@ -72,12 +72,6 @@ pub fn request() -> bool {
     CGRequestScreenCaptureAccess()
 }
 
-pub fn open_settings() {
-    let _ = std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        .spawn();
-}
-
 type Done = Arc<dyn Fn(Result<Vec<Capture>, String>) + Send + Sync>;
 /// A display's screenshot, or why there's none.
 type Shot = Arc<dyn Fn(Result<Frame, String>) + Send + Sync>;

@@ -1,50 +1,60 @@
-//! `asides://` links: how the CLI talks to the running menu-bar app (via `open`).
+//! `asides://` links: how the CLI and the Asides window talk to the running menu-bar app (via
+//! `open`).
 
 use std::path::PathBuf;
 
 use url::Url;
 
+use crate::agents::AgentKind;
 use crate::paths::URL_SCHEME;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Link {
-    /// Bind the app to `dir`. With `new_note`, the next recording starts a new note.
-    Bind {
-        dir: PathBuf,
-        new_note: bool,
-        title: Option<String>,
+    /// Opens Asides frozen, as `⌃⌥Space` does; while it's open, sends the aside.
+    Open {
         request: Option<String>,
     },
-    /// Make the session `id` (`sessions::Session`) the target: the user's asides go to it, and the
-    /// app binds to its repo. Sent when a session is launched or starts listening.
-    Session {
+    /// Opens the Asides window (History, Sessions, Settings).
+    Window {
+        request: Option<String>,
+    },
+    /// Sends aside `id` from the history to session `to` (a session's id), or to the default.
+    Send {
         id: String,
+        to: Option<String>,
+        request: Option<String>,
+    },
+    /// Starts a new `agent` session in `dir` with aside `id` as its first message.
+    NewSession {
+        id: String,
+        agent: AgentKind,
+        dir: PathBuf,
+        request: Option<String>,
+    },
+    /// Downloads speech model `model` (`models::MODELS`).
+    Download {
+        model: String,
         request: Option<String>,
     },
     Quit,
-    /// Send to Agent: hands the entries recorded so far to agents listening in batch mode.
-    Send {
-        request: Option<String>,
-    },
-    /// Development hook: process `wav` as if it had just been recorded.
+    /// Development hook: process `wav` as if it had just been recorded (outside Asides, an aside of
+    /// its own, sent to session `to`, or kept in the history only).
     Simulate {
         wav: PathBuf,
-        new_note: bool,
         image: Option<PathBuf>,
         image_at: f32,
-        /// Said about this annotation of the open Measure & Annotate session (its key).
+        /// Said about this annotation of the open Asides session (its key).
         annotation: Option<u32>,
+        to: Option<String>,
         request: Option<String>,
     },
-    /// Opens Measure & Annotate, as the shortcut does.
-    Measure {
-        request: Option<String>,
-    },
-    /// Development hook: runs a Measure & Annotate session on `image` (instead of the screen),
-    /// driven by `script` (a JSON file of actions), and adds the result like the user would.
+    /// Development hook: runs an Asides session on `image` (instead of the screen), driven by
+    /// `script` (a JSON file of actions), and sends the result to session `to` (or keeps it in the
+    /// history only), as the user would.
     SimulateMeasure {
         image: PathBuf,
         script: PathBuf,
+        to: Option<String>,
         request: Option<String>,
     },
 }
@@ -55,34 +65,25 @@ impl Link {
         {
             let mut q = url.query_pairs_mut();
             match self {
-                Link::Bind { dir, new_note, title, request } => {
-                    q.append_pair("dir", &dir.to_string_lossy());
-                    if *new_note {
-                        q.append_pair("new", "1");
-                    }
-                    if let Some(title) = title {
-                        q.append_pair("title", title);
-                    }
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
-                    }
-                }
-                Link::Session { id, request } => {
+                Link::Open { .. } | Link::Window { .. } | Link::Quit => {}
+                Link::Send { id, to, .. } => {
                     q.append_pair("id", id);
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
+                    if let Some(to) = to {
+                        q.append_pair("to", to);
                     }
                 }
-                Link::Quit => {}
-                Link::Send { request } => {
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
-                    }
+                Link::NewSession { id, agent, dir, .. } => {
+                    q.append_pair("id", id);
+                    q.append_pair("agent", agent.program());
+                    q.append_pair("dir", &dir.to_string_lossy());
                 }
-                Link::Simulate { wav, new_note, image, image_at, annotation, request } => {
+                Link::Download { model, .. } => {
+                    q.append_pair("model", model);
+                }
+                Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                     q.append_pair("wav", &wav.to_string_lossy());
-                    if *new_note {
-                        q.append_pair("new", "1");
+                    if let Some(to) = to {
+                        q.append_pair("to", to);
                     }
                     if let Some(annotation) = annotation {
                         q.append_pair("annotation", &annotation.to_string());
@@ -91,22 +92,17 @@ impl Link {
                         q.append_pair("image", &image.to_string_lossy());
                         q.append_pair("at", &image_at.to_string());
                     }
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
-                    }
                 }
-                Link::Measure { request } => {
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
-                    }
-                }
-                Link::SimulateMeasure { image, script, request } => {
+                Link::SimulateMeasure { image, script, to, .. } => {
                     q.append_pair("image", &image.to_string_lossy());
                     q.append_pair("script", &script.to_string_lossy());
-                    if let Some(request) = request {
-                        q.append_pair("req", request);
+                    if let Some(to) = to {
+                        q.append_pair("to", to);
                     }
                 }
+            }
+            if let Some(request) = self.request() {
+                q.append_pair("req", request);
             }
         }
         url.to_string().trim_end_matches('?').to_string()
@@ -117,30 +113,33 @@ impl Link {
             return None;
         }
         let get = |key: &str| url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned());
-        let flag = |key: &str| get(key).is_some_and(|v| v == "1" || v == "true");
+        let request = get("req");
+        let nonempty = |key: &str| get(key).filter(|v| !v.trim().is_empty());
         match url.host_str()? {
-            "bind" => Some(Link::Bind {
-                dir: get("dir")?.into(),
-                new_note: flag("new"),
-                title: get("title").filter(|t| !t.trim().is_empty()),
-                request: get("req"),
+            "open" => Some(Link::Open { request }),
+            "window" => Some(Link::Window { request }),
+            "send" => Some(Link::Send { id: nonempty("id")?, to: nonempty("to"), request }),
+            "new-session" => Some(Link::NewSession {
+                id: nonempty("id")?,
+                agent: AgentKind::parse(&get("agent")?)?,
+                dir: nonempty("dir")?.into(),
+                request,
             }),
-            "session" => Some(Link::Session { id: get("id").filter(|id| !id.is_empty())?, request: get("req") }),
+            "download" => Some(Link::Download { model: nonempty("model")?, request }),
             "quit" => Some(Link::Quit),
-            "send" => Some(Link::Send { request: get("req") }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
-                new_note: flag("new"),
                 image: get("image").map(PathBuf::from),
                 image_at: get("at").and_then(|v| v.parse().ok()).unwrap_or(0.0),
                 annotation: get("annotation").and_then(|v| v.parse().ok()),
-                request: get("req"),
+                to: nonempty("to"),
+                request,
             }),
-            "measure" => Some(Link::Measure { request: get("req") }),
             "simulate-measure" => Some(Link::SimulateMeasure {
                 image: get("image")?.into(),
                 script: get("script")?.into(),
-                request: get("req"),
+                to: nonempty("to"),
+                request,
             }),
             _ => None,
         }
@@ -148,13 +147,28 @@ impl Link {
 
     fn action(&self) -> &'static str {
         match self {
-            Link::Bind { .. } => "bind",
-            Link::Session { .. } => "session",
-            Link::Quit => "quit",
+            Link::Open { .. } => "open",
+            Link::Window { .. } => "window",
             Link::Send { .. } => "send",
+            Link::NewSession { .. } => "new-session",
+            Link::Download { .. } => "download",
+            Link::Quit => "quit",
             Link::Simulate { .. } => "simulate",
-            Link::Measure { .. } => "measure",
             Link::SimulateMeasure { .. } => "simulate-measure",
+        }
+    }
+
+    /// The request id the app echoes in `state.json` once it handled the link.
+    pub fn request(&self) -> Option<&String> {
+        match self {
+            Link::Open { request }
+            | Link::Window { request }
+            | Link::Send { request, .. }
+            | Link::NewSession { request, .. }
+            | Link::Download { request, .. }
+            | Link::Simulate { request, .. }
+            | Link::SimulateMeasure { request, .. } => request.as_ref(),
+            Link::Quit => None,
         }
     }
 }
@@ -170,29 +184,30 @@ mod tests {
 
     #[test]
     fn links_round_trip() {
-        round_trip(Link::Bind {
+        round_trip(Link::Open { request: Some("r1".into()) });
+        round_trip(Link::Window { request: None });
+        round_trip(Link::Send { id: "2026-10-18-221530".into(), to: Some("95393".into()), request: Some("r2".into()) });
+        round_trip(Link::Send { id: "last".into(), to: None, request: None });
+        round_trip(Link::NewSession {
+            id: "a".into(),
+            agent: AgentKind::Codex,
             dir: "/Users/me/My Code/shop & co".into(),
-            new_note: true,
-            title: Some("Pagina de setări: bug #3".into()),
-            request: Some("r1".into()),
+            request: None,
         });
-        round_trip(Link::Bind { dir: "/x".into(), new_note: false, title: None, request: None });
-        round_trip(Link::Session { id: "a1b2c3d4".into(), request: Some("r4".into()) });
+        round_trip(Link::Download { model: "small.en".into(), request: None });
         round_trip(Link::Quit);
-        round_trip(Link::Send { request: Some("r2".into()) });
-        round_trip(Link::Send { request: None });
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
-            new_note: false,
             image: Some("/tmp/i.png".into()),
             image_at: 2.5,
             annotation: Some(3),
+            to: Some("4242".into()),
             request: None,
         });
-        round_trip(Link::Measure { request: Some("r3".into()) });
         round_trip(Link::SimulateMeasure {
             image: "/tmp/shot 1.png".into(),
             script: "/tmp/script.json".into(),
+            to: None,
             request: None,
         });
         assert_eq!(Link::Quit.to_url(), "asides://quit");
@@ -200,9 +215,10 @@ mod tests {
 
     #[test]
     fn rejects_foreign_links() {
-        assert_eq!(Link::parse(&Url::parse("https://bind?dir=/x").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("https://open").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://nope").unwrap()), None);
-        assert_eq!(Link::parse(&Url::parse("asides://bind").unwrap()), None);
-        assert_eq!(Link::parse(&Url::parse("asides://session?id=").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://send").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://send?id=").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://new-session?id=a&agent=cursor&dir=/x").unwrap()), None);
     }
 }

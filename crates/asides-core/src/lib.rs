@@ -1,26 +1,21 @@
-//! Platform-independent logic shared by the `asides` CLI and the Asides menu-bar app.
+//! Platform-independent logic shared by the `asides` CLI, the Asides menu-bar app and its overlay.
 
 pub mod agents;
 pub mod config;
-pub mod frontmatter;
+pub mod deliver;
 pub mod helper;
+pub mod history;
 pub mod inspect;
 pub mod install;
 pub mod keys;
-pub mod launch;
 pub mod link;
-pub mod listening;
 pub mod markdown;
 pub mod measure;
 pub mod models;
-pub mod notes;
 pub mod overlay;
 pub mod paths;
-pub mod project;
 pub mod resample;
-pub mod routes;
 pub mod sessions;
 pub mod state;
 pub mod takes;
-pub mod threads;
 pub mod wispr;

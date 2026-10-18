@@ -9,26 +9,21 @@ use serde::{Deserialize, Serialize};
 use crate::agents::AgentKind;
 use crate::inspect::{Detail, Units};
 
-const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
+const HEADER: &str = r#"# Asides settings (the Asides window changes most of them). Changes are picked up automatically.
 # Shortcut syntax: modifiers (ctrl, alt/option, shift, cmd) + a key (Space, Escape, KeyN, Digit1, F5, …),
 # joined with '+'. Avoid option-only combinations: macOS refuses them.
-# languages: Whisper codes to choose between, e.g. ["en", "ro"]; [] detects any language.
-# agent_delivery: "each" hands every recording to agents listening through `asides mcp` as soon as
-# it's transcribed; "batch" holds them until you choose Send to Agent.
-# wispr_flow_apps: app names or bundle IDs whose Wispr Flow dictations are added; [] means any app.
-# auto_new_note: start a new note when you've switched git branch, or after 8 hours without asides.
+# mic_on_open: start listening when Asides opens (its microphone button and Space still work).
+# languages: Whisper codes to choose between, e.g. ["en", "ro"]; [] detects any language (only the
+# multilingual models use them).
+# history_days: how long asides stay in ~/.asides/history; 0 keeps them.
 # annotation_detail: how much each annotation says in an aside: "compact", "standard", "detailed"
 # or "forensic".
 # [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
 # identify_elements: name what's under each annotation (needs the Accessibility permission);
-# padding: points of screen kept around what you measured in the screenshot;
-# record: start talking when Asides opens;
-# toolbar: show its toolbar on a frozen screen (shift+tab hides and shows it; every action also has
-# a key).
-# [agents] terminal: the app New Agent Session opens agents in ("Terminal", the default when "";
-# "Ghostty", "iTerm", "Diri", or another that runs .command scripts); worktrees: a second session in
-# a repo works in its own git worktree; claude, codex, opencode, gemini, copilot, qwen:
-# extra arguments for that agent's sessions, e.g. claude = ["--model", "opus"].
+# padding: points of screen kept around what you annotated in the screenshot.
+# [agents] terminal: the app new sessions open in ("Terminal" when ""; "Ghostty", "Diri"); claude,
+# codex, opencode, gemini, copilot, qwen: extra arguments for that agent's new sessions, e.g.
+# claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
@@ -37,13 +32,10 @@ const HEADER: &str = r#"# Asides settings. Changes are picked up automatically.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// While Asides is open, holding its shortcut (or Space) talks until it's let go; a tap on the
-    /// shortcut adds it all to the aside, on Space it starts or stops talking.
-    pub hold_to_talk: bool,
-    /// Images copied to the clipboard while recording are attached automatically.
-    pub auto_attach_images: bool,
+    /// Start listening when Asides opens (the pill's microphone and Space still turn it on and off).
+    pub mic_on_open: bool,
     pub sounds: bool,
-    /// Keep an .m4a of each recording next to the note.
+    /// Keep an .m4a of what was said with each aside in the history.
     pub keep_audio: bool,
     /// Speech model id, see `models::MODELS`.
     pub model: String,
@@ -52,32 +44,26 @@ pub struct Config {
     /// Whisper language codes a recording can be in (e.g. `["en", "ro"]`): each recording is
     /// transcribed in the most likely of these. Empty means any language Whisper knows.
     pub languages: Vec<String>,
-    /// When coding agents listening through `asides mcp` receive new entries.
-    pub agent_delivery: AgentDelivery,
-    /// Start a new note when you've switched git branch, or after a break (`notes::moved_on`).
-    pub auto_new_note: bool,
-    /// Dictations made with Wispr Flow are added to the note, like recordings.
+    /// How many days the history keeps asides; 0 keeps them all.
+    pub history_days: u32,
+    /// Wispr Flow dictations made while the screen is frozen join the aside.
     pub wispr_flow: bool,
-    /// Only Wispr Flow dictations made in these apps (names or bundle IDs, matched ignoring case);
-    /// empty means any app.
-    pub wispr_flow_apps: Vec<String>,
-    /// How much Measure & Annotate puts in an aside.
+    /// How much Asides puts in an aside about each annotation.
     pub annotation_detail: Detail,
     pub measure: Measure,
-    /// Agent sessions Asides starts (`asides claude`, New Session in the menu).
+    /// New agent sessions (New session in…).
     pub agents: Agents,
     pub shortcuts: Shortcuts,
 }
 
-/// Agent sessions Asides starts.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// New agent sessions.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Agents {
-    /// The app New Agent Session opens agents in (its name, as `open -a` takes it); empty is
-    /// Terminal.
+    /// The app new sessions open in: "Terminal" (the default when empty), "Ghostty" or "Diri".
     pub terminal: String,
-    /// A second session in a repo works in a git worktree of it, so their edits don't collide.
-    pub worktrees: bool,
+    /// The agent New session in… starts unless the user picks another (its program).
+    pub default: String,
     /// Extra command-line arguments for each agent's sessions.
     pub claude: Vec<String>,
     pub codex: Vec<String>,
@@ -85,21 +71,6 @@ pub struct Agents {
     pub gemini: Vec<String>,
     pub copilot: Vec<String>,
     pub qwen: Vec<String>,
-}
-
-impl Default for Agents {
-    fn default() -> Self {
-        Self {
-            terminal: String::new(),
-            worktrees: true,
-            claude: Vec::new(),
-            codex: Vec::new(),
-            opencode: Vec::new(),
-            gemini: Vec::new(),
-            copilot: Vec::new(),
-            qwen: Vec::new(),
-        }
-    }
 }
 
 impl Agents {
@@ -114,9 +85,14 @@ impl Agents {
             AgentKind::Qwen => &self.qwen,
         }
     }
+
+    /// The agent new sessions start with.
+    pub fn default_agent(&self) -> AgentKind {
+        AgentKind::parse(self.default.trim()).unwrap_or(AgentKind::Claude)
+    }
 }
 
-/// Measure & Annotate (the screen overlay).
+/// Asides on screen (the overlay).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Measure {
@@ -125,15 +101,11 @@ pub struct Measure {
     pub units: Units,
     /// Edge detection tolerance in percent; `-`/`=` change it while measuring.
     pub tolerance: u8,
-    /// Name the element under each annotation marker from the accessibility tree. Needs the
-    /// Accessibility permission, asked for when this is turned on.
+    /// Name the element under each annotation from the accessibility tree. Needs the Accessibility
+    /// permission, asked for the first time Asides opens.
     pub identify_elements: bool,
-    /// Points of screen kept around what was measured in the screenshot added to the aside.
+    /// Points of screen kept around what was annotated in the screenshot added to the aside.
     pub padding: f64,
-    /// Start recording when the overlay opens, to talk while annotating.
-    pub record: bool,
-    /// Show the overlay's toolbar (its key hides and shows it; every action has a key).
-    pub toolbar: bool,
     pub keys: OverlayKeys,
 }
 
@@ -143,10 +115,8 @@ impl Default for Measure {
             color: "#FF2D55".into(),
             units: Units::Pt,
             tolerance: crate::measure::Tolerance::DEFAULT.0,
-            identify_elements: false,
+            identify_elements: true,
             padding: 48.0,
-            record: false,
-            toolbar: true,
             keys: OverlayKeys::default(),
         }
     }
@@ -174,23 +144,21 @@ pub struct OverlayKeys {
     pub copy_markdown: String,
     pub undo: String,
     pub clear: String,
+    /// Hide what's drawn on the frozen screen while it's held.
     pub hide: String,
-    /// Hide or show the toolbar.
-    pub toolbar: String,
     pub restore: String,
-    /// Hold to talk (a tap toggles), like the Asides shortcut.
+    /// Hold to talk while the microphone is off.
     pub talk: String,
+    /// The next agent session the aside goes to.
+    pub target: String,
     pub help: String,
-    /// Add to the aside.
+    /// Send the aside (an open card is saved and closed instead).
     pub done: String,
-    /// Add to the aside with the whole screen, not just around what's annotated.
+    /// Send it with the whole screen, not just around what's annotated.
     pub done_whole_screen: String,
-    /// Add to the aside and send it to the agent.
-    pub send: String,
     /// Back to the live screen (the freeze shortcut does it too, from anywhere).
     pub live: String,
-    /// Close without adding anything (the toolbar's ×); a second press when there's something to
-    /// lose.
+    /// Close without sending anything; a second press when there's something to lose.
     pub close: String,
 }
 
@@ -198,9 +166,9 @@ impl Default for OverlayKeys {
     fn default() -> Self {
         let k = |s: &str| s.to_string();
         Self {
-            measure: k("d"),
+            measure: k("m"),
             annotate: k("a"),
-            draw: k("p"),
+            draw: k("d"),
             shot: k("cmd+s, s"),
             hold_horizontal: k("h"),
             hold_vertical: k("v"),
@@ -215,63 +183,39 @@ impl Default for OverlayKeys {
             copy_markdown: k("cmd+shift+c"),
             undo: k("backspace, cmd+z"),
             clear: k("x"),
-            hide: k("tab"),
-            toolbar: k("shift+tab"),
+            hide: k("shift+tab"),
             restore: k("r"),
             talk: k("space"),
+            target: k("tab"),
             help: k("shift+/, f1"),
             done: k("enter"),
             done_whole_screen: k("alt+enter"),
-            send: k("cmd+enter"),
             live: k(""),
             close: k("escape"),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentDelivery {
-    /// Each entry as soon as it's written.
-    #[default]
-    Each,
-    /// Entries wait until the user chooses Send to Agent.
-    Batch,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Shortcuts {
-    /// Opens Asides over the live screen. While it's open, a tap adds it all to the aside, and a
-    /// hold talks (with `hold_to_talk`).
+    /// Opens Asides with the screen frozen; while it's open, a tap sends the aside.
     pub asides: String,
-    /// The same, into a new note.
-    pub new_note: String,
-    pub attach_image: String,
-    /// Only registered while `agent_delivery` is `batch`.
-    pub send_to_agent: String,
-    /// Pauses the live screen (freezes it to measure and annotate it), and plays it again. Opens
-    /// Asides frozen.
+    /// Switches between the frozen screen and the live one; with Asides closed, opens it live.
     pub freeze: String,
-    /// Switches the target to the next agent session (then Notes Only). Only registered while a
-    /// session is listening.
-    pub next_target: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hold_to_talk: true,
-            auto_attach_images: true,
+            mic_on_open: true,
             sounds: true,
             keep_audio: false,
-            model: crate::models::MODELS[0].id.into(),
+            model: crate::models::DEFAULT.into(),
             input_device: String::new(),
             languages: Vec::new(),
-            agent_delivery: AgentDelivery::default(),
-            auto_new_note: true,
+            history_days: 30,
             wispr_flow: false,
-            wispr_flow_apps: Vec::new(),
             annotation_detail: Detail::default(),
             measure: Measure::default(),
             agents: Agents::default(),
@@ -282,14 +226,7 @@ impl Default for Config {
 
 impl Default for Shortcuts {
     fn default() -> Self {
-        Self {
-            asides: "ctrl+alt+Space".into(),
-            new_note: "ctrl+alt+KeyN".into(),
-            attach_image: "ctrl+alt+KeyV".into(),
-            send_to_agent: "ctrl+alt+Enter".into(),
-            freeze: "ctrl+alt+KeyP".into(),
-            next_target: "ctrl+alt+Tab".into(),
-        }
+        Self { asides: "ctrl+alt+Space".into(), freeze: "ctrl+alt+KeyP".into() }
     }
 }
 
@@ -373,41 +310,24 @@ mod tests {
 
         fs::write(&path, "sounds = false\n[shortcuts]\nfreeze = \"F12\"\n").unwrap();
         let partial = Config::load(&path).unwrap();
-        assert!(!partial.sounds && partial.hold_to_talk);
+        assert!(!partial.sounds && partial.mic_on_open);
         assert_eq!(partial.shortcuts.freeze, "F12");
         assert_eq!(partial.shortcuts.asides, "ctrl+alt+Space");
-        assert_eq!((partial.agent_delivery, partial.wispr_flow), (AgentDelivery::Each, false));
+        assert_eq!((partial.history_days, partial.wispr_flow), (30, false));
+        assert!(partial.measure.identify_elements, "names elements by default");
 
-        fs::write(&path, "agent_delivery = \"batch\"\nwispr_flow = true\nwispr_flow_apps = [\"Safari\"]\n").unwrap();
-        let agents = Config::load(&path).unwrap();
-        assert_eq!(agents.agent_delivery, AgentDelivery::Batch);
-        assert_eq!((agents.wispr_flow, agents.wispr_flow_apps), (true, vec!["Safari".to_string()]));
-
-        // Older files have no Measure & Annotate settings.
-        assert_eq!((agents.measure.clone(), agents.annotation_detail), (Measure::default(), Detail::Standard));
-        assert_eq!(agents.shortcuts.freeze, "ctrl+alt+KeyP");
+        // Files from before the redesign still load: what's gone is ignored.
         fs::write(
             &path,
-            "annotation_detail = \"forensic\"\n[measure]\nunits = \"px\"\ntolerance = 20\n[measure.keys]\nannotate = \"m\"\n",
+            "agent_delivery = \"batch\"\nhold_to_talk = false\nannotation_detail = \"forensic\"\n[measure]\nunits = \"px\"\n\
+             record = true\ntoolbar = false\n[measure.keys]\nannotate = \"q\"\nsend = \"cmd+enter\"\n[shortcuts]\n\
+             next_target = \"ctrl+alt+Tab\"\n[agents]\nterminal = \"Ghostty\"\nworktrees = false\nclaude = [\"--model\", \"opus\"]\n",
         )
         .unwrap();
-        let measure = Config::load(&path).unwrap();
-        assert_eq!(
-            (measure.annotation_detail, measure.measure.units, measure.measure.tolerance),
-            (Detail::Forensic, Units::Px, 20)
-        );
-        assert_eq!(measure.measure.color, "#FF2D55");
-        // Nor agent sessions.
-        assert_eq!(
-            (measure.agents.clone(), measure.shortcuts.next_target.as_str()),
-            (Agents::default(), "ctrl+alt+Tab")
-        );
-        fs::write(&path, "[agents]\nterminal = \"Terminal\"\nclaude = [\"--model\", \"opus\"]\n").unwrap();
-        let agents = Config::load(&path).unwrap().agents;
-        assert_eq!(
-            (agents.terminal.as_str(), agents.claude, agents.worktrees),
-            ("Terminal", vec!["--model".into(), "opus".into()], true)
-        );
-        assert_eq!((measure.measure.keys.annotate.as_str(), measure.measure.keys.draw.as_str()), ("m", "p"));
+        let old = Config::load(&path).unwrap();
+        assert_eq!((old.annotation_detail, old.measure.units), (Detail::Forensic, Units::Px));
+        assert_eq!((old.measure.keys.annotate.as_str(), old.measure.keys.measure.as_str()), ("q", "m"));
+        assert_eq!((old.agents.terminal.as_str(), old.agents.claude.len()), ("Ghostty", 2));
+        assert_eq!(old.agents.default_agent(), AgentKind::Claude);
     }
 }

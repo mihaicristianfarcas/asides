@@ -1,22 +1,19 @@
-//! Background thread that transcribes recordings and writes notes, one job at a time and in order.
+//! Background thread that transcribes what was said and keeps each aside in the history
+//! (`~/.asides/history`), one job at a time and in order. The main thread sends it on.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use asides_core::frontmatter::{self, Metadata};
+use asides_core::helper::Target;
+use asides_core::history::{self, Aside, Image};
 use asides_core::markdown::{self, Attachment};
-use asides_core::notes::{self, Note};
-use asides_core::project;
 use asides_core::resample::resample;
-use asides_core::routes::{self, Route};
 use chrono::{DateTime, Local};
 
-use crate::environment::Environment;
 use crate::stt::{self, ModelManager, Transcriber};
 
 const WHISPER_RATE: u32 = 16_000;
@@ -24,75 +21,35 @@ const WHISPER_RATE: u32 = 16_000;
 const IDLE_UNLOAD: Duration = Duration::from_secs(15 * 60);
 
 pub struct CapturedImage {
-    /// Seconds since the recording started (0 for images attached while idle).
+    /// Seconds since what was said started.
     pub offset: f32,
-    pub at: DateTime<Local>,
     pub bytes: Vec<u8>,
     pub extension: String,
-    /// Markdown shown after the image (what was measured on it).
+    /// Markdown shown after the image (what was measured and annotated on it).
     pub details: Option<String>,
 }
 
-pub struct RecordingJob {
-    pub dir: PathBuf,
+/// An aside to keep: what was said (maybe nothing), with what was made while saying it.
+pub struct AsideJob {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
     pub started: DateTime<Local>,
-    /// `Some` starts a new note (with an optional title); `None` appends to the latest note.
-    pub new_note: Option<Option<String>>,
     pub images: Vec<CapturedImage>,
-    /// Text added at a moment of the recording (an annotation), as (seconds, Markdown).
+    /// Text added at a moment of it (an annotation, a measurement, where the user was), as
+    /// (seconds, Markdown).
     pub texts: Vec<(f32, String)>,
-    pub environment: Environment,
     pub keep_audio: bool,
     pub model: String,
     pub languages: Vec<String>,
-    /// Start a new note when the work moved on (`notes::moved_on`).
-    pub auto_new_note: bool,
-    /// The session it was spoken to, written to `routes.jsonl` before the entry.
-    pub route: Option<Route>,
     /// Where each take is in `samples` (start and length, in seconds) when they're several takes
     /// joined: what's said in each is kept in it (`takes::fit_segments`).
     pub takes: Vec<(f32, f32)>,
+    /// Where it goes, once kept.
+    pub target: Option<Target>,
 }
 
-pub struct ImageJob {
-    pub dir: PathBuf,
-    pub image: CapturedImage,
-    pub new_note: Option<Option<String>>,
-    pub environment: Environment,
-    pub model: String,
-    pub auto_new_note: bool,
-}
-
-/// Text another app transcribed (a Wispr Flow dictation), added as an entry of its own.
-pub struct DictationJob {
-    pub dir: PathBuf,
-    pub text: String,
-    pub at: DateTime<Local>,
-    pub source: &'static str,
-    pub new_note: Option<Option<String>>,
-    pub environment: Environment,
-    pub auto_new_note: bool,
-    pub route: Option<Route>,
-}
-
-/// A Measure & Annotate session outside a recording: an entry of screenshots and text, in the
-/// order they were made (images by `offset`, texts by their seconds).
-pub struct ScreenJob {
-    pub dir: PathBuf,
-    pub at: DateTime<Local>,
-    pub images: Vec<CapturedImage>,
-    pub texts: Vec<(f32, String)>,
-    pub new_note: Option<Option<String>>,
-    pub environment: Environment,
-    pub model: String,
-    pub auto_new_note: bool,
-    pub route: Option<Route>,
-}
-
-/// What the user said about one annotation in Measure & Annotate (its card's microphone):
-/// transcribed straight away, for the overlay to show and the aside to have.
+/// What the user said about one annotation (its card's microphone): transcribed straight away,
+/// for the overlay to show and the aside to have.
 pub struct TranscribeJob {
     pub id: u64,
     pub samples: Vec<f32>,
@@ -103,22 +60,17 @@ pub struct TranscribeJob {
 
 pub enum Job {
     /// Load this speech model now, while the user talks, if it's on disk (nothing comes back): the
-    /// recording that follows doesn't wait for it after a while unused.
+    /// aside that follows doesn't wait for it after a while unused.
     Warm(String),
-    Recording(Box<RecordingJob>),
+    Aside(Box<AsideJob>),
     Transcribe(Box<TranscribeJob>),
-    Image(Box<ImageJob>),
-    Dictation(Box<DictationJob>),
-    Screen(Box<ScreenJob>),
 }
 
 pub enum Outcome {
-    Appended {
-        note: String,
-        number: u32,
-    },
-    ImageAdded {
-        note: String,
+    /// Kept in the history; the main thread sends it to `target`.
+    Kept {
+        aside: Box<Aside>,
+        target: Option<Target>,
     },
     NothingHeard,
     Failed(String),
@@ -149,12 +101,11 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
                         warm(&model, &mut transcriber);
                         continue;
                     }
-                    Job::Recording(job) => process_recording(*job, &models, &mut transcriber),
+                    Job::Aside(job) => keep(*job, &models, &mut transcriber, &history::dir()),
                     Job::Transcribe(job) => Ok(Outcome::Transcribed {
                         id: job.id,
                         text: transcribe(
-                            &job.samples,
-                            job.sample_rate,
+                            &resample(&job.samples, job.sample_rate, WHISPER_RATE),
                             &job.model,
                             &job.languages,
                             &models,
@@ -163,9 +114,6 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
                         .map(|segments| markdown::plain_text(&segments))
                         .map_err(|err| format!("{err:#}")),
                     }),
-                    Job::Image(job) => process_image(*job),
-                    Job::Dictation(job) => process_dictation(*job),
-                    Job::Screen(job) => process_screen(*job),
                 };
                 done(outcome.unwrap_or_else(|err| Outcome::Failed(format!("{err:#}"))));
             }
@@ -174,26 +122,25 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
     tx
 }
 
-fn process_recording(
-    job: RecordingJob,
+/// Transcribes what was said and keeps the aside in `history`.
+fn keep(
+    job: AsideJob,
     models: &Arc<ModelManager>,
     transcriber: &mut Option<Transcriber>,
+    history: &std::path::Path,
 ) -> Result<Outcome> {
-    let pcm = resample(&job.samples, job.sample_rate, WHISPER_RATE);
-    if stt::is_silent(&pcm)
-        && job.images.is_empty()
-        && job.texts.is_empty()
-        && pcm.iter().all(|s| *s == 0.0)
-        && !pcm.is_empty()
-    {
+    let pcm = resample(&job.samples, job.sample_rate.max(1), WHISPER_RATE);
+    let nothing_else = job.images.is_empty() && job.texts.is_empty();
+    if !pcm.is_empty() && nothing_else && pcm.iter().all(|s| *s == 0.0) {
         return Ok(Outcome::Failed(
             "The microphone delivered only silence. Check System Settings → Privacy & Security → Microphone.".into(),
         ));
     }
     let segments = match job.takes.as_slice() {
-        [] | [_] => transcribe_pcm(&pcm, &job.model, &job.languages, models, transcriber)?,
+        _ if pcm.is_empty() => Vec::new(),
+        [] | [_] => transcribe(&pcm, &job.model, &job.languages, models, transcriber)?,
         takes => {
-            let whole = transcribe_pcm(&pcm, &job.model, &job.languages, models, transcriber)?;
+            let whole = transcribe(&pcm, &job.model, &job.languages, models, transcriber)?;
             match asides_core::takes::fit_segments(whole, takes) {
                 Some(segments) => segments,
                 None => {
@@ -201,7 +148,7 @@ fn process_recording(
                     for &(start, length) in takes {
                         let at = |seconds: f32| ((seconds * WHISPER_RATE as f32) as usize).min(pcm.len());
                         let take = &pcm[at(start)..at(start + length)];
-                        let said = transcribe_pcm(take, &job.model, &job.languages, models, transcriber)?;
+                        let said = transcribe(take, &job.model, &job.languages, models, transcriber)?;
                         segments.extend(said.into_iter().map(|s| markdown::Segment {
                             start: s.start + start,
                             end: s.end + start,
@@ -213,37 +160,34 @@ fn process_recording(
             }
         }
     };
-    let text = markdown::plain_text(&segments);
-    if text.is_empty() && job.images.is_empty() && job.texts.is_empty() {
+    if markdown::plain_text(&segments).is_empty() && nothing_else {
         return Ok(Outcome::NothingHeard);
     }
-
-    let note =
-        target_note(&job.dir, &job.new_note, job.auto_new_note, job.started, &job.environment, &whisper(&job.model))?;
-    let number = note.next_entry_number();
-    let mut attachments = Vec::new();
-    for image in &job.images {
-        attachments.push(save_image(&note, number, image)?);
-    }
+    let mut attachments: Vec<Attachment> = job
+        .images
+        .iter()
+        .enumerate()
+        .map(|(i, image)| Attachment {
+            offset: image.offset,
+            rel_path: format!("{{image:{i}}}"),
+            label: format!("Screenshot {}", i + 1),
+            text: image.details.clone(),
+        })
+        .collect();
     attachments.extend(job.texts.iter().map(|(offset, text)| Attachment {
         offset: *offset,
         text: Some(text.clone()),
         ..Attachment::default()
     }));
-    let audio = if job.keep_audio { save_audio(&note, number, job.started, &pcm).ok() } else { None };
-    let entry = markdown::compose_entry(
-        number,
-        &job.started.format("%H:%M").to_string(),
-        audio.as_deref(),
-        &segments,
-        &attachments,
-    );
-    write_route(&note, number, &job.route);
-    note.append(&entry).context("could not write the note")?;
-    Ok(Outcome::Appended { note: note.title, number })
+    let message = markdown::compose_message(&segments, &attachments);
+    let images: Vec<Image> = job.images.iter().map(|i| Image { bytes: &i.bytes, extension: &i.extension }).collect();
+    let audio = if job.keep_audio && !pcm.is_empty() { encode_audio(&pcm).ok() } else { None };
+    let aside = history::create(history, job.started, &message, &images, audio.as_ref().map(|(b, e)| (&b[..], *e)))
+        .context("could not keep the aside")?;
+    Ok(Outcome::Kept { aside: Box::new(aside), target: job.target })
 }
 
-/// Loads `model` unless it's loaded or still downloading.
+/// Loads `model` unless it's loaded, or not on disk.
 fn warm(model: &str, transcriber: &mut Option<Transcriber>) {
     if transcriber.as_ref().is_some_and(|t| t.model_id == model) {
         return;
@@ -254,19 +198,8 @@ fn warm(model: &str, transcriber: &mut Option<Transcriber>) {
     }
 }
 
-/// Whisper's segments for a recording (none when it's silent), loading the model if needed.
+/// Whisper's segments for 16 kHz audio (none when it's silent), loading the model if needed.
 fn transcribe(
-    samples: &[f32],
-    sample_rate: u32,
-    model: &str,
-    languages: &[String],
-    models: &Arc<ModelManager>,
-    transcriber: &mut Option<Transcriber>,
-) -> Result<Vec<markdown::Segment>> {
-    transcribe_pcm(&resample(samples, sample_rate, WHISPER_RATE), model, languages, models, transcriber)
-}
-
-fn transcribe_pcm(
     pcm: &[f32],
     model: &str,
     languages: &[String],
@@ -284,121 +217,10 @@ fn transcribe_pcm(
     transcriber.as_mut().unwrap().transcribe(pcm, languages)
 }
 
-fn process_image(job: ImageJob) -> Result<Outcome> {
-    let note =
-        target_note(&job.dir, &job.new_note, job.auto_new_note, job.image.at, &job.environment, &whisper(&job.model))?;
-    let number = note.next_entry_number().saturating_sub(1);
-    let attachment = save_image(&note, number, &job.image)?;
-    note.append(&attachment.markdown()).context("could not write the note")?;
-    Ok(Outcome::ImageAdded { note: note.title })
-}
-
-fn process_dictation(job: DictationJob) -> Result<Outcome> {
-    let transcription = format!("asides {} · {}", env!("CARGO_PKG_VERSION"), job.source);
-    let note = target_note(&job.dir, &job.new_note, job.auto_new_note, job.at, &job.environment, &transcription)?;
-    let number = note.next_entry_number();
-    let time = job.at.format("%H:%M").to_string();
-    write_route(&note, number, &job.route);
-    note.append(&markdown::compose_dictation_entry(number, &time, job.source, &job.text))
-        .context("could not write the note")?;
-    Ok(Outcome::Appended { note: note.title, number })
-}
-
-fn process_screen(job: ScreenJob) -> Result<Outcome> {
-    let note = target_note(&job.dir, &job.new_note, job.auto_new_note, job.at, &job.environment, &whisper(&job.model))?;
-    let number = note.next_entry_number();
-    let mut attachments = Vec::new();
-    for image in &job.images {
-        attachments.push(save_image(&note, number, image)?);
-    }
-    attachments.extend(job.texts.iter().map(|(offset, text)| Attachment {
-        offset: *offset,
-        text: Some(text.clone()),
-        ..Attachment::default()
-    }));
-    // Stable: what was made at the same moment keeps its order.
-    attachments.sort_by(|a, b| a.offset.total_cmp(&b.offset));
-    let time = job.at.format("%H:%M").to_string();
-    write_route(&note, number, &job.route);
-    note.append(&markdown::compose_attachments_entry(number, &time, SCREEN_SOURCE, &attachments))
-        .context("could not write the note")?;
-    Ok(Outcome::Appended { note: note.title, number })
-}
-
-/// Says which session entry `number` is for, before the entry is written: an agent that sees the
-/// entry then also sees whether it's its own. If this fails, the entry reaches every agent there.
-fn write_route(note: &Note, number: u32, route: &Option<Route>) {
-    if let Some(route) = route
-        && let Err(err) = routes::append(&note.dir, &Route { entry: number, ..route.clone() })
-    {
-        eprintln!("could not write the route of #{number}: {err}");
-    }
-}
-
-/// How entries made with Measure & Annotate (outside a recording) are marked.
-pub const SCREEN_SOURCE: &str = "Screen";
-
-/// The front matter's `transcription` for notes started by a recording.
-fn whisper(model: &str) -> String {
-    format!("asides {} · whisper {model} (local)", env!("CARGO_PKG_VERSION"))
-}
-
-/// The latest note, or a newly created one (with front matter) when asked for, when none exists,
-/// or (with `auto`) when the work moved on: another branch, or a break (`notes::moved_on`).
-/// A new note is titled as asked, or [`notes::DEFAULT_TITLE`]; never after what was said.
-fn target_note(
-    dir: &Path,
-    new_note: &Option<Option<String>>,
-    auto: bool,
-    created: DateTime<Local>,
-    environment: &Environment,
-    transcription: &str,
-) -> Result<Note> {
-    if new_note.is_none()
-        && let Some(note) = notes::latest_note(dir)
-        && !(auto && notes::moved_on(&note, project::current_branch(dir).as_deref(), SystemTime::now()).is_some())
-    {
-        return Ok(note);
-    }
-    let title = new_note.clone().flatten().unwrap_or_else(|| notes::DEFAULT_TITLE.to_string());
-    let metadata = Metadata {
-        title: notes::sanitize_title(&title),
-        created,
-        directory: dir.to_path_buf(),
-        git: project::git_info(dir),
-        macos: environment.macos.clone(),
-        browser: environment.browser.clone(),
-        display: environment.display.clone(),
-        transcription: transcription.to_string(),
-    };
-    notes::create_note(dir, created, &title, &frontmatter::render(&metadata)).context("could not create the note")
-}
-
-fn save_image(note: &Note, number: u32, image: &CapturedImage) -> Result<Attachment> {
-    let dir = note.dir.join("images");
-    fs::create_dir_all(&dir)?;
-    let stem = format!("{number:02}-{}", image.at.format("%H%M%S"));
-    let mut name = format!("{stem}.{}", image.extension);
-    let mut n = 2;
-    while dir.join(&name).exists() {
-        name = format!("{stem}-{n}.{}", image.extension);
-        n += 1;
-    }
-    fs::write(dir.join(&name), &image.bytes).context("could not save the image")?;
-    Ok(Attachment {
-        offset: image.offset,
-        rel_path: format!("images/{name}"),
-        label: image.at.format("%H:%M:%S").to_string(),
-        text: image.details.clone(),
-    })
-}
-
-/// Writes the recording as AAC (via the system's `afconvert`), falling back to WAV.
-fn save_audio(note: &Note, number: u32, started: DateTime<Local>, pcm: &[f32]) -> Result<String> {
-    let dir = note.dir.join("audio");
-    fs::create_dir_all(&dir)?;
-    let stem = format!("{number:02}-{}", started.format("%H%M%S"));
-    let wav = dir.join(format!("{stem}.wav"));
+/// The recording as AAC (the system's `afconvert`), or else WAV: its bytes and extension.
+fn encode_audio(pcm: &[f32]) -> Result<(Vec<u8>, &'static str)> {
+    let dir = tempfile_dir()?;
+    let wav = dir.join("aside.wav");
     let spec = hound::WavSpec {
         channels: 1,
         sample_rate: WHISPER_RATE,
@@ -410,7 +232,7 @@ fn save_audio(note: &Note, number: u32, started: DateTime<Local>, pcm: &[f32]) -
         writer.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
     }
     writer.finalize()?;
-    let m4a = dir.join(format!("{stem}.m4a"));
+    let m4a = dir.join("aside.m4a");
     let converted = Command::new("afconvert")
         // 32 kbps: the AAC encoder rejects higher bit rates for 16 kHz mono.
         .args(["-f", "m4af", "-d", "aac", "-b", "32000"])
@@ -418,12 +240,15 @@ fn save_audio(note: &Note, number: u32, started: DateTime<Local>, pcm: &[f32]) -
         .arg(&m4a)
         .status()
         .is_ok_and(|s| s.success());
-    if converted {
-        let _ = fs::remove_file(&wav);
-        Ok(format!("audio/{stem}.m4a"))
-    } else {
-        Ok(format!("audio/{stem}.wav"))
-    }
+    let result = if converted { (fs::read(&m4a)?, "m4a") } else { (fs::read(&wav)?, "wav") };
+    let _ = fs::remove_dir_all(&dir);
+    Ok(result)
+}
+
+fn tempfile_dir() -> Result<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join(format!("asides-audio-{}-{}", std::process::id(), history::now_ms()));
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 #[cfg(test)]
@@ -431,69 +256,39 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    fn dictate(dir: &Path, text: &str, new_note: Option<Option<String>>) -> String {
-        let job = DictationJob {
-            dir: dir.to_path_buf(),
-            text: text.into(),
-            at: Local.with_ymd_and_hms(2026, 10, 15, 14, 32, 0).unwrap(),
-            source: "Wispr Flow",
-            new_note,
-            environment: Environment::default(),
-            auto_new_note: true,
-            route: None,
-        };
-        match process_dictation(job).unwrap() {
-            Outcome::Appended { note, .. } => note,
-            _ => panic!("not appended"),
-        }
-    }
-
     #[test]
-    fn new_notes_get_a_generic_title_not_the_first_sentence() {
-        let tmp = tempfile::tempdir().unwrap();
-        assert_eq!(dictate(tmp.path(), "The checkout button does nothing. Fix it.", None), "Untitled");
-        assert_eq!(dictate(tmp.path(), "Another thing entirely.", Some(None)), "Untitled");
-        assert_eq!(dictate(tmp.path(), "Something else.", Some(Some("Checkout".into()))), "Checkout");
-
-        let notes = notes::list_notes(tmp.path());
-        let titles: Vec<&str> = notes.iter().map(|n| n.title.as_str()).collect();
-        assert_eq!(titles, ["Untitled", "Untitled 2", "Checkout"]);
-        let content = fs::read_to_string(notes[0].file()).unwrap();
-        assert!(content.starts_with("---\ntitle: Untitled\n"), "{content}");
-    }
-
-    #[test]
-    fn screen_entries_hold_screenshots_and_annotations() {
+    fn keeps_asides_made_without_speaking() {
         let tmp = tempfile::tempdir().unwrap();
         let at = Local.with_ymd_and_hms(2026, 10, 15, 14, 40, 5).unwrap();
         let image = |offset: f32, details: Option<&str>| CapturedImage {
             offset,
-            at,
             bytes: vec![0x89, b'P', b'N', b'G'],
             extension: "png".into(),
             details: details.map(Into::into),
         };
-        let job = ScreenJob {
-            dir: tmp.path().to_path_buf(),
-            at,
+        let job = AsideJob {
+            samples: Vec::new(),
+            sample_rate: 16_000,
+            started: at,
             images: vec![image(0.0, Some("**Measured** in pt:\n- Area 10 × 10 at (0, 0)")), image(4.0, None)],
             texts: vec![(2.5, "### 1. button \"Pay\"\n**Feedback:** Bigger".into())],
-            new_note: None,
-            environment: Environment::default(),
+            keep_audio: false,
             model: "m".into(),
-            auto_new_note: true,
-            route: Some(Route { entry: 0, session: Some("s1".into()), agent: Some("Codex".into()) }),
+            languages: Vec::new(),
+            takes: Vec::new(),
+            target: Some(Target::History),
         };
-        assert!(matches!(process_screen(job).unwrap(), Outcome::Appended { number: 1, .. }));
-        let note = notes::latest_note(tmp.path()).unwrap();
-        assert_eq!(routes::read(&note.dir).get(&1).and_then(|r| r.session.as_deref()), Some("s1"));
-        let content = fs::read_to_string(note.file()).unwrap();
-        assert!(
-            content.ends_with(
-                "## 1 · 14:40 · Screen\n\n![14:40:05](images/01-144005.png)\n\n**Measured** in pt:\n- Area 10 × 10 at \
-                 (0, 0)\n\n### 1. button \"Pay\"\n**Feedback:** Bigger\n\n![14:40:05](images/01-144005-2.png)\n"
-            ),
-            "{content}"
+        let models = ModelManager::new(|_, _| {});
+        let Outcome::Kept { aside, target } = keep(job, &models, &mut None, tmp.path()).unwrap() else {
+            panic!("not kept")
+        };
+        assert_eq!(target, Some(Target::History));
+        assert_eq!(aside.record.images, ["images/1.png", "images/2.png"]);
+        assert_eq!(
+            aside.message(),
+            "![Screenshot 1](images/1.png)\n\n**Measured** in pt:\n- Area 10 × 10 at (0, 0)\n\n### 1. button \"Pay\"\n\
+             **Feedback:** Bigger\n\n![Screenshot 2](images/2.png)"
         );
+        assert_eq!(aside.record.title, "**Measured** in pt:");
     }
 }

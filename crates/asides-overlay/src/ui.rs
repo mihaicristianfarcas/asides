@@ -1,6 +1,6 @@
 //! The overlay's windows: one per screen, borderless, above everything, showing the frozen screen
-//! and what's on it, with one toolbar for the four tools (Measure, Annotate, Draw, Shot), the
-//! tolerance, the units, talking, copying, and adding it all to the aside.
+//! and what's on it, with the pill: the microphone, where the aside goes, send and close. The tools
+//! (Annotate, the default; Measure, Draw, Shot) are on keys and in the right-click menu.
 //!
 //! `Overlay` holds the session (`asides_core::overlay::Session`) and everything around it; each
 //! window's `ScreenView` draws its screen from it and feeds it the mouse and keyboard.
@@ -11,8 +11,9 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+use asides_core::agents::AgentKind;
 use asides_core::config::OverlayKeys;
-use asides_core::helper::{Command, Event, Item, Spec, SpecScreen};
+use asides_core::helper::{Command, Event, Item, Spec, SpecScreen, Target};
 use asides_core::inspect::{Annotation, Axis, Element, Intent, Measurement, PtRect, Said, Severity, Shape, num};
 use asides_core::keys::{self, Chord, Mods};
 use asides_core::measure::{Frame, Tolerance};
@@ -27,7 +28,6 @@ use gpui::{
 
 use crate::export::{self, Exporter};
 use crate::input::TextInput;
-use crate::windows::TOOLBAR_LIFT;
 use crate::{finish, io, style};
 
 /// How often the overlay looks at the app's commands, the clock and the hover.
@@ -51,6 +51,8 @@ const TRASH_WIDTH: f64 = 34.0;
 /// The card opens above its annotation when there's less than this below it.
 const CARD_ROOM: f64 = 240.0;
 const MENU_WIDTH: f64 = 260.0;
+/// The pill's place, unless the user moved it: this far below the menu bar, in the middle.
+pub const PILL_TOP: f64 = 10.0;
 
 /// A screen's window: where it is and what part of the screen it shows (all of it, unless
 /// windowed for development).
@@ -85,12 +87,11 @@ enum Cmd {
     Undo,
     Clear,
     Hide,
-    Toolbar,
     Restore,
     Help,
+    Target,
     Done,
     DoneWhole,
-    Send,
     Live,
     Close,
 }
@@ -124,10 +125,9 @@ impl Keys {
                 (p(&k.undo), Cmd::Undo),
                 (p(&k.clear), Cmd::Clear),
                 (p(&k.hide), Cmd::Hide),
-                (p(&k.toolbar), Cmd::Toolbar),
                 (p(&k.restore), Cmd::Restore),
                 (p(&k.help), Cmd::Help),
-                (p(&k.send), Cmd::Send),
+                (p(&k.target), Cmd::Target),
                 (p(&k.done_whole_screen), Cmd::DoneWhole),
                 (p(&k.done), Cmd::Done),
                 (p(&k.live), Cmd::Live),
@@ -216,11 +216,18 @@ pub struct Overlay {
     menu: Option<Menu>,
     /// A short message at the bottom, and until when.
     toast: Option<(SharedString, Instant)>,
-    /// The keys, shown with `?` (or while the pointer is on the toolbar's `?`).
+    /// The keys, shown with `?`.
     help: bool,
     help_hover: bool,
-    /// The toolbar is shown (`Cmd::Toolbar` hides it; every action has a key).
-    toolbar: bool,
+    /// Where the aside goes, and whether the user picked it (the app's choice no longer applies).
+    target: Option<Target>,
+    chose_target: bool,
+    /// The pill's list of sessions is open.
+    pub targets_open: bool,
+    /// The agent a new session starts (the list's chips).
+    new_agent: AgentKind,
+    /// The app was asked to download the speech model.
+    asked_model: bool,
     /// Seconds recorded when the app last said so, and when it did.
     recording: Option<(f32, Instant)>,
     /// The annotation that recording is about (started from its card).
@@ -257,10 +264,8 @@ pub struct Overlay {
     pub toolbar_screen: usize,
     /// Which windows show: the toolbar's (`Some(true)`, live) or the screens' (`Some(false)`).
     pub shown: Option<bool>,
-    /// Where the user put the toolbar (its top-left corner, as a fraction of the screen), and
-    /// folded to its handle and microphone.
+    /// Where the user put the pill (its top-left corner, as a fraction of the screen).
     pub toolbar_at: Option<(f64, f64)>,
-    pub collapsed: bool,
     /// The toolbar's bounds in its window, as last drawn: on a frozen screen, and over the live one.
     pub toolbar_bounds: Option<Bounds<Pixels>>,
     pub live_toolbar_bounds: Option<Bounds<Pixels>>,
@@ -310,7 +315,8 @@ impl Overlay {
         let frames: Vec<Arc<Frame>> = frames.into_iter().map(Arc::new).collect();
         let screens = spec.screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
         let mut session = Session::new(screens, Tolerance(spec.tolerance.min(100)), spec.units);
-        session.tool = Tool::Measure;
+        // A click pins what's under it; Measure is a key away.
+        session.tool = Tool::Annotate;
         // Opened over the live screen, there are no frozen screens yet.
         session.cursor = pointer(&spec).filter(|_| !spec.live);
         let images = frames.iter().map(|f| render_image(f)).collect();
@@ -332,7 +338,11 @@ impl Overlay {
             toast: None,
             help: spec.tips && !spec.live,
             help_hover: false,
-            toolbar: spec.toolbar,
+            target: spec.targets.chosen.clone(),
+            chose_target: false,
+            targets_open: false,
+            new_agent: spec.targets.agents.first().copied().unwrap_or(AgentKind::Claude),
+            asked_model: false,
             recording,
             recording_for: None,
             transcribing: Vec::new(),
@@ -355,8 +365,7 @@ impl Overlay {
             toolbar_window: None,
             toolbar_screen: 0,
             shown: None,
-            toolbar_at: spec.toolbar_at,
-            collapsed: spec.toolbar_collapsed,
+            toolbar_at: spec.pill_at,
             toolbar_bounds: None,
             live_toolbar_bounds: None,
             moving_toolbar: None,
@@ -492,9 +501,9 @@ impl Overlay {
         self.moving_toolbar = Some((f64::from(f32::from(at.x - origin.x)), f64::from(f32::from(at.y - origin.y))));
     }
 
-    /// The moved or folded toolbar, remembered for next time.
+    /// The moved pill, remembered for next time.
     pub fn placed_toolbar(&mut self) {
-        io::emit(&Event::ToolbarPlaced { at: self.toolbar_at, collapsed: self.collapsed });
+        io::emit(&Event::PillPlaced { at: self.toolbar_at });
     }
 
     pub fn start(&mut self) {
@@ -526,14 +535,46 @@ impl Overlay {
         self.toast = Some((text.into(), Instant::now() + NOTICE));
     }
 
-    /// Without a bound directory there's nowhere to record into or add the aside to: say so
-    /// instead of trying.
-    fn unbound(&mut self) -> bool {
-        if self.spec.bound.is_none() {
-            self.notice("Not bound to a repo: run `asides` in your project first. ⇧⌘C copies this as Markdown.");
-            return true;
+    /// Without a speech model there's nothing to listen with: the app is asked to download one (the
+    /// first time), and the user is told.
+    fn needs_model(&mut self) -> bool {
+        if self.spec.model.ready {
+            return false;
         }
-        false
+        if !std::mem::replace(&mut self.asked_model, true) {
+            io::emit(&Event::DownloadModel);
+        }
+        let text = match self.spec.model.downloading {
+            Some(p) => format!("Getting the voice model ready… {:.0}%", p * 100.0),
+            None => format!("Downloading the voice model, {}…", self.spec.model.label),
+        };
+        self.notice(text);
+        true
+    }
+
+    /// Where the aside goes now.
+    fn choose_target(&mut self, target: Target) {
+        self.target = Some(target.clone());
+        self.chose_target = true;
+        self.targets_open = false;
+        io::emit(&Event::Target { target });
+    }
+
+    /// Tab: the next session the aside can go to.
+    fn next_target(&mut self) {
+        let next = self.spec.targets.next(self.target.as_ref());
+        let label = self.spec.targets.label(Some(&next));
+        self.choose_target(next);
+        self.toast(format!("Sends to {label}"));
+    }
+
+    /// The pill's microphone: listening, or not (a model first, when there's none).
+    fn mic(&mut self) {
+        if self.needs_model() {
+            return;
+        }
+        let listening = self.recording.is_some() && self.recording_for.is_none();
+        io::emit(&Event::Mic { on: !listening });
     }
 
     /// Measure's modifiers. With ⌃ down, they're part of one of Asides' shortcuts (⌃⌥P, ⌃⌥Space),
@@ -633,15 +674,9 @@ impl Overlay {
 
     fn placed(&mut self, placed: Placed, window: &mut Window, cx: &mut Context<Self>) {
         match placed {
-            Placed::Annotation { screen, index } => {
-                self.look_up(screen, index);
-                // While the user talks, an annotation is enough: what they say goes with it. Drawings
-                // come in quick strokes: their card opens on a click on their number.
-                let drawing = self.session.screens[screen].annotations.get(index).is_some_and(|a| a.shape.is_some());
-                if self.recording.is_none() && !drawing {
-                    self.open_card(screen, index, window, cx);
-                }
-            }
+            // A pin is enough: what the user says goes with it. A click on its number opens its card,
+            // to type.
+            Placed::Annotation { screen, index } => self.look_up(screen, index),
             Placed::Edit { screen, index } => self.open_card(screen, index, window, cx),
             Placed::Shot { screen, rect } => self.take_shot(screen, rect),
             Placed::Measurement { .. } | Placed::Nothing => {}
@@ -846,7 +881,9 @@ impl Overlay {
             return;
         }
         if keys::matches(&self.keys.talk, &key, mods) {
-            if !e.is_held && !self.talking && !self.unbound() {
+            // Held while the microphone is off, it listens until it's let go.
+            let listening = self.recording.is_some() && !self.talking;
+            if !e.is_held && !self.talking && !listening && !self.needs_model() {
                 self.talking = true;
                 io::emit(&Event::Talk { down: true, annotation: None });
             }
@@ -949,11 +986,6 @@ impl Overlay {
                 self.shots.clear();
             }
             Cmd::Hide => s.hidden = !s.hidden,
-            Cmd::Toolbar => {
-                self.toolbar = !self.toolbar;
-                io::emit(&Event::Toolbar { shown: self.toolbar });
-                self.toast(if self.toolbar { "Toolbar shown" } else { "Toolbar hidden · ⇧Tab shows it" });
-            }
             Cmd::Restore => {
                 let saved = self.spec.saved.clone();
                 if self.session.restore(&saved) {
@@ -961,11 +993,9 @@ impl Overlay {
                 }
             }
             Cmd::Help => self.help = !self.help,
-            Cmd::Done | Cmd::DoneWhole | Cmd::Send if self.unbound() => {}
-            Cmd::Done => self.finish(false, false, window, cx),
-            Cmd::DoneWhole => self.finish(true, false, window, cx),
-            // Without batches, agents get the aside once it's written anyway.
-            Cmd::Send => self.finish(false, self.spec.batch, window, cx),
+            Cmd::Target => self.next_target(),
+            Cmd::Done => self.finish(false, window, cx),
+            Cmd::DoneWhole => self.finish(true, window, cx),
             Cmd::Live => self.go_live(cx),
             Cmd::Close => self.cancel(cx),
         }
@@ -973,7 +1003,7 @@ impl Overlay {
 
     /// A microphone: with the card open, what's said is about its annotation.
     fn talk_button(&mut self, down: bool) {
-        if down && !self.talking && self.unbound() {
+        if down && !self.talking && self.needs_model() {
             return;
         }
         if down != self.talking {
@@ -996,7 +1026,7 @@ impl Overlay {
     fn space_talks(&mut self) {
         let Some((since, false)) = self.space_hold else { return };
         let Some(key) = self.card.as_ref().map(|c| c.key) else { return };
-        if since.elapsed() >= SPACE_HOLD && self.recording.is_none() && !self.unbound() {
+        if since.elapsed() >= SPACE_HOLD && self.recording.is_none() && !self.needs_model() {
             self.space_hold = Some((since, true));
             self.talking = true;
             io::emit(&Event::Talk { down: true, annotation: Some(key) });
@@ -1012,15 +1042,15 @@ impl Overlay {
 
     // --- Finishing ---
 
-    fn finish(&mut self, whole: bool, send: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn finish(&mut self, whole: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.done {
             return;
         }
         self.close_card(window, cx);
-        self.finish_now(whole, send, cx);
+        self.finish_now(whole, cx);
     }
 
-    fn finish_now(&mut self, whole: bool, send: bool, cx: &mut Context<Self>) {
+    fn finish_now(&mut self, whole: bool, cx: &mut Context<Self>) {
         if self.done {
             return;
         }
@@ -1042,7 +1072,7 @@ impl Overlay {
                 self.keep(keeping, alone, whole)
             }
         };
-        let outcome = finish::outcome(std::mem::take(&mut self.kept), self.saved.clone(), send);
+        let outcome = finish::outcome(std::mem::take(&mut self.kept), self.saved.clone(), self.target.clone());
         match kept.and_then(|()| finish::write(&self.dir, &outcome)) {
             Ok(()) => io::emit(&Event::Finished),
             Err(err) => {
@@ -1060,14 +1090,6 @@ impl Overlay {
         match self.shown == Some(false) {
             true => self.closing = true,
             false => cx.quit(),
-        }
-    }
-
-    /// How far above the screen's bottom edge its visible part starts (the Dock, when it shows).
-    pub fn lift(&self, screen: usize) -> f64 {
-        match (self.visible.get(screen), self.spec.screens.get(screen)) {
-            (Some(v), Some(s)) => (v.y - s.frame.y).max(0.0),
-            _ => 0.0,
         }
     }
 
@@ -1096,7 +1118,7 @@ impl Overlay {
             return self.cancel(cx);
         }
         self.close_armed = Some(Instant::now());
-        self.toast(format!("{} again closes without adding anything", self.keys.label(Cmd::Close)));
+        self.toast(format!("{} again closes without sending anything", self.keys.label(Cmd::Close)));
     }
 
     /// The guides and held measurements to restore next time: the frozen screen's, or the last's.
@@ -1143,11 +1165,7 @@ impl Overlay {
         match command {
             Command::Element { id, element } => self.identified(id, element.map(|e| *e)),
             Command::Recording { seconds, annotation } => {
-                // What was said waits for Done, with the annotations: say so as it stops. What was
-                // said about an annotation shows in its card.
-                if self.recording.is_some() && self.recording_for.is_none() && seconds.is_none() && !self.done {
-                    self.toast(format!("Kept for the aside · {} adds it", self.keys.label(Cmd::Done)));
-                }
+                // What was said about an annotation shows in its card.
                 if let (Some(key), None) = (self.recording_for, seconds) {
                     self.awaiting = Some((key, Instant::now()));
                 }
@@ -1168,7 +1186,30 @@ impl Overlay {
                     }
                 }
             }
-            Command::Finish => self.finish_now(false, false, cx),
+            Command::Finish => self.finish_now(false, cx),
+            Command::Targets { targets } => {
+                // The user's own pick stays while it's there; otherwise the app's.
+                let gone = match &self.target {
+                    Some(Target::Session { id }) => !targets.sessions.iter().any(|s| &s.id == id),
+                    _ => false,
+                };
+                if !self.chose_target || gone {
+                    self.target = targets.chosen.clone();
+                }
+                if !targets.agents.contains(&self.new_agent)
+                    && let Some(&first) = targets.agents.first()
+                {
+                    self.new_agent = first;
+                }
+                self.spec.targets = targets;
+            }
+            Command::Model { model } => {
+                let ready = model.ready && !self.spec.model.ready;
+                self.spec.model = model;
+                if ready {
+                    self.toast("The voice model is ready: talk away");
+                }
+            }
             Command::ToggleFreeze if self.live => self.freeze(None),
             Command::ToggleFreeze => self.go_live(cx),
             Command::Frozen { screens } => self.frozen(screens),
@@ -1756,23 +1797,6 @@ impl Render for ScreenView {
         let hidden_hint = (session.hidden && shows_toolbar).then(|| {
             pill(format!("Hidden · {} shows everything again", o.keys.label(Cmd::Hide)), (ww / 2.0, top + 20.0))
         });
-        // Nowhere to add the aside: said when it opens, not after the work's done.
-        let banner = (o.spec.bound.is_none() && shows_toolbar && !session.hidden).then(|| {
-            div().absolute().top(px(top as f32 + 14.)).left_0().right_0().flex().justify_center().child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(7.))
-                    .px(px(11.))
-                    .py(px(5.))
-                    .rounded(px(9.))
-                    .bg(color(style::PANEL, style::PANEL_ALPHA))
-                    .text_color(gpui::white())
-                    .text_size(px(12.))
-                    .child(div().size(px(7.)).rounded_full().bg(color(style::INTENT_CHANGE, 1.0)))
-                    .child("Not bound to a repo · run `asides` in your project to keep what you annotate"),
-            )
-        });
         let image = screenshot();
 
         let view = cx.entity();
@@ -1813,7 +1837,6 @@ impl Render for ScreenView {
             .children(labels)
             .children(markers)
             .children(hidden_hint)
-            .children(banner)
             .children(bottom)
             // On top of everything else.
             .children(card.map(|c| deferred(c).with_priority(1)))
@@ -1902,12 +1925,12 @@ fn icon(name: &str, ink: Hsla) -> impl IntoElement {
     svg().path(format!("icons/{name}.svg")).size(px(15.)).text_color(ink)
 }
 
-/// The toolbar: a handle to move it, the tools, the microphone, Done and close, and fold. Frozen,
-/// also the tolerance, the units, undo, copy, the keys and Live; over the live screen (`live`), the
-/// tools freeze the screen. Folded: the handle, the microphone and unfold.
+/// The pill: the microphone (the time while it listens), where the aside goes (a click lists the
+/// sessions and New session in…), the tool when it isn't Annotate, send and close. The same frozen
+/// and over the live screen (`live`); it moves when it's dragged anywhere but its buttons.
 pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, live: bool) -> AnyElement {
     let session = &o.session;
-    // An icon (or short text) button; its name shows above the toolbar while the pointer is on it.
+    // An icon (or short text) button; its name shows by the pill while the pointer is on it.
     let button = |id: &str, name: String, emphasis: Emphasis, content: AnyElement, on: Box<OnPress>| {
         let (o1, o2) = (overlay.clone(), overlay.clone());
         let name: SharedString = name.into();
@@ -1948,195 +1971,244 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, live: bool) -> AnyElement
     };
     let sep = || div().w(px(1.)).h(px(18.)).mx(px(3.)).bg(color(0xffffff, 0.15)).into_any_element();
     let plain = Emphasis::Plain.ink();
-    let grab = overlay.clone();
-    let mut items: Vec<AnyElement> = vec![
+    let mut items: Vec<AnyElement> = vec![mic_button(overlay, o)];
+    let open = o.targets_open;
+    let target = if open { Emphasis::On } else { Emphasis::Plain };
+    items.push(button(
+        "target",
+        format!("Where it goes · {} switches", o.keys.label(Cmd::Target)),
+        target,
         div()
-            .id("handle")
             .flex()
             .items_center()
-            .justify_center()
-            .h(px(28.))
-            .w(px(16.))
-            .cursor(CursorStyle::OpenHand)
-            .on_mouse_down(MouseButton::Left, move |e, _, cx| {
-                cx.stop_propagation();
-                grab.update(cx, |o, _| o.grab_toolbar(e.position, live));
-            })
-            .child(svg().path("icons/grip.svg").size(px(14.)).text_color(color(0xffffff, 0.45)))
+            .gap(px(4.))
+            .child(div().max_w(px(240.)).truncate().child(o.spec.targets.label(o.target.as_ref())))
+            .child(icon("chevron", target.ink()))
             .into_any_element(),
-    ];
-    let fold = |folded: bool| {
-        button(
-            "fold",
-            if folded { "Unfold the toolbar" } else { "Fold the toolbar" }.into(),
-            Emphasis::Plain,
-            icon(if folded { "unfold" } else { "fold" }, plain).into_any_element(),
-            Box::new(|o, _, _| {
-                o.collapsed = !o.collapsed;
-                o.placed_toolbar();
-            }),
-        )
-    };
-    if o.collapsed {
-        items.push(talk_button(overlay, o, "talk", true));
-        items.push(fold(true));
-        return toolbar_panel(overlay, items, live);
-    }
-    for (tool, name) in
-        [(Tool::Measure, "measure"), (Tool::Annotate, "annotate"), (Tool::Draw, "draw"), (Tool::Shot, "shot")]
-    {
-        let emphasis = if !live && session.tool == tool { Emphasis::On } else { Emphasis::Plain };
-        let label = if live { format!("{}: freezes the screen", tool.label()) } else { tool.label().to_string() };
-        items.push(button(
-            name,
-            label,
-            emphasis,
-            icon(name, emphasis.ink()).into_any_element(),
-            Box::new(move |o, _, _| o.freeze(Some(tool))),
-        ));
-    }
-    if live {
-        items.push(button(
-            "pause",
-            format!("Freeze the screen ({})", o.spec.freeze_shortcut),
-            Emphasis::Plain,
-            icon("pause", plain).into_any_element(),
-            Box::new(|o, _, _| o.freeze(None)),
-        ));
-    }
-    items.push(sep());
-    if !live {
-        let level = match session.tolerance.level() {
-            "Medium" => "Med",
-            other => other,
-        };
-        items.push(button(
-            "tolerance",
-            format!("Edge tolerance: {}", session.tolerance.level()),
-            Emphasis::Plain,
-            div().opacity(0.8).child(level).into_any_element(),
-            Box::new(|o, _, _| {
-                let next = match o.session.tolerance.level() {
-                    "Low" => "Medium",
-                    "Medium" => "High",
-                    _ => "Low",
-                };
-                o.session.tolerance = Tolerance::of_level(next).unwrap_or_default();
-                o.session.normal_tolerance = o.session.tolerance;
-            }),
-        ));
-        items.push(button(
-            "units",
-            "Points or pixels".into(),
-            Emphasis::Plain,
-            div().opacity(0.8).child(session.units.label()).into_any_element(),
-            Box::new(|o, _, _| o.session.toggle_units()),
-        ));
-        items.push(sep());
-    }
-    items.push(talk_button(overlay, o, "talk", true));
-    items.push(sep());
-    if !live {
-        items.push(button(
-            "undo",
-            "Undo".into(),
-            Emphasis::Plain,
-            icon("undo", plain).into_any_element(),
-            Box::new(|o, w, cx| o.command(Cmd::Undo, w, cx)),
-        ));
-        items.push(button(
-            "copy",
-            "Copy as Markdown".into(),
-            Emphasis::Plain,
-            icon("copy", plain).into_any_element(),
-            Box::new(|o, w, cx| o.command(Cmd::CopyMarkdown, w, cx)),
-        ));
-        // `?`: the keys while the pointer is on it; a click keeps them up.
-        let (h1, h2) = (overlay.clone(), overlay.clone());
-        let help_on = o.help || o.help_hover;
-        let ink = if help_on { Emphasis::On.ink() } else { plain };
-        items.push(
-            div()
-                .id("help")
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(28.))
-                .rounded(px(7.))
-                .cursor_pointer()
-                .when(help_on, |d| d.bg(color(style::UI, 1.0)))
-                .when(!help_on, |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
-                .on_hover(move |hovered, _, cx| {
-                    h1.update(cx, |o, cx| {
-                        o.help_hover = *hovered;
-                        cx.notify();
-                    });
-                })
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    cx.stop_propagation();
-                    h2.update(cx, |o, cx| {
-                        o.help = !o.help;
-                        cx.notify();
-                    });
-                })
-                .child(icon("help", ink))
-                .into_any_element(),
+        Box::new(|o, _, _| o.targets_open = !o.targets_open),
+    ));
+    if !live && session.tool != Tool::Annotate {
+        let tool = session.tool;
+        let name = format!(
+            "{}: a click here, or {}, goes back to Annotate",
+            tool.label(),
+            o.keys.label(Cmd::Tool(Tool::Annotate))
         );
         items.push(button(
-            "live",
-            format!("Back to the live screen ({})", o.spec.freeze_shortcut),
-            Emphasis::Plain,
-            icon("live", plain).into_any_element(),
-            Box::new(|o, w, cx| o.command(Cmd::Live, w, cx)),
+            "tool",
+            name,
+            Emphasis::On,
+            div()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .child(icon(tool_icon(tool), Emphasis::On.ink()))
+                .child(tool.label())
+                .into_any_element(),
+            Box::new(|o, _, _| o.session.set_tool(Tool::Annotate)),
         ));
-        items.push(sep());
     }
-    let done_name = if o.spec.bound.is_some() { "Add it all to the aside" } else { "Not bound to a repo" };
+    items.push(sep());
     items.push(button(
         "done",
-        done_name.into(),
+        format!("Send ({} or {})", o.spec.record_shortcut, o.keys.label(Cmd::Done)),
         Emphasis::Primary,
         icon("check", Emphasis::Primary.ink()).into_any_element(),
         Box::new(|o, w, cx| o.command(Cmd::Done, w, cx)),
     ));
-    if o.spec.batch {
-        items.push(button(
-            "send",
-            "Add and send to your agent".into(),
-            Emphasis::Plain,
-            icon("send", plain).into_any_element(),
-            Box::new(|o, w, cx| o.command(Cmd::Send, w, cx)),
-        ));
-    }
     items.push(button(
         "close",
-        "Close without adding anything".into(),
+        "Close without sending".into(),
         Emphasis::Plain,
         icon("close", plain).into_any_element(),
         Box::new(|o, w, cx| o.command(Cmd::Close, w, cx)),
     ));
-    items.push(fold(false));
-    toolbar_panel(overlay, items, live)
+    let list = open.then(|| targets_list(overlay, o));
+    toolbar_panel(overlay, items, list, live)
 }
 
-/// The toolbar's panel around its buttons; it notes where it's drawn, to be moved (and over the
-/// live screen, for its window to fit it).
-fn toolbar_panel(overlay: &Entity<Overlay>, items: Vec<AnyElement>, live: bool) -> AnyElement {
+fn tool_icon(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Measure => "measure",
+        Tool::Annotate => "annotate",
+        Tool::Draw => "draw",
+        Tool::Shot => "shot",
+    }
+}
+
+/// The pill's list: the sessions running (the ones Asides can't type into, dimmed, with why), New
+/// session in… (the agent, then the folder), and History only.
+fn targets_list(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
+    let targets = &o.spec.targets;
+    let row = |id: String, chosen: bool, enabled: bool, content: AnyElement, target: Option<Target>| {
+        let pick = overlay.clone();
+        div()
+            .id(SharedString::from(id))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .min_h(px(28.))
+            .px(px(8.))
+            .rounded(px(7.))
+            .text_size(px(12.))
+            .when(chosen, |d| d.bg(color(0xffffff, 0.08)))
+            .when(enabled, |d| {
+                d.cursor_pointer().hover(|s| s.bg(color(style::UI, 1.0)).text_color(color(style::UI_INK, 1.0)))
+            })
+            .when(!enabled, |d| d.opacity(0.45))
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                cx.stop_propagation();
+                if let Some(target) = target.clone() {
+                    pick.update(cx, |o, cx| {
+                        o.choose_target(target);
+                        cx.notify();
+                    });
+                }
+            })
+            .child(div().w(px(10.)).child(if chosen { "✓" } else { "" }))
+            .child(content)
+            .into_any_element()
+    };
+    let heading = |text: &str| {
+        div()
+            .px(px(8.))
+            .pt(px(6.))
+            .pb(px(2.))
+            .text_size(px(11.))
+            .text_color(color(0xffffff, 0.5))
+            .child(text.to_string())
+    };
+    let mut rows: Vec<AnyElement> = Vec::new();
+    if !targets.sessions.is_empty() {
+        rows.push(heading("Sessions").into_any_element());
+    }
+    for (i, s) in targets.sessions.iter().enumerate() {
+        let target = Target::Session { id: s.id.clone() };
+        let chosen = o.target.as_ref() == Some(&target);
+        let detail = s.unreachable.clone().unwrap_or_else(|| s.app.clone());
+        rows.push(row(
+            format!("session-{i}"),
+            chosen,
+            s.unreachable.is_none(),
+            div()
+                .flex()
+                .flex_col()
+                .py(px(3.))
+                .child(div().max_w(px(300.)).truncate().child(s.label.clone()))
+                .child(div().text_size(px(10.5)).opacity(0.6).max_w(px(300.)).truncate().child(detail))
+                .into_any_element(),
+            s.unreachable.is_none().then_some(target),
+        ));
+    }
+    if targets.looking {
+        rows.push(
+            div()
+                .px(px(26.))
+                .py(px(4.))
+                .text_size(px(12.))
+                .opacity(0.6)
+                .child("Looking for sessions…")
+                .into_any_element(),
+        );
+    }
+    if !targets.folders.is_empty() {
+        rows.push(heading("New session in…").into_any_element());
+        // The agent it starts: one chip each.
+        let chips = targets.agents.iter().map(|&agent| {
+            let pick = overlay.clone();
+            let on = agent == o.new_agent;
+            div()
+                .id(SharedString::from(format!("agent-{}", agent.program())))
+                .px(px(8.))
+                .py(px(2.))
+                .rounded(px(6.))
+                .text_size(px(11.5))
+                .cursor_pointer()
+                .when(on, |d| d.bg(color(style::UI, 1.0)).text_color(color(style::UI_INK, 1.0)))
+                .when(!on, |d| d.bg(color(0xffffff, 0.08)).hover(|s| s.bg(color(0xffffff, 0.16))))
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                    pick.update(cx, |o, cx| {
+                        o.new_agent = agent;
+                        cx.notify();
+                    });
+                })
+                .child(agent.name())
+        });
+        rows.push(div().flex().flex_wrap().gap(px(4.)).px(px(26.)).py(px(3.)).children(chips).into_any_element());
+        for (i, f) in targets.folders.iter().enumerate() {
+            let target = Target::New { agent: o.new_agent, dir: f.path.clone() };
+            let chosen = o.target.as_ref() == Some(&target);
+            let path = asides_core::paths::tilde(&f.path);
+            rows.push(row(
+                format!("folder-{i}"),
+                chosen,
+                true,
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(icon("folder", gpui::white()))
+                    .child(f.name.clone())
+                    .child(div().text_size(px(10.5)).opacity(0.5).max_w(px(220.)).truncate().child(path))
+                    .into_any_element(),
+                Some(target),
+            ));
+        }
+    }
+    rows.push(div().h(px(1.)).mx(px(6.)).my(px(4.)).bg(color(0xffffff, 0.12)).into_any_element());
+    let history = Target::History;
+    rows.push(row(
+        "history".into(),
+        o.target.as_ref() == Some(&history),
+        true,
+        div().child("History only: send it later").into_any_element(),
+        Some(history),
+    ));
+    div()
+        .id("targets")
+        .occlude()
+        .w_full()
+        .min_w(px(340.))
+        .max_h(px(420.))
+        .overflow_y_scroll()
+        .pt(px(4.))
+        .flex()
+        .flex_col()
+        .text_color(gpui::white())
+        .children(rows)
+        .into_any_element()
+}
+
+/// The pill's panel around its buttons (and the session list, open); it notes where it's drawn, to
+/// be moved (and over the live screen, for its window to fit it), and moves when it's dragged.
+fn toolbar_panel(
+    overlay: &Entity<Overlay>,
+    items: Vec<AnyElement>,
+    list: Option<AnyElement>,
+    live: bool,
+) -> AnyElement {
     let measure = overlay.clone();
+    let grab = overlay.clone();
     div()
         .id("toolbar")
         .occlude()
         .relative()
         .flex()
-        .items_center()
-        .gap(px(2.))
+        .flex_col()
         .p(px(5.))
-        .rounded(px(12.))
+        .rounded(px(14.))
         .bg(color(style::PANEL, style::PANEL_ALPHA))
         .border_1()
         .border_color(color(0xffffff, 0.12))
         .shadow_lg()
-        .children(items)
+        .cursor(CursorStyle::OpenHand)
+        .on_mouse_down(MouseButton::Left, move |e, _, cx| {
+            cx.stop_propagation();
+            grab.update(cx, |o, _| o.grab_toolbar(e.position, live));
+        })
+        .child(div().flex().items_center().gap(px(2.)).children(items))
+        .children(list)
         .child(
             canvas(
                 move |bounds, _, cx| {
@@ -2155,14 +2227,56 @@ fn toolbar_panel(overlay: &Entity<Overlay>, items: Vec<AnyElement>, live: bool) 
         .into_any_element()
 }
 
-/// The microphone: tap to start or stop recording, hold to talk. Red while recording, with the
-/// time on the toolbar (`timer`); dimmed when there's no repo to record into.
+/// The pill's microphone: listening (red, with the time) or not (crossed out); a click turns it on
+/// or off, and without a voice model, gets one.
+fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
+    let listening = o.recording_seconds().filter(|_| o.recording_for.is_none());
+    let (press, tip) = (overlay.clone(), overlay.clone());
+    let name: SharedString = match (o.spec.model.ready, listening.is_some()) {
+        (false, _) => format!("Download the voice model ({})", o.spec.model.label).into(),
+        (true, true) => "Listening · click to mute".into(),
+        (true, false) => format!("Muted · click to listen, or hold {}", keys::label(&o.keys.talk)).into(),
+    };
+    div()
+        .id("mic")
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(5.))
+        .h(px(28.))
+        .min_w(px(30.))
+        .px(px(7.))
+        .rounded(px(7.))
+        .text_size(px(12.))
+        .text_color(gpui::white())
+        .cursor_pointer()
+        .when(listening.is_some(), |d| d.bg(color(style::RECORDING, 1.0)))
+        .when(listening.is_none(), |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
+        .on_hover(move |hovered, _, cx| {
+            let name = name.clone();
+            tip.update(cx, |o, cx| {
+                o.hint = hovered.then_some(name);
+                cx.notify();
+            });
+        })
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            press.update(cx, |o, cx| {
+                o.mic();
+                cx.notify();
+            });
+        })
+        .child(icon(if listening.is_some() { "mic" } else { "mic-off" }, gpui::white()))
+        .children(listening.map(|s| format!("{}:{:02}", s / 60, s % 60)))
+        .into_any_element()
+}
+
+/// An annotation's card's microphone: tap to start or stop, hold to talk about the annotation. Red
+/// while recording.
 fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) -> AnyElement {
     let recording = o.recording_seconds();
-    let bound = o.spec.bound.is_some();
     let (t1, t2, t3) = (overlay.clone(), overlay.clone(), overlay.clone());
-    let name: SharedString =
-        if bound { "Talk: hold, or tap to start and stop".into() } else { "Not bound to a repo".into() };
+    let name: SharedString = "Say what should change: hold, or tap to start and stop".into();
     div()
         .id(SharedString::from(id.to_string()))
         .flex()
@@ -2178,11 +2292,10 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .cursor_pointer()
         .when(recording.is_some(), |d| d.bg(color(style::RECORDING, 1.0)))
         .when(recording.is_none(), |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
-        .when(!bound, |d| d.opacity(0.4))
         .on_hover(move |hovered, _, cx| {
             let name = name.clone();
             t3.update(cx, |o, cx| {
-                o.hint = hovered.then_some(name);
+                o.card_tip = hovered.then_some(name);
                 cx.notify();
             });
         })
@@ -2201,7 +2314,7 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .into_any_element()
 }
 
-/// The toolbar's window over the live screen.
+/// The pill's window over the live screen.
 pub struct ToolbarView {
     overlay: Entity<Overlay>,
 }
@@ -2213,41 +2326,25 @@ impl ToolbarView {
     }
 }
 
-/// Room around the live toolbar in its window, for its shadow.
+/// Room around the live pill in its window, for its shadow.
 pub const TOOLBAR_MARGIN: f64 = 8.0;
 
 impl Render for ToolbarView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let o = self.overlay.read(cx);
-        // As big as the toolbar: its window fits it.
+        // As big as the pill: its window fits it.
         div().size_full().flex().items_start().p(px(TOOLBAR_MARGIN as f32)).child(toolbar(&self.overlay, o, true))
     }
 }
 
 impl ScreenView {
-    /// What goes with the toolbar: a toast, the name of the button under the pointer, the keys
-    /// (while on `?`), and the toolbar, at the bottom or where the user put it; hidden, just the
-    /// recording's time.
+    /// The pill and what goes with it: a toast, the name of the button under the pointer, the keys.
+    /// At the top in the middle, below the menu bar, or where the user put it; what goes with it
+    /// toward the middle of the screen.
     fn bottom(&self, o: &Overlay, shows_help: bool, (ox, oy): (f64, f64), (ww, wh): (f64, f64)) -> AnyElement {
-        let recording = o.recording_seconds();
         let toast = o.toast.as_ref().map(|(t, _)| t.clone());
-        let tip = (o.toolbar && !shows_help).then(|| o.hint.clone()).flatten();
-        let bar = o.toolbar.then(|| toolbar(&self.overlay, o, false));
-        // Hidden, the toolbar still says it's recording.
-        let recording_only = (!o.toolbar).then_some(recording).flatten().map(|s| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .px(px(10.))
-                .py(px(4.))
-                .rounded(px(10.))
-                .bg(color(style::RECORDING, 1.0))
-                .text_color(gpui::white())
-                .text_size(px(12.))
-                .child(div().size(px(7.)).rounded_full().bg(gpui::white()))
-                .child(format!("{}:{:02}", s / 60, s % 60))
-        });
+        let tip = (!shows_help && !o.targets_open).then(|| o.hint.clone()).flatten();
+        let bar = toolbar(&self.overlay, o, false);
         let small = |text: SharedString| {
             div()
                 .px(px(9.))
@@ -2269,39 +2366,29 @@ impl ScreenView {
         };
         let spec = &o.spec.screens[self.screen];
         let (screen, top) = (&spec.screen, (spec.menu_bar - oy).max(0.0));
-        match o.toolbar_at.filter(|_| o.toolbar) {
-            // Where the user put it, kept on the screen below the menu bar, with what goes with it
-            // toward the middle of the screen: above it, or below it in the top half.
-            Some((fx, fy)) => {
-                let (w, h) = o
-                    .toolbar_bounds
-                    .map_or((560.0, 40.0), |b| (f32::from(b.size.width) as f64, f32::from(b.size.height) as f64));
-                let x = (fx * screen.width - ox).clamp(8.0, (ww - w - 8.0).max(8.0));
-                let y = (fy * screen.height - oy).clamp(top + 8.0, (wh - h - 8.0).max(top + 8.0));
-                let notes = notes(div()).absolute().left(px((x + w / 2.0 - 320.0) as f32)).w(px(640.));
-                let notes = if y + h / 2.0 < wh / 2.0 {
-                    notes.top(px((y + h + 8.0) as f32)).justify_start()
-                } else {
-                    notes.bottom(px((wh - y + 8.0) as f32)).justify_end()
-                };
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .child(notes)
-                    .child(div().absolute().left(px(x as f32)).top(px(y as f32)).children(bar))
-                    .into_any_element()
-            }
-            None => notes(div())
-                .absolute()
-                .bottom(px((o.lift(self.screen) + TOOLBAR_LIFT) as f32))
-                .left_0()
-                .right_0()
-                .children(bar)
-                .children(recording_only)
-                .into_any_element(),
-        }
+        let (w, h) = o
+            .toolbar_bounds
+            .map_or((420.0, 40.0), |b| (f32::from(b.size.width) as f64, f32::from(b.size.height) as f64));
+        let (x, y) = match o.toolbar_at {
+            Some((fx, fy)) => (fx * screen.width - ox, fy * screen.height - oy),
+            None => ((screen.width - w) / 2.0 - ox, top + PILL_TOP),
+        };
+        let x = x.clamp(8.0, (ww - w - 8.0).max(8.0));
+        let y = y.clamp(top + 8.0, (wh - h - 8.0).max(top + 8.0));
+        let notes = notes(div()).absolute().left(px((x + w / 2.0 - 320.0) as f32)).w(px(640.));
+        let notes = if y + h / 2.0 < wh / 2.0 {
+            notes.top(px((y + h + 8.0) as f32)).justify_start()
+        } else {
+            notes.bottom(px((wh - y + 8.0) as f32)).justify_end()
+        };
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(notes)
+            .child(div().absolute().left(px(x as f32)).top(px(y as f32)).child(bar))
+            .into_any_element()
     }
 
     /// An annotation's card: what should change (typed, wrapping as it grows), what kind of request
@@ -2520,8 +2607,8 @@ impl ScreenView {
         let k = |c: Cmd| o.keys.label(c);
         let talk = keys::label(&o.keys.talk);
         let left: Vec<(&str, String)> = vec![
+            ("Annotate (click, drag)", k(Cmd::Tool(Tool::Annotate))),
             ("Measure", k(Cmd::Tool(Tool::Measure))),
-            ("Annotate", k(Cmd::Tool(Tool::Annotate))),
             ("Draw (⇧ arrow)", k(Cmd::Tool(Tool::Draw))),
             ("Screenshot", k(Cmd::Tool(Tool::Shot))),
             ("Hold distance", format!("{} {}", k(Cmd::HoldH), k(Cmd::HoldV))),
@@ -2529,20 +2616,17 @@ impl ScreenView {
             ("Tolerance", format!("{} {}", k(Cmd::TolDown), k(Cmd::TolUp))),
             ("Points ↔ pixels", k(Cmd::Units)),
         ];
-        let mut right: Vec<(&str, String)> = vec![
-            ("Talk (hold)", talk),
+        let right: Vec<(&str, String)> = vec![
+            ("Talk while muted (hold)", talk),
+            ("Next session", k(Cmd::Target)),
             ("Undo", k(Cmd::Undo)),
             ("Clear", k(Cmd::Clear)),
             ("Hide all", k(Cmd::Hide)),
-            ("Toolbar", k(Cmd::Toolbar)),
             ("Copy Markdown", k(Cmd::CopyMarkdown)),
             ("Live screen", o.spec.freeze_shortcut.clone()),
-            ("Done", k(Cmd::Done)),
+            ("Send", format!("{} {}", k(Cmd::Done), o.spec.record_shortcut)),
             ("Close", k(Cmd::Close)),
         ];
-        if o.spec.batch {
-            right.insert(8, ("Done and send", k(Cmd::Send)));
-        }
         let cap = |text: String| {
             div()
                 .min_w(px(18.))
@@ -2594,7 +2678,7 @@ impl ScreenView {
                 div()
                     .text_size(px(11.))
                     .text_color(color(style::UI, 1.0))
-                    .child("Drag: size · ⌥ each object · ⌘ as drawn · right-click: more"),
+                    .child("Click a pin's number to type · right-click: more · ? hides this"),
             )
             .into_any_element()
     }

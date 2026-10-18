@@ -20,7 +20,7 @@ pub enum ModelState {
     Failed(String),
 }
 
-/// Tracks each model's availability; downloads missing ones in the background.
+/// Tracks each model's availability, and downloads one when the user asks (never on its own).
 pub struct ModelManager {
     states: Mutex<HashMap<&'static str, ModelState>>,
     changed: Condvar,
@@ -32,11 +32,20 @@ impl ModelManager {
         Arc::new(ModelManager { states: Mutex::new(HashMap::new()), changed: Condvar::new(), notify: Box::new(notify) })
     }
 
-    /// Makes sure the model is on disk, starting a download if it is not (and none is running).
-    pub fn ensure(self: &Arc<Self>, id: &str) {
+    /// The model's state: ready on disk, downloading, failed, or `None` (not there).
+    pub fn state(&self, id: &str) -> Option<ModelState> {
+        let spec = ModelSpec::find(id);
+        match self.states.lock().unwrap().get(spec.id) {
+            Some(state @ (ModelState::Downloading { .. } | ModelState::Failed(_))) => Some(state.clone()),
+            _ => spec.path().is_file().then_some(ModelState::Ready),
+        }
+    }
+
+    /// Downloads the model, unless it's on disk or being downloaded.
+    pub fn download(self: &Arc<Self>, id: &str) {
         let spec = ModelSpec::find(id);
         let mut states = self.states.lock().unwrap();
-        if matches!(states.get(spec.id), Some(ModelState::Ready | ModelState::Downloading { .. })) {
+        if matches!(states.get(spec.id), Some(ModelState::Downloading { .. })) {
             return;
         }
         if spec.path().is_file() {
@@ -56,27 +65,28 @@ impl ModelManager {
                 spec.id,
                 match result {
                     Ok(()) => ModelState::Ready,
-                    Err(err) => ModelState::Failed(format!("Could not download the speech model: {err:#}")),
+                    Err(err) => ModelState::Failed(format!("Could not download the voice model: {err:#}")),
                 },
             );
         });
     }
 
-    /// Blocks until the model is ready (or its download failed) and returns its path.
+    /// The model's path once it's on disk: at once, or after the download under way. It never
+    /// starts one.
     pub fn wait_ready(self: &Arc<Self>, id: &str) -> Result<PathBuf> {
         let spec = ModelSpec::find(id);
-        let failed = matches!(self.states.lock().unwrap().get(spec.id), Some(ModelState::Failed(_)));
-        if failed {
-            // Retry a failed download.
-            self.states.lock().unwrap().remove(spec.id);
-        }
-        self.ensure(spec.id);
         let mut states = self.states.lock().unwrap();
         loop {
+            if spec.path().is_file() {
+                return Ok(spec.path());
+            }
             match states.get(spec.id) {
-                Some(ModelState::Ready) => return Ok(spec.path()),
+                Some(ModelState::Downloading { .. }) => states = self.changed.wait(states).unwrap(),
                 Some(ModelState::Failed(msg)) => bail!("{msg}"),
-                _ => states = self.changed.wait(states).unwrap(),
+                _ => bail!(
+                    "There's no voice model yet: click the microphone in Asides, or download one in the Asides window \
+                     (Settings)"
+                ),
             }
         }
     }
@@ -154,6 +164,9 @@ impl Transcriber {
             pcm
         };
         let mut state = self.context.create_state()?;
+        // English-only models know no other language: nothing to detect.
+        let english = ["en".to_string()];
+        let languages = if ModelSpec::find(&self.model_id).english { &english[..] } else { languages };
         let language = match languages {
             [only] => only.clone(),
             _ => {
