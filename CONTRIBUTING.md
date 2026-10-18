@@ -25,8 +25,9 @@ make fixtures    # once: test audio generated with the macOS voices
 - `make fixtures` needs the Romanian voice "Ioana": System Settings → Accessibility → Spoken
   Content → System Voice → Manage Voices… The generated files are gitignored, because the macOS
   license doesn't allow redistributing system-voice audio.
-- The first launch downloads the speech model (574 MB) to
-  `~/Library/Application Support/Asides/models/`.
+- Asides never downloads a voice model by itself: Settings or the pill's microphone does, into
+  `~/Library/Application Support/Asides/models/`. `make test-speech` and `make e2e` use
+  large-v3-turbo (574 MB) from there.
 
 ## Development loop
 
@@ -83,9 +84,22 @@ deleted.
 |---|---|---|
 | Unit | `make test` | the history (keeping, listing, pruning), finding sessions (the process table, apps, last input, labels, folders), delivery plans for each app and agent, Markdown and messages, links, state, config, resampling, language choice, icon rendering, measuring (edges, snapping, guides, colors), the Asides session (measuring, holds, guides, annotations, drawings, screenshots, restore, freezing again) and its Markdown, the overlay's keys and protocol (targets, Tab), rendering a session's screenshot offscreen, the MCP server, `asides measure` |
 | Speech | `make test-speech` | transcription of the fixtures (needs the model) and a real model download with checksum check (190 MB) |
+| Models compared | `compares_models` (below) | each model's word error rate and time on recordings with what was said |
 | End-to-end | `make e2e` | installs a build with the `dev-hooks` feature, then drives it through the `asides` command, with a history of its own (`ASIDES_HOME`): WAV files instead of the microphone (`asides simulate`), kept in the history; a scripted session on a drawn screen (`asides simulate-measure`, played by the bundled `asides-overlay` without windows), and one with recordings arriving while it's open, one of them about an annotation, which make one aside in the order things happened; Wispr Flow dictations (a database of its own) made before Asides opened and while frozen; sending to a stand-in agent (`scripts/e2e-agent.c`, built as `claude`, run in Diri, or in Terminal without Diri): the text, Return, screenshots, the clipboard put back; `asides mcp`. It restores your `config.toml` and clipboard afterwards |
 | Overlay replay | below | the real overlay windows, driven by AppKit mouse and key events, captured to PNGs you look at |
 | Manual | checklist below | everything a script can't do: the microphone, shortcuts, menus, your own hand on the overlay, and permissions |
+
+To compare voice models, put recordings (`<name>.wav`, 16 kHz mono) in a folder with what was said
+beside each (`<name>.txt`), and list the models as `id=path` (`id:en=path` makes a multilingual
+model write English):
+
+```bash
+ASIDES_BENCH=~/bench ASIDES_BENCH_MODELS="small.en=$M/ggml-small.en-q5_1.bin,large-v3-turbo=$M/ggml-large-v3-turbo-q5_0.bin" \
+  cargo test --release -p asides-app compares_models -- --ignored --nocapture
+```
+
+`say -v <voice> -o x.wav --file-format=WAVE --data-format=LEI16@16000 "…"` makes recordings, but
+synthetic voices are easier than people: the results in `design/redesign.md` came from them.
 
 To look at the menu-bar icons without installing, render them to files:
 

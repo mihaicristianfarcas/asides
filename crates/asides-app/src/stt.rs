@@ -256,10 +256,106 @@ mod tests {
     use asides_core::markdown::plain_text;
 
     fn fixture(name: &str) -> Vec<f32> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name);
+        read_wav(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures").join(name))
+    }
+
+    fn read_wav(path: &Path) -> Vec<f32> {
         let mut reader = hound::WavReader::open(path).unwrap();
         assert_eq!(reader.spec().sample_rate, 16_000);
         reader.samples::<i16>().map(|s| s.unwrap() as f32 / 32768.0).collect()
+    }
+
+    /// The words of `reference` that `heard` got wrong (substituted, left out or added), and how
+    /// many words `reference` has. Case, punctuation, hyphens, numbers in words or digits ("five",
+    /// "5") and a compound written apart ("in line" for "inline") aren't mistakes.
+    fn word_errors(reference: &str, heard: &str) -> (usize, usize) {
+        const NUMBERS: [&str; 13] =
+            ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+        let words = |text: &str| -> Vec<String> {
+            text.to_lowercase()
+                .replace('-', " ")
+                .split_whitespace()
+                .map(|w| w.chars().filter(|c| c.is_alphanumeric() || *c == '\'').collect::<String>())
+                .filter(|w| !w.is_empty())
+                .map(|w| NUMBERS.iter().position(|n| *n == w).map_or(w, |i| i.to_string()))
+                .collect()
+        };
+        let a = words(reference);
+        let mut b = Vec::new();
+        let mut heard = words(heard).into_iter().peekable();
+        while let Some(word) = heard.next() {
+            match heard.peek().map(|next| format!("{word}{next}")).filter(|joined| a.contains(joined)) {
+                Some(joined) => {
+                    heard.next();
+                    b.push(joined);
+                }
+                None => b.push(word),
+            }
+        }
+        let mut row: Vec<usize> = (0..=b.len()).collect();
+        for (i, x) in a.iter().enumerate() {
+            let mut diagonal = row[0];
+            row[0] = i + 1;
+            for (j, y) in b.iter().enumerate() {
+                let next = (diagonal + usize::from(x != y)).min(row[j] + 1).min(row[j + 1] + 1);
+                diagonal = row[j + 1];
+                row[j + 1] = next;
+            }
+        }
+        (row[b.len()], a.len())
+    }
+
+    #[test]
+    fn counts_word_errors() {
+        assert_eq!(word_errors("The Save button, doesn't work.", "the save button doesn't work"), (0, 5));
+        assert_eq!(word_errors("a b c d", "a x c"), (2, 4));
+        assert_eq!(word_errors("dark-mode colors", "dark mode colours"), (1, 3));
+        assert_eq!(word_errors("show them inline for five seconds", "show them in line for 5 seconds"), (0, 6));
+    }
+
+    /// Compares speech models on recordings with what was said: `ASIDES_BENCH` is a folder of
+    /// `<name>.wav` (16 kHz mono) with `<name>.txt` beside each, `ASIDES_BENCH_MODELS` a list of
+    /// `id=path` (`id:en=path` makes a multilingual model write English). Prints each model's word
+    /// error rate and time.
+    #[test]
+    #[ignore = "needs recordings and models (ASIDES_BENCH, ASIDES_BENCH_MODELS)"]
+    fn compares_models() {
+        let dir = PathBuf::from(std::env::var("ASIDES_BENCH").expect("ASIDES_BENCH"));
+        let mut clips: Vec<PathBuf> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "wav"))
+            .collect();
+        clips.sort();
+        let mut table = Vec::new();
+        for model in std::env::var("ASIDES_BENCH_MODELS").expect("ASIDES_BENCH_MODELS").split(',') {
+            let (name, path) = model.split_once('=').expect("id=path");
+            let (id, languages) = match name.split_once(':') {
+                Some((id, language)) => (id, vec![language.to_string()]),
+                None => (name, Vec::new()),
+            };
+            let mut transcriber = Transcriber::load(id, Path::new(path)).unwrap();
+            // Loaded onto the GPU before timing.
+            transcriber.transcribe(&read_wav(&clips[0]), &languages).unwrap();
+            let (mut errors, mut words, mut time) = (0, 0, Duration::ZERO);
+            for clip in &clips {
+                let reference = fs::read_to_string(clip.with_extension("txt")).unwrap();
+                let pcm = read_wav(clip);
+                let started = Instant::now();
+                let heard = plain_text(&transcriber.transcribe(&pcm, &languages).unwrap());
+                time += started.elapsed();
+                let (e, n) = word_errors(&reference, &heard);
+                errors += e;
+                words += n;
+                println!("{name} {}: {e}/{n} {heard}", clip.file_stem().unwrap().to_string_lossy());
+            }
+            table.push(format!(
+                "{name}: {:.1}% of {words} words wrong, {:.2?} a clip",
+                100.0 * errors as f64 / words as f64,
+                time / clips.len() as u32
+            ));
+        }
+        println!("\n{}", table.join("\n"));
     }
 
     #[test]
