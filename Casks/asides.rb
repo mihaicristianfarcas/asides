@@ -6,7 +6,7 @@ cask "asides" do
 
   url "https://github.com/mihaicristianfarcas/asides/releases/download/v#{version}/asides-#{version}.zip"
   name "asides"
-  desc "Records spoken bug reports and transcribes them locally into Markdown notes"
+  desc "Report bugs out loud, straight into your coding agent's chat"
   homepage "https://asides.mihaicristian.dev/"
 
   livecheck do
