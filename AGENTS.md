@@ -285,7 +285,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   `{"type":"open","dir":…}`. `sample` slows every library load.
 - On screen (ask first): post `⌃⌥Space` as a whole chord through a private `CGEventSource`, find the
   windows by `proc_name` of `kCGWindowOwnerPID`, close with Esc. Never post it while asides is open:
-  it sends.
+  it sends. Post one Esc, and only while the frozen screen is up: with nothing done, the first
+  closes asides, and a second reaches the app in front (in your agent's terminal, it interrupts you).
 
 ### Speech
 
