@@ -131,7 +131,8 @@ pub struct TextInput {
     /// The caret and length the scroll last followed: it follows again when they change.
     followed: Option<(usize, usize)>,
     is_selecting: bool,
-    /// An area: lines (Return breaks them), its own font, and as many lines as it's given.
+    /// An area: lines (Return breaks them), its own font, as tall as it's given (it scrolls past
+    /// that).
     multiline: bool,
     pub max_lines: usize,
     font: Option<SharedString>,
@@ -213,11 +214,11 @@ impl TextInput {
         }
     }
 
-    /// An area of lines in `font`, the caret at the start, showing `max_lines` before it scrolls.
-    pub fn area(content: &str, font: &str, max_lines: usize, cx: &mut Context<Self>) -> TextInput {
+    /// An area of lines in `font`, the caret at the start, as tall as its place (`flex_1` in a
+    /// column): what doesn't fit scrolls.
+    pub fn area(content: &str, font: &str, cx: &mut Context<Self>) -> TextInput {
         TextInput {
             multiline: true,
-            max_lines,
             font: Some(font.to_string().into()),
             selected_range: 0..0,
             ..TextInput::new(content, "", cx)
@@ -634,6 +635,11 @@ impl EntityInputHandler for TextInput {
     }
 }
 
+/// The text's size and line height, as the window styles it here.
+fn metrics(window: &Window) -> Metrics {
+    Metrics { font_size: window.text_style().font_size.to_pixels(window.rem_size()), line_height: window.line_height() }
+}
+
 struct TextElement {
     input: Entity<TextInput>,
 }
@@ -742,11 +748,13 @@ impl Element for TextElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
+        // An area takes the height it's given.
+        if self.input.read(cx).multiline {
+            style.size.height = relative(1.).into();
+            return (window.request_layout(style, None, cx), metrics(window));
+        }
         let (text, runs) = self.runs(window, cx);
-        let metrics = Metrics {
-            font_size: window.text_style().font_size.to_pixels(window.rem_size()),
-            line_height: window.line_height(),
-        };
+        let metrics = metrics(window);
         let max_lines = self.input.read(cx).max_lines.max(1);
         // As tall as the wrapped text, up to `max_lines`: a line more only once the text wraps.
         let layout = window.request_measured_layout(style, move |known, available, window, _| {
@@ -908,7 +916,7 @@ impl Render for TextInput {
             .border_color(self.look.border)
             .text_size(px(13.))
             .line_height(px(if area { 20. } else { 18. }))
-            .when(area, |d| d.px(px(12.)).py(px(10.)).rounded(px(8.)))
+            .when(area, |d| d.flex_1().min_h_0().px(px(12.)).py(px(10.)).rounded(px(8.)))
             .when_some(self.font.clone(), |d, font| d.font_family(font))
             .text_color(self.look.text)
             .child(TextElement { input: cx.entity() })

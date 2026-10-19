@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant, SystemTime};
 
 use asides_core::agents::AgentKind;
@@ -30,6 +29,7 @@ use asides_core::sessions::{self, AgentSession};
 use asides_core::state::{AppState, Permission};
 use asides_core::update::{self, Block, Notes, Phase, Span, Step};
 use chrono::{Local, TimeZone};
+use futures::StreamExt;
 use gpui::{
     AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
     ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, Render, ScrollHandle,
@@ -61,13 +61,11 @@ use crate::input::{Look, TextInput};
 use crate::{assets, native, style};
 
 /// How often the window looks at what changed (the history, the app's state, the settings).
-const TICK: Duration = Duration::from_millis(500);
 const TOAST: Duration = Duration::from_millis(2500);
 /// History's list of asides.
 const LIST: f32 = 300.0;
-/// An aside's Markdown, edited: its font, and the height of a line in it.
+/// An aside's Markdown, edited: its font.
 const EDITOR_FONT: &str = "Menlo";
-const EDITOR_LINE: f32 = 20.0;
 /// What edited Markdown can't be, at most, listed under it.
 const PROBLEMS_SHOWN: usize = 4;
 /// Setup's column.
@@ -272,7 +270,10 @@ pub struct AsidesWindow {
     /// When the settings file was last read.
     config_read: Option<SystemTime>,
     toast: Option<(SharedString, Instant)>,
-    commands: Receiver<String>,
+    /// When the toast shown goes (it's taken away then).
+    toast_due: Option<Instant>,
+    /// When a time shown as "2 min ago" next reads otherwise (it's drawn again then).
+    ago_due: Option<SystemTime>,
     theme: Theme,
     /// The window's width, last drawn: screenshots in History fit their column.
     width: f32,
@@ -306,6 +307,8 @@ pub struct AsidesWindow {
 
 /// Opens the window; it quits when it's closed.
 pub fn run() {
+    // Menus and pages fade over the window's glass.
+    native::blend_alpha_over();
     // While it's open, the window is an app of its own (in the Dock and ⌘Tab): it quits when closed.
     let app = Application::new().with_assets(assets::Assets);
     // Its Dock icon clicked, minimized: back.
@@ -360,10 +363,11 @@ pub fn run() {
         ]);
         // The settings' fields edit as the card's does.
         crate::input::bind_keys(cx);
-        let (tx, commands) = channel();
+        // The app's commands (`show general`), as they come.
+        let (tx, mut commands) = futures::channel::mpsc::unbounded::<String>();
         std::thread::spawn(move || {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-                if tx.send(line.trim().to_string()).is_err() {
+                if tx.unbounded_send(line.trim().to_string()).is_err() {
                     return;
                 }
             }
@@ -400,7 +404,7 @@ pub fn run() {
                 let focus = cx.focus_handle();
                 window.focus(&focus);
                 let glides = (Glide::new(cx), Glide::new(cx));
-                AsidesWindow::new(commands, theme, focus, glides)
+                AsidesWindow::new(theme, focus, glides)
             })
         });
         let Ok(handle) = opened else {
@@ -413,15 +417,46 @@ pub fn run() {
             return capture_pages(handle, PathBuf::from(dir), cx);
         }
         cx.spawn(async move |cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let alive = handle.update(cx, |this, window, cx| this.tick(window, cx)).is_ok();
-                if !alive {
+            while let Some(command) = commands.next().await {
+                if handle.update(cx, |this, window, cx| this.command(&command, window, cx)).is_err() {
                     break;
                 }
             }
         })
         .detach();
+        // The history, the app's state and the settings, read again as they change.
+        let (changed, mut changes) = futures::channel::mpsc::unbounded::<()>();
+        let watch = |changed: futures::channel::mpsc::UnboundedSender<()>| {
+            move || {
+                let _ = changed.unbounded_send(());
+            }
+        };
+        let history = watch(changed.clone());
+        let _ = std::fs::create_dir_all(history::dir());
+        let watches = [
+            asides_core::watch::folder(&history::dir(), true, move |_| history()),
+            asides_core::watch::file(&paths::state_path(), watch(changed.clone())),
+            asides_core::watch::file(&paths::config_path(), watch(changed)),
+        ];
+        cx.spawn(async move |cx| {
+            let _watches = watches;
+            while changes.next().await.is_some() {
+                while let Ok(()) = changes.try_recv() {}
+                if handle.update(cx, |this, _, cx| this.reload_shown(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // Coming forward, it shows the sessions running now.
+        let _ = handle.update(cx, |_, window, cx| {
+            cx.observe_window_activation(window, |_, window, _| {
+                if window.is_window_active() {
+                    let _ = send_link(&Link::Sessions { request: None });
+                }
+            })
+            .detach();
+        });
     });
 }
 
@@ -464,7 +499,7 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
 }
 
 impl AsidesWindow {
-    fn new(commands: Receiver<String>, theme: Theme, focus: FocusHandle, glides: (Glide, Glide)) -> AsidesWindow {
+    fn new(theme: Theme, focus: FocusHandle, glides: (Glide, Glide)) -> AsidesWindow {
         let mut this = AsidesWindow {
             page: Page::History,
             asides: Vec::new(),
@@ -476,7 +511,8 @@ impl AsidesWindow {
             config: Config::default(),
             config_read: None,
             toast: None,
-            commands,
+            toast_due: None,
+            ago_due: None,
             theme,
             width: 1240.,
             focus,
@@ -533,28 +569,31 @@ impl AsidesWindow {
         }
     }
 
-    fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Ok(command) = self.commands.try_recv() {
-            // `show`, or `show general`: forward, at that page.
-            if let Some(page) = command.strip_prefix("show") {
-                if let Some(page) = Page::named(page.trim()) {
-                    self.page = page;
-                }
-                native::activate();
-                window.activate_window();
+    /// A command from the app: `show`, or `show general`, brings the window forward (at that page).
+    fn command(&mut self, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(page) = command.strip_prefix("show") {
+            if let Some(page) = Page::named(page.trim()) {
+                self.go(page, cx);
             }
+            native::activate();
+            window.activate_window();
         }
-        if self.toast.as_ref().is_some_and(|(_, until)| Instant::now() > *until) {
-            self.toast = None;
-        }
+    }
+
+    /// Something it shows changed on disk: read again, and drawn.
+    fn reload_shown(&mut self, cx: &mut Context<Self>) {
         self.reload();
-        // What's New open: it's read.
+        self.saw_whats_new();
+        cx.notify();
+    }
+
+    /// What's New open: it's read (the app's told once per version).
+    fn saw_whats_new(&mut self) {
         let newest = self.state.update.unseen(self.state.whats_new_seen.as_deref()).first().map(|n| n.version.clone());
         if self.page == Page::WhatsNew && newest.is_some() && newest != self.told_seen {
             let _ = send_link(&Link::Update { step: Step::Seen, request: None });
             self.told_seen = newest;
         }
-        cx.notify();
     }
 
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
@@ -562,11 +601,57 @@ impl AsidesWindow {
             self.page_scroll.set_offset(point(px(0.), px(0.)));
         }
         self.page = page;
+        self.saw_whats_new();
         cx.notify();
     }
 
+    /// A message at the bottom, for `TOAST`.
     fn toast(&mut self, text: impl Into<SharedString>) {
-        self.toast = Some((text.into(), Instant::now() + TOAST));
+        let until = Instant::now() + TOAST;
+        self.toast = Some((text.into(), until));
+    }
+
+    /// The toast goes when its time's up.
+    fn clear_toast_when_due(&mut self, cx: &mut Context<Self>) {
+        let Some(until) = self.toast.as_ref().map(|(_, until)| *until) else { return };
+        if self.toast_due == Some(until) {
+            return;
+        }
+        self.toast_due = Some(until);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(until.saturating_duration_since(Instant::now())).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.toast.as_ref().is_some_and(|(_, shown)| *shown == until) {
+                    this.toast = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Drawn again when a time shown as "2 min ago" next reads otherwise (`ago_due`).
+    fn redraw_when_ago_changes(&mut self, cx: &mut Context<Self>) {
+        let due = match self.page {
+            Page::Sessions => self.state.sessions.iter().filter_map(|s| s.last_input).map(ago_changes).min(),
+            Page::General => {
+                self.state.update.checked_ms.map(|ms| ago_changes(SystemTime::UNIX_EPOCH + Duration::from_millis(ms)))
+            }
+            _ => None,
+        };
+        if due.is_none() || due == self.ago_due {
+            return;
+        }
+        self.ago_due = due;
+        let wait = due.and_then(|at| at.duration_since(SystemTime::now()).ok()).unwrap_or_default();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |this, cx| {
+                this.ago_due = None;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Changes the settings (read fresh, so nothing the app wrote meanwhile is lost).
@@ -597,7 +682,7 @@ impl AsidesWindow {
         let Some(aside) = self.asides.iter().find(|a| a.id == id) else { return };
         let message = aside.message();
         let draft = self.drafts.entry(id.to_string()).or_insert_with(|| {
-            let draft = cx.new(|cx| TextInput::area(&message, EDITOR_FONT, 20, cx));
+            let draft = cx.new(|cx| TextInput::area(&message, EDITOR_FONT, cx));
             draft.update(cx, |d, _| d.look = editor_look(self.theme));
             draft
         });
@@ -849,6 +934,17 @@ fn open_url(url: &str) {
     let _ = Command::new("open").arg(url).status();
 }
 
+/// When what `ago(at)` says next changes.
+fn ago_changes(at: SystemTime) -> SystemTime {
+    let secs = SystemTime::now().duration_since(at).unwrap_or_default().as_secs();
+    let unit = match secs {
+        0..3600 => 60,
+        3600..86400 => 3600,
+        _ => 86400,
+    };
+    at + Duration::from_secs((secs / unit + 1) * unit)
+}
+
 fn ago(at: SystemTime) -> String {
     let secs = SystemTime::now().duration_since(at).unwrap_or_default().as_secs();
     match secs {
@@ -928,13 +1024,15 @@ impl Render for AsidesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         self.width = f32::from(window.viewport_size().width);
+        self.clear_toast_when_due(cx);
+        self.redraw_when_ago_changes(cx);
         if std::mem::take(&mut self.edit_at_first)
             && let Some(id) = self.selected.clone()
         {
             self.set_editing(&id, true, window, cx);
         }
         let content = match self.page {
-            Page::History => self.history(window, cx),
+            Page::History => self.history(cx),
             Page::Sessions => self.sessions(window, cx),
             Page::General => self.general(cx),
             Page::Keys => self.keys(cx),
@@ -943,6 +1041,11 @@ impl Render for AsidesWindow {
             Page::WhatsNew => self.whats_new(),
             Page::Setup => self.setup_page(window, cx),
         };
+        // Each page fades in as it's picked (and each of setup's steps), as the sidebar's selection
+        // slides to it.
+        let step = if self.page == Page::Setup { self.setup.name() } else { "" };
+        let shown = gpui::ElementId::Name(format!("page-{}-{step}", self.page as usize).into());
+        let content = fade_in(div().size_full().flex().flex_col().child(content), shown, 0.);
         let sidebar = (self.page != Page::Setup).then(|| self.sidebar(cx));
         div()
             .track_focus(&self.focus)
@@ -1029,12 +1132,9 @@ impl AsidesWindow {
                 .text_color(if on { t.primary } else { t.primary.opacity(0.78) })
                 .relative()
                 .child(self.nav_glide.item(page as usize))
-                .when(!on, |d| {
-                    d.cursor_pointer().hover(|s| s.bg(t.hover)).on_click(cx.listener(move |this, _, _, cx| {
-                        this.page = page;
-                        cx.notify();
-                    }))
-                })
+                // Hovered, it stays so once picked, as the selection slides to it.
+                .hover(|s| s.bg(t.hover))
+                .when(!on, |d| d.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.go(page, cx))))
                 .child(icon(glyph, 15., if on { t.primary } else { t.secondary }))
                 .child(div().flex_1().child(label))
                 .children(
@@ -1178,7 +1278,7 @@ impl AsidesWindow {
 
     // --- History ---
 
-    fn history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn history(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         if self.asides.is_empty() {
             let shortcut = pretty_shortcut(&self.config.shortcuts.asides);
@@ -1229,7 +1329,9 @@ impl AsidesWindow {
                     .border_color(hex(0, 0.0))
                     .relative()
                     .child(self.list_glide.item(index))
-                    .when(!on, |d| d.cursor_pointer().hover(|s| s.bg(t.hover)))
+                    // Hovered, it stays so once picked, as the selection slides to it.
+                    .hover(|s| s.bg(t.hover))
+                    .when(!on, |d| d.cursor_pointer())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.selected.as_ref() != Some(&id) {
                             this.aside_scroll.set_offset(point(px(0.), px(0.)));
@@ -1252,7 +1354,12 @@ impl AsidesWindow {
                     .into_any_element(),
             );
         }
-        let detail = self.selected().cloned().map(|aside| self.aside_detail(&aside, window, cx));
+        // Each aside fades in as it's picked, and as it's switched to Edit and back.
+        let detail = self.selected().cloned().map(|aside| {
+            let editing = self.editing.as_deref() == Some(aside.id.as_str());
+            let shown = gpui::ElementId::Name(format!("aside-{}-{editing}", aside.id).into());
+            fade_in(div().size_full().flex().flex_col().child(self.aside_detail(&aside, cx)), shown, 0.)
+        });
         let chosen = self.selected.as_ref().and_then(|id| self.asides.iter().position(|a| &a.id == id));
         div()
             .size_full()
@@ -1310,10 +1417,10 @@ impl AsidesWindow {
             .into_any_element()
     }
 
-    fn aside_detail(&mut self, aside: &Aside, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn aside_detail(&mut self, aside: &Aside, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         if self.editing.as_deref() == Some(aside.id.as_str()) {
-            return self.aside_editor(aside, window, cx);
+            return self.aside_editor(aside, cx);
         }
         // The sessions running, then a new one in a recent folder, or in one chosen.
         let reachable = self.reachable();
@@ -1539,16 +1646,13 @@ impl AsidesWindow {
 
     /// An aside's Markdown, to edit: what's wrong with it as it's typed (it saves only once nothing
     /// is), and how it's written.
-    fn aside_editor(&mut self, aside: &Aside, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn aside_editor(&mut self, aside: &Aside, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let Some(draft) = self.drafts.get(&aside.id).cloned() else {
             self.editing = None;
             return div().into_any_element();
         };
-        // As many lines as the column has room for, under the strip and above what's said of it.
-        let room = f32::from(window.viewport_size().height) - Metrics::TOOLBAR - 170.;
-        let lines = ((room / EDITOR_LINE) as usize).max(8);
-        draft.update(cx, |d, _| (d.max_lines, d.look) = (lines, editor_look(t)));
+        draft.update(cx, |d, _| d.look = editor_look(t));
         let text = draft.read(cx).text();
         let problems = aside.check(&text);
         let changed = self.unsaved(aside, cx).is_some();
@@ -1596,10 +1700,12 @@ impl AsidesWindow {
             .child(toolbar_row(Some(leading), actions))
             .child(
                 div().flex_1().min_h_0().flex().justify_center().px(px(28.)).pb(px(24.)).child(
+                    // The Markdown fills the column, down to what's said of it.
                     div()
                         .w_full()
                         .min_w_0()
                         .max_w(px(Metrics::FORM + 60.))
+                        .h_full()
                         .flex()
                         .flex_col()
                         .gap(px(10.))

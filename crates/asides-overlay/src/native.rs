@@ -425,6 +425,74 @@ pub fn monitor_keys() {
     std::mem::forget(monitor);
 }
 
+/// GPUI blends alpha by adding it (its pipelines' destination alpha factor is one): what's partly
+/// drawn over the window's glass (a menu or a page fading in) hid the blur behind it before its
+/// color showed, a dark square for a moment. Its pipelines blend alpha as they blend color ("over"),
+/// from the device GPUI draws with: call before GPUI opens a window.
+pub fn blend_alpha_over() {
+    use objc2::runtime::{Imp, Sel};
+    use std::sync::OnceLock;
+
+    type NewPipeline =
+        unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject, *mut *mut AnyObject) -> *mut AnyObject;
+    static ORIGINAL: OnceLock<NewPipeline> = OnceLock::new();
+    // MTLBlendFactor.
+    const ONE: usize = 1;
+    const ONE_MINUS_SOURCE_ALPHA: usize = 5;
+
+    unsafe extern "C-unwind" fn new_pipeline(
+        device: &AnyObject,
+        cmd: Sel,
+        descriptor: *mut AnyObject,
+        error: *mut *mut AnyObject,
+    ) -> *mut AnyObject {
+        if let Some(descriptor) = unsafe { descriptor.as_ref() } {
+            let attachments: *mut AnyObject = unsafe { msg_send![descriptor, colorAttachments] };
+            let color: *mut AnyObject = match unsafe { attachments.as_ref() } {
+                Some(attachments) => unsafe { msg_send![attachments, objectAtIndexedSubscript: 0usize] },
+                None => std::ptr::null_mut(),
+            };
+            if let Some(color) = unsafe { color.as_ref() } {
+                let blending: bool = unsafe { msg_send![color, isBlendingEnabled] };
+                let rgb: usize = unsafe { msg_send![color, destinationRGBBlendFactor] };
+                let alpha: usize = unsafe { msg_send![color, destinationAlphaBlendFactor] };
+                if blending && rgb == ONE_MINUS_SOURCE_ALPHA && alpha == ONE {
+                    let _: () = unsafe { msg_send![color, setDestinationAlphaBlendFactor: ONE_MINUS_SOURCE_ALPHA] };
+                }
+            }
+        }
+        match ORIGINAL.get() {
+            Some(original) => unsafe { original(device, cmd, descriptor, error) },
+            None => std::ptr::null_mut(),
+        }
+    }
+
+    #[link(name = "Metal", kind = "framework")]
+    unsafe extern "C" {
+        fn MTLCopyAllDevices() -> *mut AnyObject;
+    }
+    // GPUI's device: built in, and not the low-power one when there are two.
+    let devices: Option<Retained<AnyObject>> = unsafe { Retained::from_raw(MTLCopyAllDevices()) };
+    let Some(devices) = devices else { return };
+    let count: usize = unsafe { msg_send![&*devices, count] };
+    let device =
+        (0..count).map(|i| -> &AnyObject { unsafe { msg_send![&*devices, objectAtIndex: i] } }).max_by_key(|d| {
+            let (removable, low_power): (bool, bool) =
+                unsafe { (msg_send![*d, isRemovable], msg_send![*d, isLowPower]) };
+            (!removable, !low_power)
+        });
+    let Some(device) = device else { return };
+    let Some(method) = device.class().instance_method(objc2::sel!(newRenderPipelineStateWithDescriptor:error:)) else {
+        return;
+    };
+    if ORIGINAL.get().is_some() {
+        return;
+    }
+    let ours: Imp = unsafe { std::mem::transmute::<NewPipeline, Imp>(new_pipeline) };
+    let original = unsafe { method.set_implementation(ours) };
+    let _ = ORIGINAL.set(unsafe { std::mem::transmute::<Imp, NewPipeline>(original) });
+}
+
 /// Development: logs when the app's activation, key window or the frontmost app change.
 pub fn debug_focus() {
     use std::sync::Mutex;
