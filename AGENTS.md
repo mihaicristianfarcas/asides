@@ -1,36 +1,19 @@
 # AGENTS.md
 
 Instructions for coding agents working in this repository. Read [ARCHITECTURE.md](ARCHITECTURE.md)
-before changing the app. [CONTRIBUTING.md](CONTRIBUTING.md) has the full human workflow.
+before changing the app; [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, and
+[guide/using.md](guide/using.md) what users see.
 
 ## The project
 
-asides is a macOS menu-bar app plus a CLI. Why it works as it does, and what was measured:
-[design/redesign.md](design/redesign.md).
-- A global shortcut (`⌃⌥Space`) opens Asides: every screen frozen under a small pill (the
-  microphone, where the aside goes, send, close). A click pins the element under it (its role,
-  label, app, window, and in browsers the page and a CSS-like location), a drag pins an area; `M`
-  measures (PixelSnap-style: distances, snapped areas, holds, guides), `D` draws, `S` takes a
-  screenshot of a part. The user talks while doing it (the microphone starts as it opens; `Space`
-  held while muted). `⌃⌥P` goes live (the pill alone, over the user's app) and freezes again: one
-  aside holds many freezes. `⌃⌥Space` again (or `⏎`) sends it all as one aside: what was said, with
-  each freeze's screenshot, measurement and pin where the user was speaking.
-- whisper.cpp transcribes it locally, verbatim. The voice model is downloaded only when asked
-  (English-only by default).
-- The aside is typed into a coding agent's session (Claude Code, Codex, OpenCode, Gemini CLI,
-  Copilot CLI, Qwen Code) running in Terminal, Ghostty or Diri, as the user's own message, with its
-  screenshots: by default the session the user typed into last, found in the process table; the
-  pill picks another, or New session in… (an agent in a folder, started with the aside). Nothing is
-  installed in the agents and nothing has to listen.
-- Every aside is kept in `~/.asides/history` (pruned after `history_days`); nothing goes into the
-  user's repositories. The Asides window (`asides-overlay --window`) shows History, Sessions and
-  Settings. `asides mcp` (optional) lets agents read asides and measure images.
-- With the Wispr Flow integration on, dictations made while the screen is frozen join the aside.
-- Its overlay is a separate GPUI process, `asides-overlay`, the next one started ahead of time
-  (`--standby`). Web-only (Agentation's toolbar, React names) and CleanShot-only (PixelSnap's
-  hand-offs) features are out of scope: it works on anything on screen.
+asides is a macOS menu-bar app plus a CLI. `⌃⌥Space` freezes every screen under a pill; the user
+pins elements, measures, draws and talks; `⌃⌥Space` again types it all, transcribed locally and
+verbatim by whisper.cpp, into a coding agent's session in Terminal, Ghostty or Diri, as the user's
+own message with screenshots. `⌃⌥P` goes live and freezes again (one aside, many freezes). Every
+aside is kept in `~/.asides/history`. It works on anything on screen: web-only and CleanShot-only
+features are out of scope. Why it works this way: ARCHITECTURE.md's design decisions.
 
-It's a Rust workspace:
+A Rust workspace:
 - `crates/asides-core`: platform-independent logic.
 - `crates/asides-cli`: the `asides` binary.
 - `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `Asides.app`).
@@ -51,6 +34,7 @@ It's a Rust workspace:
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
+| README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/Asides.icns`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
@@ -97,9 +81,10 @@ changes.
   work without it); talking over the live screen must keep working without either. Sending uses
   Automation for Terminal and Ghostty (asked the first time Asides types into or opens a session
   there); Diri needs none. Input Monitoring is not used.
-- **Keep the docs in sync.** Update the README (user-facing), ARCHITECTURE.md (structure,
-  invariants) and CONTRIBUTING.md (workflow) when your change affects them. The website
-  (`docs/index.html`) repeats the shortcuts, requirements and install steps.
+- **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
+  pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
+  CONTRIBUTING.md. The website (`docs/index.html`) repeats the shortcuts, requirements and install
+  steps. When the overlay's look changes, regenerate `guide/overlay.png`.
 
 ## What you can and can't verify
 
@@ -152,344 +137,180 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 
 ## Pitfalls already hit
 
-- `target/release/asides` and `target/release/Asides` are the same file on case-insensitive
-  APFS. The bundle once shipped the CLI as the app.
-- `afconvert` rejects AAC above 32 kbps for 16 kHz mono (`-b 32000` works).
-- `git rev-parse --abbrev-ref HEAD` fails before the first commit; use `git branch --show-current`.
-- `ditto -c -k` zips don't flag UTF-8 names, so diacritics get garbled. Export uses the `zip` crate.
-- muda drops a single `&` from menu titles (mnemonics); escape dynamic text with `menu_text`.
-- tray-icon scales icons to at most 22 pt tall; `icons.rs` draws on a 22 pt canvas at 2×.
-- `if let` keeps its scrutinee's temporaries (including a `MutexGuard`) alive for the whole block,
-  so locking the same mutex inside it deadlocks. Bind the value first.
-- `say -o x.aiff --data-format=LEI16@16000` fails; use `--file-format=WAVE`.
-- tao activates the app at launch unless `set_activate_ignoring_other_apps(false)`; a menu-bar app
-  must not take focus.
-- Changing the status item's icon or title, or a menu item's text, while the menu is open does
-  **not** close it (tested). Look elsewhere if the menu closes unexpectedly: focus or activation
-  changes, or system prompts.
-- Clicking a standard menu item always closes the menu. Switch rows (view-based items) stay open,
-  but they were tried for the preferences and reverted: they don't line up with native items.
-- Without a `TrayIconEvent` handler, tray-icon queues an event for every mouse move over the icon,
-  forever.
-- Apple's SpeechAnalyzer and FoundationModels are Swift-only, so Rust can't call them without a
-  Swift shim.
-- Codex (and clients built on the MCP SDKs' defaults) abandon a tool call after 60 s, so
-  `wait_for_asides` returns within 50 s unless the client is Claude Code. Claude Code allows hours,
-  but cuts off a stdio call that sends nothing for 30 min; progress notifications keep it alive.
-- Codex asks for approval before each call to an MCP tool not marked `readOnlyHint` (and fails
-  it under `approval: never`), so a listening loop needs read-only tools. That's why binding is a
-  separate tool, `bind_asides`.
-- Claude Code's Monitor tool kills a command after at most 30 min, so the listen prompt runs
-  `asides listen --timeout 1740`, which prints the command to carry on (with an `--after` token)
-  before that happens. Monitor events aren't replies from the user; the prompt says asides are.
-- Claude Code probes `server/discover` (a newer MCP revision) before `initialize`. Answering
-  "method not found" makes it fall back to `initialize`.
-- Wispr Flow's `flow.sqlite` schema changes often between its versions. Discover columns, don't
-  assume them, and don't open it any way but read-only: Wispr Flow writes to it in WAL mode.
-- On the website, a `padding` shorthand on `.wrap` inside a media query reset the sections' top
-  padding on phones. Set only `padding-inline` there.
-- Headless Firefox takes `--screenshot` at load, mid-transition. Turn transitions off to capture a
-  frame (as `scripts/make-og.py` does).
-- Drawing a label's text with `NSString::drawAtPoint_withAttributes` changes the current stroke
-  color: set it again before the next line.
-- In `define_class!`, a protocol method declared `-> bool` is turned into `Bool`: an early `return
-  false` doesn't compile. Move the body into a plain function.
-- `CGBitmapContextCreate` isn't in objc2-core-graphics; read a `CGImage`'s pixels from its data
-  provider (`capture::to_frame`, which handles every 8-bit byte order).
-- There's no global Esc: over the live screen, Esc (and every key) belongs to the user's app; only
-  the global shortcuts reach Asides. It closes with its toolbar's × (or the menu), or Esc on a
-  frozen screen (twice when there's something to lose).
-- The live toolbar is its own GPUI pop-up window (a non-activating panel). `becomesKeyOnlyIfNeeded`
-  keeps clicks on it from taking the keyboard from the user's app, and `hidesOnDeactivate` must be
-  off: the overlay's app is never active over the live screen. Its window is sized to the toolbar,
-  so the toolbar must lay out at its own size (a flex parent): stretched to the window, the two
-  never shrink. GPUI doesn't implement `start_window_move` on macOS: the window follows the mouse
-  from the clock (`windows::follow_toolbar`, `NSEvent.pressedMouseButtons`), which replays can't
-  drive. A freeze's screenshots leave out the overlay's own windows (`capture::capture` `without`).
-- On a frozen screen the overlay sets every kiosk presentation option that holds the system back
-  (hide the Dock and the menu bar; no app switching, which also turns off Mission Control, App
-  Exposé, Show Desktop and switching spaces, with their gestures and hot corners; no hiding the
-  app; no Apple menu), but not Force Quit: a way out. An invalid combination throws (hiding the
-  menu bar needs the Dock hidden, and so does disabling switching). They apply only while its app is
-  active, so they're on while frozen and off live (`native::kiosk`, from `sync`). Notification
-  Center, Spotlight and the screenshot keys can't be held back.
-- macOS 26 takes the kiosk options from an accessory app (`currentSystemPresentationOptions` says
-  so) but still switches apps with ⌘Tab; for a regular one it doesn't (tested). The overlay is a
-  regular app while frozen (its Dock icon hidden with the Dock) and an accessory live. Asides'
-  global shortcuts still work under them.
-- `NSApp.activate()` (macOS 14's cooperative activation) was declined while the user's app was in
-  front: the overlay reported itself active, but the system's presentation options stayed off and
-  the frontmost app didn't change. `activateIgnoringOtherApps` (deprecated) activates it. The app
-  the overlay replaces gets the keyboard back from the overlay (active, it may hand it on:
-  `native::give_focus`), not from the menu-bar app, and only when the overlay has it: closing over
-  the live screen once sent the user back to the app they had left.
-- Handing the keyboard back is asynchronous: hidden at once, the frozen screens showed the user's
-  app drawn as one in the background (gray window buttons) for a frame. They stay up until it's in
-  front with the Dock and the menu bar back, and drew itself (`windows::handed_back`); closing frozen
-  waits the same way. With the Dock always shown that's about half a second (it slides back in, then
-  drops the overlay's icon, only once it's visible), so on ▶ the frozen screens show just the
-  screenshot with the live toolbar drawn where its window is, at once, in one redraw (ordering a
-  window in and drawing another didn't reach the screen in the same frame). Drawn after the overlay
-  went to the background, a frozen screen's redraw never showed: it redraws while still active.
-  Taking the system the moment they're ordered in, the menu bar hid a frame before they covered
-  it: the kiosk options wait until they're on screen (`windows::take_over`). `screencapture -v`
-  and per-frame diffs (ffmpeg, PIL) show such one-frame flashes.
-- GPUI makes its app regular as it finishes launching; turned back to an accessory and made
-  regular again for the kiosk moments later, the overlay got a second Dock tile that the Dock kept
-  over the live screen, until it quit (accessibility lists the Dock's items). The overlay keeps
-  that launch-time call from taking effect (`native::stay_accessory_at_launch`).
-- ScreenCaptureKit's older screenshots (`captureImageWithFilter`) leave windows' shadows out,
-  `ignoreShadowsDisplay` or not: a frozen screen was lighter under every window than the live one.
-  macOS 26's (`captureScreenshotWithFilter`, `SCScreenshotConfiguration`) has them, in the
-  display's color space; `capture::srgb` converts it.
-- An opaque window over an app's windows occludes them (`NSWindowOcclusionState` loses
-  `visible`), and many apps stop drawing while occluded: closing frozen over Diri showed its
-  window blurred for a frame (a stale placeholder) before it drew again, however long the overlay
-  waited, since it only draws once uncovered. The frozen screens are non-opaque
-  (`WindowBackgroundAppearance::Transparent`), though the screenshot covers every pixel: the
-  apps under them stay visible to macOS and keep drawing. A small window logging
-  `didChangeOcclusionStateNotification` under a cover shows it.
-- GPUI's pop-ups fade in and out (`NSWindowAnimationBehaviorUtilityWindow`), showing what they
-  showed last while they fade: the overlay turns that off. A hidden GPUI window isn't drawn (its
-  display link stops), so it shows its last frame when it's shown again (the last freeze, the
-  pointer where it was): `native::draw_now` draws it first (`displayLayer:`, outside any update).
-- A GPUI window opened from `cx.open_window` with `show: true` shows before its first frame. The
-  overlay opens its windows hidden. With nothing else holding the overlay's entity (its windows'
-  views did, when they opened at launch), the clock holds it.
-- GPUI drops what AppKit tells it while it's updating (`try_borrow_mut` fails): a window resized,
-  shown or made key from inside `handle.update` never told GPUI its new size or key status. The
-  overlay changes its windows outside updates, by their views (`native::show`, `set_frame`).
-- A shortcut's ⌃⌥ also reached the frozen screen as Measure's ⌥: its lines changed while the
-  shortcut was held. With ⌃ down, Measure takes no modifiers.
-- GPUI keeps a `RenderImage` in its atlas until the window drops it (`Window::drop_image`): each
-  freeze's screenshots are dropped once the next are drawn.
-- Whisper writes in the language it detects: English said with an accent, in a short clip, came out
-  in Romanian. Unsure detections keep the last sure language (`stt::choose_language`).
-- GPUI can't show, hide or move a window from inside an event it's handling for that window: the
-  overlay changes its windows from the clock (`windows::sync`), after the event. The first time it
-  went live, opening the toolbar's window marked the toolbar shown, so the frozen screens never hid
-  (and covered it) until the next freeze: toggles seemed to do nothing.
-- The overlay's panels are non-activating, so the frontmost app keeps its look. Borderless panels
-  need `canBecomeKeyWindow` to take the keyboard, and mouse moves come from an `ActiveAlways`
-  tracking area.
-- An accessibility hit test on the system-wide element finds the overlay itself. Hit-test the app
-  that owns the window under the point (from the window list taken before the overlay opened).
-- GPUI owns its `NSApplication` and event loop, like tao: the two can't share a process, hence
-  `asides-overlay`. GPUI also makes its app a regular one (a Dock icon); `native::accessory` turns
-  that back right away (frozen, `native::kiosk` makes it regular again).
-- GPUI handles an input event by updating its window, so an event sent while that window is being
-  updated (from inside `handle.update`, or a listener) is dropped with a logged error. The replay
-  sends its AppKit events from its task, between updates. Likewise, focus the card's field with the
-  `window` in hand, not through the window handle.
-- AppKit events made with `NSEvent::mouseEventWithType…` have no button number, so GPUI reads every
-  one as the left button: the replay sends a right-click as a control-click.
-- GPUI reads keys through the current keyboard layout from the key code; synthetic key events need
-  the US key codes (`native::synthetic`), and shifted symbols arrive as the symbol (`?`, not `⇧/`).
-- `Window::dispatch_event` returns a private type, so it can't be called from outside GPUI.
-- Changing an `NSWindow`'s style mask (`native::make_overlay` makes GPUI's panel borderless) rebuilds
-  its frame and resets its first responder to the window. Keys still reach GPUI, but typed text goes
-  through the first responder's input context, so the card took no text. Make GPUI's view the first
-  responder again after the change. Replays sent events straight to the view and didn't show it.
-- Posting key events to check this: a `CGEvent` made without a private source inherits the Fn flag
-  from an earlier function key, and Fn+A is macOS's "focus the Dock". Use
-  `CGEventSource(stateID: .privateState)` and set the flags. With `asides-overlay-debug` in the
-  temporary directory, the overlay logs the keys AppKit and GPUI get, and focus changes, to
-  `asides-overlay-debug.log` there (`native::debug`).
-- The overlay covers the menu bar, so an error shown there while it's open goes unseen: `App::fail`
-  also sends it to the overlay (`notice`).
-- A light gray card on white (#F3F4F6) differs by 12 of 255: the default tolerance (2%) must stay
-  below that.
-- A release in `/Applications/Asides.app` has the same bundle ID as the build `make install` puts in
-  `~/Applications`, and Launch Services, left to pick, opened the release for the CLI's links (both
-  ended up running, fighting over the shortcuts: the release's frozen-only overlay showed). The CLI
-  now sends its links to the app it ships in (`own_app`), or to `ASIDES_APP` (`open -a`; `make e2e`
-  sets it). Opened from Spotlight, either copy may still start: quit the one not under test.
+### Tools and build
 
-- `claude`'s `--mcp-config` and `--allowedTools` take every value after them, so the prompt goes
-  first; after them it was read as a config file. A server given with `--mcp-config` replaces a
-  user-scope one of the same name (`"source":"dynamic"` in the init message).
-- OpenCode 2 runs agents and their MCP servers in a shared background service (`opencode serve
-  --service`), which doesn't see a TUI's environment: `OPENCODE_CONFIG_CONTENT` needs
-  `--standalone`, and `opencode debug config` and `mcp list` ask the shared service, not the
-  process you run. 2.0 keeps servers under `mcp.servers.<name>`; 1.x under `mcp.<name>` and has no
-  `--standalone`. That service also starts `asides mcp` for every directory it's used in: those
-  records aren't listening, and the menu ignores them.
-- The app is launched with Launch Services' bare `PATH`, so agents are found and run through the
-  user's login shell (`$SHELL -ilc`); `.command` scripts opened in a terminal get its login shell.
-- Ghostty can't be started from its CLI on macOS (`+new-window` is unsupported), and asks "Allow
-  Ghostty to execute …?" before running a script it's asked to open (`open -a Ghostty x.command`).
-  New Agent Session starts it with `open -na Ghostty --args --initial-command=<script>` instead: a
-  process of its own, no prompt. Pass the script as an option, not a bare path (`-e <path>`):
-  AppKit also opens a bare path argument as a document, which brings the prompt back.
-- Claude Code asks whether to trust a folder the first time it runs there, launched by asides or
-  not. A scratch repo for a live test stalls on it; your own repos are already trusted.
-- macOS has no `timeout` command; scripts wait with a loop and `kill`.
-- Codex's app-server daemon speaks JSON-RPC over WebSocket; `codex app-server proxy` connects stdio
-  to its socket, so a client sends the HTTP upgrade first and masked frames after. Threads started
-  by `codex exec` run in that process, not the daemon: `codex queue` messages for them wait.
-- `codex queue` refuses images ("does not support image attachments", though `--help` lists
-  `--image`): every aside with a screenshot failed, retried every 400 ms. A `turn/start` with
-  `localImage` inputs takes them, but on an active thread it joins the turn in progress (steers):
-  `thread/read`'s `status.type` says `idle` or `active`. The daemon lets a thread go once no client
-  has it open, and `thread/read` then fails ("thread not loaded"): `thread/resume` (with its
-  `config`) loads it again. `codex app-server generate-json-schema --out DIR` writes the protocol.
-- A Codex window given `-c` options runs a server of its own, which a thread the daemon holds is
-  locked against ("This conversation is open in another app"). `codex resume <thread>` for a
-  thread asides started passes no `-c`; the thread already has its configuration.
-- OpenCode's free models refuse `opencode run` ("can only be used from within OpenCode"), but not
-  prompts sent to its background service, which is what the TUI does: asides starts and pushes
-  into sessions there. The service registers its address and password in
-  `~/.local/state/opencode/service.json` (HTTP basic auth, user `opencode`); the API is under
-  `/api/`, takes the directory as `location[directory]=<dir>`, and `GET /api/mcp` only lists the
-  servers of directories already loaded. `delivery: "queue"` waits for the turn in progress;
-  `"steer"` would join it.
-- Claude Code's `--worktree` branches from origin's default branch (`worktree.baseRef = "fresh"`),
-  not from the branch the user is on; `--settings '{"worktree":{"baseRef":"head"}}'` changes that
-  for one session.
-- `claude stop` takes a background session's id (`claude agents --json` gives it for the name);
-  `claude attach` takes either.
-- Agents mark the processes they run as part of their session (`CLAUDECODE`,
-  `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_EFFORT`, `OPENCODE`, `AGENT`…), and
-  `open` passes its caller's environment to the app it starts. An app started by an agent's `asides
-  mcp` handed them to every terminal and agent it started: Claude Code warned "Transcript saving is
-  off — inherited CLAUDE_CODE_CHILD_SESSION marker" and ran at the first session's effort. The app
-  and `asides <agent>` drop them (`launch::session_markers`). `ps eww` shows the environment a
-  process was started with, not what it removed since: check a child's.
-- Terminal's AppleScript can't make a tab (only ⌘T through System Events, which needs
-  Accessibility), and "Prefer tabs when opening documents" doesn't apply to scripts it's asked to
-  open (tested). Ghostty 1.3's dictionary has `new tab … with configuration`; `osacompile` checks a
-  script against it without sending Ghostty anything.
-- The Automation prompt holds the AppleScript until the user answers, and the script fails after
-  the Apple event timeout (2 minutes) if they don't: run it off the main thread. Under the hardened
-  runtime it needs the `automation.apple-events` entitlement, and the prompt shows
-  `NSAppleEventsUsageDescription`.
-- With the Accessibility permission (your terminal may have it: `AXIsProcessTrusted`), the real
-  status menu can be driven: a synthetic click at the frame of the app's `AXExtrasMenuBar` child
-  opens it (`AXPress` doesn't open tray-icon's menu), then its items read and press through
-  accessibility. Shortcuts need the whole chord posted (modifier key events, then the key, through
-  a private `CGEventSource`); a key event carrying only modifier flags doesn't fire a Carbon hot
-  key. It's the user's screen and mouse: keep it short.
-- Gemini CLI reads MCP servers only from settings files, and skips a system settings file
-  (`GEMINI_CLI_SYSTEM_SETTINGS_PATH`, or the defaults one) unless root owns its folder: a session
-  can't have a server of its own. It passes its environment to its servers (plus `GEMINI_CLI=1`),
-  so the user's `asides mcp` becomes the session's through `ASIDES_SESSION`. In a folder the user
-  hasn't trusted, its MCP servers are disabled (`gemini mcp list` says Disabled;
-  `GEMINI_CLI_TRUST_WORKSPACE=true` trusts it for a check).
-- Copilot CLI's `--allow-tool` takes every value after it unless given with `=`, and its `mcp list`
-  doesn't take `--additional-mcp-config`. It validates that config before asking for a login, so
-  `-p` in place of `--interactive` checks a command line without a model call. Qwen Code (from
-  Gemini CLI) takes servers with `--mcp-config` and says "MCP server(s) failed to start" under `-p`
-  when one doesn't.
-- The agent CLIs write into your home on their first run, even for `--version` (Copilot unpacks
-  170 MB into `~/Library/Caches/copilot`; Gemini makes `~/.gemini`): install them into a scratch
-  prefix (`npm install --prefix`) and run them with a scratch `HOME`.
-- A freeze is in sRGB, but the display's colors are Display P3: a saturated blue (a sky wallpaper)
-  is outside sRGB, its red clipped near 0, where one level of the screen's is 3 to 6 of sRGB's. Those
-  jumps were edges (phantom stops on an empty sky, objects in a blur behind glass) until edges had to
-  be visible (OKLab). `screencapture` saves the display's colors, so it doesn't show this: test
-  measuring on what a freeze captures (`dumps_a_freeze` in `capture.rs`), or convert with `sips
-  --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`. A desktop picture alone is
-  `screencapture -l` of the Dock's `Wallpaper-` window (its file may be gone).
-- Visible isn't enough: a painted wallpaper's grain made single-pixel edges as visible as a faint
-  card's border (OKLab 0.01 to 0.03), so faint changes must go on along a contour. With grain, the
-  channel that changes most flips from row to row where all three change alike (a gray hairline):
-  compare the next row along this change's channel, not by which of its own changes most.
-- A contour rule alone loses faint edges and keeps dense grain. Faint rounded corners and a 2 px
-  hairline's ends are too short or too slanted to follow (snapping then leaked into a faint card
-  through its corners and swallowed the hairline): a faint change also counts where it touches an
-  edge the other way. In heavy grain (iMac wallpapers) the next row nearly always has a like change
-  somewhere close: the window is from where it starts to a pixel after, the colors on each side must
-  match, and a faint change that doesn't stand out from its grain must go on across 15 rows. Judge
-  the grain beyond all a change spreads over: a soft cloud edge's own ramp changes as much at every
-  pixel, and compared with it the edge never stood out. Measure such changes on many pictures at
-  once (wallpapers, photos, light and dark UI, a scaled-down aside image), not one.
-- Snapping an area must find the edges measuring from a point does (`snapping_finds_the_edges_measuring_does`).
-  Tracing each change's contour from every pixel tripled a full-screen snap; `measure::Contours`
-  works out all of them in two passes over a block. Its records are sparse (most pixels have no
-  change), and one change ends at a pixel at most (from the pixel before, else two before): records
-  for every pixel, and for both, were slower than the tracing they replaced.
-- Edges must not depend on the part of the frame being worked on. Judged against a thread's band of
-  rows, 0.7.2 lost horizontal edges on each band's first row when snapping a large area (on a
-  1-thread machine, or a small area, it didn't). And an area's outline is split into stretches at its
-  edges, the longest being its background, so one edge more or less near a corner changes what it
-  snaps to: a frozen screen's edges, found once for all of it, keep where each anti-aliased one
-  starts and ends, for each area to leave out those reaching past it (`for_area`).
-- Opening Asides took 262 ms (now 109), and nothing in it was the measuring:
-  - `CGPreflightScreenCaptureAccess` takes 11 ms every call: once allowed, the app doesn't ask
-    again until a capture fails.
-  - ScreenCaptureKit's `getShareableContent` takes 30 to 50 ms. With nothing to leave out, macOS 26's
-    `captureImageInRect` needs no content (its rect is in CoreGraphics' coordinates, y down from the
-    main display's top), has the windows' shadows and leaves the pointer out like
-    `captureScreenshotWithRect`, and is 20 ms quicker (45 ms for a screen). Freezing again from live
-    still lists the content, to leave out the overlay's windows.
-  - Converting a screen to sRGB (`NSBitmapImageRep`, ColorSync) takes 25 ms on one thread. Converted
-    in strips (`CGImageCreateWithImageInRect`), one per thread, the pixels are the same
-    (`converts_in_strips_as_whole`).
-  - A new overlay process took 150 ms to show: 20 to start, 40 for GPUI, 30 for its window (with
-    `runtime_shaders`, Metal compiles GPUI's shaders for each window, and GPUI draws a window as it
-    opens), 30 reading and copying a screen's pixels, and drawing. The app keeps one standing by,
-    with the screens' windows open (`windows::Spare`). A window opened once to warm Metal didn't
-    help a second later: its compiler had gone idle. A spare window's first draw of the frozen
-    screen was 7 ms longer until it drew text first (font matching, glyphs in its atlas). App Nap,
-    the main thread's QoS and preloading AppKit's text input UI made no difference.
-  - To time its parts, print timestamps from the overlay and run `--standby` with a `windowed`
-    session (spares are for whole screens, so give them the development window's frame while
-    timing), then send `{"type":"open","dir":…}`. `sample` adds tens of milliseconds to every
-    library loaded while it's attached.
-  - To time it on screen (it covers the user's screen: ask), post `⌃⌥Space` as a whole chord through
-    a private `CGEventSource` (your terminal needs Accessibility), poll the window list for the
-    frozen screens' windows, and close with Esc. Find them by their process (`proc_name` of
-    `kCGWindowOwnerPID`): their owner name is the bundle's, `Asides`. Never post `⌃⌥Space` while one
-    is up: a tap with Asides open is Done, and a harness that missed the window added an aside to
-    the user's notes.
-- Whisper's segment times run through silence: two takes joined with a 2 s pause came back as
-  segments with no gap between them, or as one. Keep each take's segments in it (`fit_segments`).
-- On a notched display, the notch sits in the menu bar (the screen's safe area, 38 pt; the menu bar
-  is 39). A banner centered at the top of a frozen screen was half under it.
-- `NSRunningApplication.hide()` from a command-line tool returns false: it can't hide other apps.
-- `dirijor new` ignores `--help` and creates a Diri session. Read its source (or `dirijor session
-  run --help`, which does print help) before trying its commands.
-- Typing into agents (2026-10-18, measured; design/redesign.md has the table):
-  - Terminal's `do script "…" in <tab>` sends its text and a CR in one burst, which agents take for
-    a paste: the CR becomes a new line, and nothing is sent (a lone CR sent 1.5 s later sent a
-    one-line message, not a multi-line one). Wrapped in bracketed-paste markers (`ESC[200~ …
-    ESC[201~`), the CR that follows sends it. `do script` can't send a key without its CR: Ctrl+V
-    arrives with one, as a paste, and Claude Code strips it ("removed 1 invisible character").
-  - Ghostty 1.3's AppleScript `send key "v" modifiers "control"` sends nothing when the program has
-    the kitty keyboard protocol on (Claude Code, Codex and OpenCode all do): Ctrl keys are dropped,
-    Return and Tab aren't. A bare `send key "a"` sends nothing either. `input text` is a paste.
-  - A pasted image path becomes an attachment in Ghostty for all three agents, in Terminal for all
-    three (bracketed), but stays text in Diri for Claude Code and OpenCode: Diri gets Ctrl+V with
-    the image on the pasteboard instead.
-  - Claude Code attaches a pasted path a moment after the paste: with a CR in the same burst, the
-    text went out and the image joined the next message. Codex and OpenCode attach it as it's
-    pasted: a path pasted alone with a CR was sent alone.
-  - Return while Codex is working joins the turn in progress ("steers"), and in the test Codex then
-    answered only the newer message. Tab queues it (and sends at once when idle).
-  - Diri's `session send` refuses text that's only whitespace ("requires text"), and `session spawn
-    --prompt` typed into OpenCode before its input box was ready (lost; spawn without it, wait for
-    "Ask anything" in `session read`, then send).
-  - The access time of an agent's terminal device (`/dev/ttys003`) moves when it reads input: the
-    session typed into last, for any agent in any app (`w` uses it for idle time).
-  - A terminal app started from inside an agent's session (an AppleScript from it launching Ghostty)
-    hands that session's markers to every shell it opens; Claude Code there said "Transcript saving
-    is off — inherited CLAUDE_CODE_CHILD_SESSION marker". Start test terminals with the markers
-    stripped (or from the Dock), and quit them after.
-  - Asides' first AppleScript to Terminal (or Ghostty) waits for the Automation prompt, up to the
-    Apple event timeout: the send shows "sending" until then. Permissions follow the signing
-    identity: a build signed like the last release has the Ghostty permission New Agent Session got.
-  - Claude Code asks whether to trust a folder it hasn't seen: a new session in a scratch folder
-    waits at that question, its first message behind it.
-- `pgrep -f "harness.py terminal"` also matches the shell running the loop that waits for it (its
-  command line has the text): a wait loop on it never ends.
-- macOS's `grep` has no `\|` in basic patterns: use `grep -E 'a|b'`.
-- An `NSOpenPanel` runs in a service of its own (the open and save panel service), drawn in the
-  app's window list: keys posted to the app's process (`CGEvent.postToPid`) never reach it. To drive
-  it in a test, press its buttons through accessibility (`AXPress` on "Start Here" picks the folder
-  it shows). Opened at the normal level it sat under the frozen screens (the screen saver level):
-  `native::choose_folder` puts it one above.
-- `launchctl setenv` reaches apps Launch Services starts from then on (the end-to-end test's
-  `ASIDES_HOME`); `launchctl unsetenv` when done, or every later launch keeps it.
+- `target/release/asides` and `Asides` are the same file on case-insensitive APFS (the bundle once
+  shipped the CLI as the app).
+- `afconvert`: AAC above 32 kbps fails for 16 kHz mono (`-b 32000`). `say -o x.aiff
+  --data-format=LEI16@16000` fails: use `--file-format=WAVE`.
+- `git rev-parse --abbrev-ref HEAD` fails before the first commit: `git branch --show-current`.
+- `ditto -c -k` garbles diacritics in zip names: export uses the `zip` crate.
+- macOS has no `timeout` (wait with a loop and `kill`), and its `grep` has no `\|` (`grep -E`).
+- `pgrep -f "<text>"` also matches the shell whose wait loop contains the text.
+- `launchctl setenv` reaches every app launched afterwards: `launchctl unsetenv` when done.
+- `dirijor new` ignores `--help` and creates a session: read its source (or `dirijor session run
+  --help`) before trying commands.
+- The agent CLIs write into your home on first run (Copilot unpacks 170 MB): install them with
+  `npm install --prefix` and run them with a scratch `HOME`.
+- Headless Firefox screenshots mid-transition: turn transitions off. On the website, a `padding`
+  shorthand on `.wrap` in a media query reset the sections' top padding: set `padding-inline`.
+
+### Rust, AppKit, menus
+
+- `if let` keeps its scrutinee's temporaries (a `MutexGuard`) alive for the whole block: bind the
+  value first, or locking again deadlocks.
+- `define_class!` turns a protocol method's `-> bool` into `Bool`, so an early `return false`
+  doesn't compile: move the body into a plain function.
+- `CGBitmapContextCreate` isn't in objc2-core-graphics: read a `CGImage` from its data provider
+  (`capture::to_frame`).
+- `NSString::drawAtPoint_withAttributes` changes the stroke color: set it again after.
+- SpeechAnalyzer and FoundationModels are Swift-only. `NSRunningApplication.hide()` from a CLI
+  returns false.
+- muda drops a single `&` from menu titles: escape dynamic text with `menu_text`.
+- tray-icon caps icons at 22 pt (`icons.rs` draws on 22 pt at 2×), and without a `TrayIconEvent`
+  handler it queues an event per mouse move, forever.
+- tao activates the app at launch unless `set_activate_ignoring_other_apps(false)`.
+- Changing the status item or a menu item's text doesn't close an open menu; if it closes, look at
+  focus, activation or system prompts. Standard items always close it; view-based switch rows
+  don't, but didn't line up (reverted).
+- Launch Services gives the app a bare `PATH`: agents are found and run through `$SHELL -ilc`.
+- A release in `/Applications` has the same bundle ID as `make install`'s build. The CLI opens its
+  own app (`own_app`) or `ASIDES_APP`; from Spotlight either may start: quit the one not under test.
+- Agents mark their processes (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`,
+  `CLAUDE_EFFORT`, `OPENCODE`, `AGENT`…) and `open` passes them to the app it starts, which then
+  passed them to every terminal (Claude Code: "Transcript saving is off"). The app drops them
+  (`agents::session_markers`). `ps eww` shows a process's starting environment: check a child's.
+
+### GPUI
+
+- GPUI owns `NSApplication` and the event loop, like tao: hence a second process. It makes its app
+  regular (a Dock icon): `native::accessory` undoes it, and `native::stay_accessory_at_launch` stops
+  its launch-time call (else a second Dock tile stayed until quit).
+- GPUI drops what AppKit tells it during an update: a window resized, shown or made key inside
+  `handle.update` never told GPUI. Change windows outside updates, by their views (`native::show`,
+  `set_frame`).
+- GPUI can't show, hide or move a window from inside that window's event: the overlay does it from
+  the clock (`windows::sync`).
+- An input event sent while its window updates is dropped: replays send between updates; focus the
+  card's field with the `window` in hand.
+- `cx.open_window` with `show: true` shows before the first frame: open hidden. When nothing else
+  holds the overlay's entity, the clock does.
+- A hidden window isn't drawn and shows its last frame when shown: `native::draw_now` draws first.
+  Pop-ups fade showing old content: the overlay turns the animation off.
+- `RenderImage`s stay in the atlas until `Window::drop_image`: drop a freeze's once the next is drawn.
+- No `start_window_move` on macOS: the live pill follows the mouse from the clock
+  (`windows::follow_toolbar`), which replays can't drive. `Window::dispatch_event` returns a private
+  type.
+- Changing a window's style mask (`native::make_overlay`) resets the first responder: keys arrive
+  but typed text doesn't. Make GPUI's view first responder again (replays didn't show it).
+- Synthetic events: `mouseEventWithType…` has no button number (every click is left; send a
+  right-click as control-click); keys need US key codes (`native::synthetic`), and shifted symbols
+  arrive as the symbol (`?`).
+- Posted `CGEvent`s inherit Fn from an earlier function key (Fn+A focuses the Dock): use a private
+  `CGEventSource` and set the flags. `asides-overlay-debug` in the temporary directory makes the
+  overlay log keys and focus to `asides-overlay-debug.log` (`native::debug`).
+
+### Overlay windows, focus, kiosk
+
+- Panels are non-activating, so the user's app keeps its look. Borderless panels need
+  `canBecomeKeyWindow`; mouse moves need an `ActiveAlways` tracking area.
+- The live pill is its own panel: `becomesKeyOnlyIfNeeded` (clicks don't take the keyboard),
+  `hidesOnDeactivate` off, laid out at its own size (a flex parent). Freezes leave out the overlay's
+  windows (`capture::capture` `without`).
+- There's no global Esc: live, every key belongs to the user's app; only the global shortcuts reach
+  Asides.
+- Frozen, the kiosk options hide the Dock and menu bar and stop app switching (Mission Control,
+  spaces, gestures, hot corners), hiding and the Apple menu, but not Force Quit. Hiding the menu bar
+  or disabling switching needs the Dock hidden, or it throws. They apply only while the app is
+  active (`native::kiosk`). Notification Center, Spotlight and screenshot keys can't be held back.
+- macOS 26 takes kiosk options from an accessory app but still switches apps on ⌘Tab: the overlay
+  is regular while frozen, an accessory live.
+- `NSApp.activate()` is declined while the user's app is in front: use `activateIgnoringOtherApps`.
+  The overlay hands the keyboard back itself (`native::give_focus`), only when it has it.
+- Handing the keyboard back is asynchronous: the frozen screens stay up until the app is in front
+  and redrawn, with the Dock and menu bar back (`windows::handed_back`, about 0.5 s). Redraw while
+  still active; later redraws never showed. Take the kiosk options once the windows are on screen
+  (`windows::take_over`), or the menu bar hides a frame early.
+- An opaque window occludes the apps under it, and they stop drawing: frozen screens are
+  non-opaque (`WindowBackgroundAppearance::Transparent`).
+- One-frame flashes show in `screencapture -v` with per-frame diffs (ffmpeg, PIL).
+- An accessibility hit test on the system-wide element finds the overlay: hit-test the app owning
+  the window under the point (from the window list taken before opening).
+- Errors in the menu bar are hidden under the overlay: `App::fail` also sends a `notice`.
+- The notch is in the menu bar (safe area 38 pt, menu bar 39): keep drawing below it.
+- A shortcut's ⌃⌥ reached Measure as ⌥: with ⌃ down, Measure takes no modifiers.
+- `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
+  accessibility. `native::choose_folder` puts it above the frozen screens.
+
+### Capture and measuring
+
+- `captureImageWithFilter` drops window shadows; macOS 26's `captureScreenshotWithFilter` keeps
+  them, in the display's color space (`capture::srgb`).
+- Freezes are sRGB, the display P3: saturated colors clip, and one screen level is 3 to 6 sRGB
+  levels, which made phantom edges until edges had to be visible (OKLab). `screencapture` keeps the
+  display's colors: test on a freeze (`dumps_a_freeze`) or `sips --matchTo '/System/Library/ColorSync/Profiles/sRGB Profile.icc'`.
+  A bare desktop picture is `screencapture -l` of the Dock's `Wallpaper-` window.
+- Grain makes single-pixel changes as visible as a faint card's border (OKLab 0.01 to 0.03): faint
+  changes must go on along a contour, compared along the change's own channel. Faint rounded corners
+  and hairline ends count where they touch an edge the other way. In heavy grain, a faint change
+  that doesn't stand out from it must go on 15 rows. Test on many images at once (wallpapers,
+  photos, light and dark UI).
+- Snapping must find the edges measuring from a point does
+  (`snapping_finds_the_edges_measuring_does`); `measure::Contours` does it in two passes per block.
+- Edges must not depend on the part of the frame worked on (0.7.2 lost them on each thread band's
+  first row). A frozen screen's edges are found once; each area leaves out those reaching past it
+  (`for_area`).
+- A light gray card on white (#F3F4F6) differs by 12/255: the default tolerance (2%) must stay
+  below that.
+
+### Opening speed (262 ms → 109 ms)
+
+- `CGPreflightScreenCaptureAccess` costs 11 ms: don't ask again until a capture fails.
+- `getShareableContent` costs 30 to 50 ms: with nothing to leave out, use macOS 26's
+  `captureImageInRect` (CoreGraphics coordinates, y down).
+- Converting to sRGB is 25 ms on one thread: convert in strips, one per thread.
+- A new overlay process took 150 ms: one stands by with its windows open (`windows::Spare`), and a
+  spare draws text first. Warming Metal with a throwaway window doesn't last.
+- To time it: timestamps from the overlay, `--standby` with a `windowed` session, then send
+  `{"type":"open","dir":…}`. `sample` slows every library load.
+- On screen (ask first): post `⌃⌥Space` as a whole chord through a private `CGEventSource`, find the
+  windows by `proc_name` of `kCGWindowOwnerPID`, close with Esc. Never post it while Asides is open:
+  it sends.
+
+### Speech
+
+- Whisper writes in the language it detects; short accented English came out Romanian: unsure
+  detections keep the last sure language (`stt::choose_language`).
+- Segment times run through silence between takes: keep each take's segments in it
+  (`fit_segments`).
+
+### Agents, terminals, MCP
+
+- How each agent takes text, Return and images in each app is measured and documented in
+  `deliver.rs`. In short: Terminal's `do script` sends text and CR as one paste (wrap it in
+  bracketed-paste markers); Ghostty drops AppleScript Ctrl keys under the kitty keyboard protocol
+  (send image paths); Diri keeps pasted paths as text for Claude Code and OpenCode (send Ctrl+V);
+  Claude Code attaches a pasted path a moment later; Return while Codex works steers (send Tab).
+- Diri's `session send` refuses whitespace-only text, and `session spawn --prompt` typed into
+  OpenCode before it was ready: wait for "Ask anything" in `session read`.
+- The terminal device's access time (`/dev/ttys003`) moves when the agent reads input: the session
+  typed into last.
+- Claude Code asks to trust a folder it hasn't seen: a new session in a scratch folder waits there.
+- A terminal app started from inside an agent's session hands its markers to every shell: start
+  test terminals from the Dock (or strip them), and quit them after.
+- The Automation prompt holds an AppleScript until answered, failing after 2 minutes: run it off
+  the main thread. It needs the `automation.apple-events` entitlement and
+  `NSAppleEventsUsageDescription`. Permissions follow the signing identity.
+- Terminal's AppleScript can't make a tab (only ⌘T through System Events). Ghostty 1.3 has `new
+  window … with configuration`; `osacompile` checks a script against its dictionary without sending.
+  Ghostty asks before running a script opened with `open -a`.
+- With Accessibility, the real status menu can be driven: a synthetic click on the app's
+  `AXExtrasMenuBar` child opens it (`AXPress` doesn't), then press items through accessibility.
+  Shortcuts need the whole chord posted; modifier flags alone don't fire a hot key.
+- Codex asks before every MCP tool not marked `readOnlyHint`. Claude Code probes
+  `server/discover` before `initialize`: answer "method not found".
+- Wispr Flow's `flow.sqlite` schema changes between versions: discover columns, open it read-only
+  (it writes in WAL mode).
 
 ## Commits
 

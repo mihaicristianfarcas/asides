@@ -11,4 +11,4 @@
 
 ## Docs
 
-- [ ] README / ARCHITECTURE.md / CONTRIBUTING.md updated, or not affected
+- [ ] `guide/`, ARCHITECTURE.md, CONTRIBUTING.md updated (briefly), or not affected

@@ -3,7 +3,7 @@
 //! them, `sessions.rs` finds the sessions). And how a new session starts with an aside as its first
 //! message.
 //!
-//! Measured on 2026-10-18 with Claude Code, Codex and OpenCode in each app (design/redesign.md):
+//! Measured on 2026-10-18 with Claude Code, Codex and OpenCode in each app:
 //! - **Diri**: `dirijor session send --no-submit` pastes the text (a bracketed paste), and
 //!   `session key` presses keys. A screenshot goes in with the clipboard and Ctrl+V, which all three
 //!   agents attach (a pasted path stays text in Claude Code and OpenCode there).

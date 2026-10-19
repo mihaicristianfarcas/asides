@@ -18,6 +18,6 @@ labels: bug
 - Mac (chip):
 - `asides --version`:
 - Output of `asides status`:
-- Speech model (Preferences → Speech Model):
+- Voice model (Settings):
 
-<!-- Notes and audio clips can contain private information: share only the relevant excerpt. -->
+<!-- Asides and audio can contain private information: share only the relevant excerpt. -->
