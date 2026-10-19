@@ -1744,16 +1744,8 @@ impl AsidesWindow {
             .justify_center()
             .gap(px(12.))
             .px(px(40.))
-            .child(
-                div()
-                    .size(px(64.))
-                    .rounded(px(16.))
-                    .bg(t.accent)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon("mark", 38., t.on_accent)),
-            )
+            // The logo alone, as on the website.
+            .child(icon("logo", 76., t.primary))
             .child(div().pt(px(10.)).text_size(px(28.)).font_weight(FontWeight::BOLD).child("Welcome to asides"))
             .child(div().max_w(px(470.)).flex().flex_col().gap(px(8.)).children([
                 line(format!("Press {open} over any app: the screen freezes. Click what's wrong and say why.")),

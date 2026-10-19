@@ -110,8 +110,13 @@ const ICONS: &[(&str, &str)] = &[
             r#"<circle cx="12" cy="5" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M12 14.5l-3 5.5M12 14.5l3 5.5"/>"#,
         ),
     ),
-    // asides' mark: brackets around a point.
-    ("mark", icon(r#"<path d="M8.5 4.5h-3v15h3M15.5 4.5h3v15h-3"/><circle cx="12" cy="12" r="1.6"/>"#)),
+    // asides' logo, `[a]`, as the website and the menu bar draw it (its 22-point grid, centered).
+    (
+        "logo",
+        icon(
+            r#"<g transform="translate(1 1)"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11.5" r="2.9"/><path d="M13.9 8.6v5.8"/></g>"#,
+        ),
+    ),
 ];
 
 pub struct Assets;
