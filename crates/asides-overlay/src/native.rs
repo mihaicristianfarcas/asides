@@ -93,6 +93,7 @@ pub fn make_overlay(window: &Window, frame: PtRect) -> (isize, usize) {
         let gpui_view: &NSView = unsafe { &*(view as *const NSView) };
         ns.makeFirstResponder(Some(gpui_view));
     }
+    drawn_when_asked(view);
     (ns.windowNumber(), view)
 }
 
@@ -121,6 +122,7 @@ pub fn make_toolbar(window: &Window, frame: PtRect) -> (isize, usize) {
         panel.setBecomesKeyOnlyIfNeeded(true);
     }
     ns.setFrame_display(NSRect::new(NSPoint::new(frame.x, frame.y), NSSize::new(frame.width, frame.height)), true);
+    drawn_when_asked(view);
     (ns.windowNumber(), view)
 }
 
@@ -136,25 +138,22 @@ fn view<'a>(pointer: usize) -> Option<&'a NSView> {
 /// Draws these windows now, as GPUI would their next frames, and puts it on screen: hidden ones
 /// show it when they're shown, not what they showed last. (Hidden, GPUI doesn't draw them.)
 ///
-/// GPUI draws on `displayLayer:`, which its layer calls once it's marked to be displayed: marked
-/// and displayed here, it's displayed once. Called directly, the mark (left by a resize) stayed, and
-/// a transaction's commit drew the window again: a third draw in one transaction waits a second for
-/// one of its layer's three drawables, which the commit itself frees (fast Tabs froze the pill).
+/// GPUI draws on `displayLayer:`, called here without marking the layer: a commit displays every
+/// layer marked in its transaction again, even one displayed since, and the screen with the
+/// keyboard then presents again (GPUI does, every frame for a second after a key). That waits a
+/// second for one of its layer's three drawables, one of which only the commit itself frees: fast
+/// Tabs froze the pill. Resizes don't mark them either (`drawn_when_asked`).
 pub fn draw_now(views: &[usize]) {
+    let started = std::time::Instant::now();
     for v in views.iter().filter_map(|&v| view(v)) {
-        let layer: *mut AnyObject = unsafe { msg_send![v, layer] };
-        match unsafe { layer.as_ref() } {
-            Some(layer) => {
-                let _: () = unsafe { msg_send![layer, setNeedsDisplay] };
-                let _: () = unsafe { msg_send![layer, displayIfNeeded] };
-            }
-            None => {
-                let _: () = unsafe { msg_send![v, displayLayer: std::ptr::null::<AnyObject>()] };
-            }
-        }
+        let _: () = unsafe { msg_send![v, displayLayer: std::ptr::null::<AnyObject>()] };
     }
     if let Some(transaction) = AnyClass::get(c"CATransaction") {
         let _: () = unsafe { msg_send![transaction, flush] };
+    }
+    // A wait for a drawable shows as a frozen pill.
+    if started.elapsed() > std::time::Duration::from_millis(40) {
+        debug(&format!("drawing {} windows took {:?}", views.len(), started.elapsed()));
     }
 }
 
@@ -167,9 +166,23 @@ pub fn transaction<R>(f: impl FnOnce() -> R) -> R {
     }
     let result = f();
     if let Some(class) = class {
+        let started = std::time::Instant::now();
         let _: () = unsafe { msg_send![class, commit] };
+        if started.elapsed() > std::time::Duration::from_millis(40) {
+            debug(&format!("committing took {:?}", started.elapsed()));
+        }
     }
     result
+}
+
+/// The window is drawn by GPUI's frames and by `draw_now`, not again because it was resized: the
+/// window resized and drawn in a transaction would be drawn once more in its commit (`draw_now`).
+fn drawn_when_asked(pointer: usize) {
+    let Some(v) = view(pointer) else { return };
+    let layer: *mut AnyObject = unsafe { msg_send![v, layer] };
+    if let Some(layer) = unsafe { layer.as_ref() } {
+        let _: () = unsafe { msg_send![layer, setNeedsDisplayOnBoundsChange: false] };
+    }
 }
 
 /// Shows the window; with `key`, it takes the keyboard too.
