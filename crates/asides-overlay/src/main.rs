@@ -8,14 +8,15 @@
 //! With a script in the session (`asides simulate-measure`), it plays it without any window and
 //! writes the result.
 //!
-//! Started with `--window`, it's the asides window instead (`window.rs`): History, Sessions and
-//! Settings.
+//! Started with `--window`, it's the asides window instead (`window.rs`): History, Sessions,
+//! Settings and Help.
 
 mod assets;
 mod controls;
 mod export;
 mod finish;
 mod glass;
+mod help;
 mod input;
 mod io;
 mod native;

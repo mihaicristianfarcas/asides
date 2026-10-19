@@ -35,6 +35,7 @@ A Rust workspace:
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
+| Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
@@ -86,7 +87,7 @@ changes.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
   CONTRIBUTING.md. The website (`docs/index.html`) repeats the shortcuts, requirements and install
-  steps. When the overlay's look changes, regenerate `guide/overlay.png`.
+  steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips.
 
 ## What you can and can't verify
 
@@ -104,7 +105,8 @@ changes.
   (`replay`: AppKit events into GPUI's view), and capture them to PNGs to look at
   (`screencapture -l`, when your terminal has Screen Recording). Keep the window small and the run
   short: it's on the user's screen
-- open the asides window on a history of your own and capture each part (CONTRIBUTING.md)
+- open the asides window on a history of your own and capture each part (CONTRIBUTING.md), or
+  record a page to watch Help's clips play (`ASIDES_WINDOW_RECORD`)
 - measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
 - read `~/Library/Application Support/asides/state.json`

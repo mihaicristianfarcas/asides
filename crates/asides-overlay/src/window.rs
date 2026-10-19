@@ -1,9 +1,9 @@
 //! The asides window (`asides-overlay --window`): History (every aside: what was sent where, sent
 //! again, copied, revealed, deleted), Sessions (the agent sessions asides go to, and where new ones
-//! start) and the settings (General, Keys, Voice, Pins), every one of them; its foot says what
-//! asides is doing, or offers an update (one click installs it), then What's New. The app starts it
-//! from its menu (and `asides`); a line `show` on standard input brings it back. Its look is
-//! `controls.rs`'.
+//! start), the settings (General, Keys, Voice, Pins), every one of them, and Help (how to use asides,
+//! with clips of it, `help.rs`); its foot says what asides is doing, or offers an update (one click
+//! installs it), then What's New. The app starts it from its menu (and `asides`); a line `show` on
+//! standard input brings it back. Its look is `controls.rs`'.
 //!
 //! It reads what the app publishes (`state.json`), the history (`~/.asides/history`) and the
 //! settings (`config.toml`, which the app reloads when it changes); what only the app can do (send,
@@ -43,6 +43,7 @@ actions!(
         ShowHistory,
         ShowSessions,
         ShowSettings,
+        ShowHelp,
         CheckForUpdates,
         QuitAsides,
         HideAsides,
@@ -58,7 +59,7 @@ use crate::controls::{
     stepper, swatches, switch, toolbar_row,
 };
 use crate::input::{Look, TextInput};
-use crate::{assets, native, style};
+use crate::{assets, help, native, style};
 
 /// How often the window looks at what changed (the history, the app's state, the settings).
 const TOAST: Duration = Duration::from_millis(2500);
@@ -68,8 +69,11 @@ const LIST: f32 = 300.0;
 const EDITOR_FONT: &str = "Menlo";
 /// What edited Markdown can't be, at most, listed under it.
 const PROBLEMS_SHOWN: usize = 4;
-/// Setup's column.
+/// Setup's column, and its How it works step's (the clip beside its steps).
 const SETUP_WIDTH: f32 = 560.0;
+const BASICS_WIDTH: f32 = 860.0;
+/// Where to look when something doesn't work.
+const TROUBLESHOOTING: &str = "https://github.com/mihaicristianfarcas/asides/blob/main/guide/troubleshooting.md";
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -79,6 +83,8 @@ enum Page {
     Keys,
     Voice,
     Pins,
+    /// How to use asides, with clips of it.
+    Help,
     /// What's new in this asides and the update found (not in the sidebar: its foot leads here).
     WhatsNew,
     /// Setup, the whole window: the first time asides opens, or from General.
@@ -94,6 +100,7 @@ impl Page {
             "keys" => Page::Keys,
             "voice" => Page::Voice,
             "pins" => Page::Pins,
+            "help" => Page::Help,
             "whats-new" => Page::WhatsNew,
             "setup" => Page::Setup,
             _ => return None,
@@ -101,11 +108,12 @@ impl Page {
     }
 }
 
-/// Setup's steps, in order: what asides does, where sessions open, what macOS must allow, the
-/// voice model, the shortcuts, and done.
+/// Setup's steps, in order: what asides does, how it works, where sessions open, what macOS must
+/// allow, the voice model, the shortcuts, and done.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SetupStep {
     Welcome,
+    Basics,
     Sessions,
     Permissions,
     Voice,
@@ -114,8 +122,9 @@ enum SetupStep {
 }
 
 impl SetupStep {
-    const ALL: [SetupStep; 6] = [
+    const ALL: [SetupStep; 7] = [
         SetupStep::Welcome,
+        SetupStep::Basics,
         SetupStep::Sessions,
         SetupStep::Permissions,
         SetupStep::Voice,
@@ -127,6 +136,7 @@ impl SetupStep {
     fn name(self) -> &'static str {
         match self {
             SetupStep::Welcome => "welcome",
+            SetupStep::Basics => "basics",
             SetupStep::Sessions => "sessions",
             SetupStep::Permissions => "permissions",
             SetupStep::Voice => "voice",
@@ -142,6 +152,7 @@ impl SetupStep {
     /// What the progress along the top calls it (the steps between the welcome and done).
     fn title(self) -> &'static str {
         match self {
+            SetupStep::Basics => "How it works",
             SetupStep::Sessions => "Sessions",
             SetupStep::Permissions => "Permissions",
             SetupStep::Voice => "Voice",
@@ -303,6 +314,15 @@ pub struct AsidesWindow {
     /// only in System Settings after).
     setup: SetupStep,
     asked: Vec<String>,
+    /// When the clips shown (Help's, setup's How it works) started playing, from their first frames;
+    /// while drawing, whether one moves (drawn again next frame) or when one next changes (drawn again
+    /// then), and when that is.
+    clips_since: Instant,
+    /// Clips started over since (a step of the basics picked, to watch it).
+    clips_from: HashMap<&'static str, Instant>,
+    clips_moving: bool,
+    clips_next: Option<Duration>,
+    clips_due: Option<Instant>,
 }
 
 /// Opens the window; it quits when it's closed.
@@ -324,6 +344,7 @@ pub fn run() {
             KeyBinding::new("cmd-,", ShowSettings, None),
             KeyBinding::new("cmd-1", ShowHistory, None),
             KeyBinding::new("cmd-2", ShowSessions, None),
+            KeyBinding::new("cmd-?", ShowHelp, None),
             KeyBinding::new("cmd-q", QuitAsides, None),
             KeyBinding::new("cmd-h", HideAsides, None),
             KeyBinding::new("cmd-m", Minimize, None),
@@ -360,6 +381,7 @@ pub fn run() {
                     MenuItem::action("Sessions", ShowSessions),
                 ],
             },
+            Menu { name: "Help".into(), items: vec![MenuItem::action("How to Use asides", ShowHelp)] },
         ]);
         // The settings' fields edit as the card's does.
         crate::input::bind_keys(cx);
@@ -461,7 +483,10 @@ pub fn run() {
 }
 
 /// Development (`ASIDES_WINDOW_CAPTURE=<dir>`): each page in each appearance, captured to
-/// `<dir>/<page>-<dark|light>.png` (setup's steps, `setup-<step>-…`), then it quits.
+/// `<dir>/<page>-<dark|light>.png` (setup's steps, `setup-<step>-…`; a long page screen by screen,
+/// `<page>-2-…` and on), then it quits. With `ASIDES_WINDOW_PAGE`, only that page (`setup`: every
+/// step; `setup-voice`: that one); with `ASIDES_WINDOW_RECORD=<seconds>`, each is recorded that long
+/// (`.mov`), to watch its clips play.
 fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mut App) {
     let pages = [
         (Page::History, "history"),
@@ -470,27 +495,61 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
         (Page::Keys, "keys"),
         (Page::Voice, "voice"),
         (Page::Pins, "pins"),
+        (Page::Help, "help"),
         (Page::WhatsNew, "whats-new"),
     ];
     let shots = pages
         .into_iter()
         .map(|(page, name)| (page, SetupStep::Welcome, name.to_string()))
         .chain(SetupStep::ALL.into_iter().map(|step| (Page::Setup, step, format!("setup-{}", step.name()))))
+        .filter(|(_, _, name)| match std::env::var("ASIDES_WINDOW_PAGE") {
+            Ok(only) => *name == only || name.starts_with(&format!("{only}-")),
+            Err(_) => true,
+        })
         .collect::<Vec<_>>();
+    let record = std::env::var("ASIDES_WINDOW_RECORD").ok();
     cx.spawn(async move |cx| {
         for (theme, look) in [(Theme::dark(), "dark"), (Theme::light(), "light")] {
             for (page, step, name) in shots.clone() {
                 let _ = handle.update(cx, |this, _, cx| {
                     (this.page, this.setup, this.theme) = (page, step, theme);
+                    // A page that doesn't scroll leaves the last one's handle as it was.
+                    this.page_scroll = ScrollHandle::new();
+                    this.clips_since = Instant::now();
                     cx.notify();
                 });
-                cx.background_executor().timer(Duration::from_millis(500)).await;
-                // Where the window is on screen, as it shows there: glass shows what's behind it.
-                let Ok(b) = handle.update(cx, |_, window, _| window.bounds()) else { continue };
-                let p = |v: gpui::Pixels| f32::from(v);
-                let rect = format!("{},{},{},{}", p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
-                let path = dir.join(format!("{name}-{look}.png"));
-                let _ = Command::new("screencapture").args(["-x", "-o", "-R", &rect]).arg(&path).status();
+                for part in 1.. {
+                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    // Where the window is on screen, as it shows there: glass shows what's behind it.
+                    let Ok(b) = handle.update(cx, |_, window, _| window.bounds()) else { break };
+                    let p = |v: gpui::Pixels| f32::from(v);
+                    let rect = format!("{},{},{},{}", p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
+                    let shot = if part == 1 { format!("{name}-{look}") } else { format!("{name}-{part}-{look}") };
+                    let mut capture = Command::new("screencapture");
+                    match &record {
+                        Some(seconds) => {
+                            capture.args(["-x", "-v", "-V", seconds, "-R", &rect]).arg(dir.join(shot + ".mov"))
+                        }
+                        None => capture.args(["-x", "-o", "-R", &rect]).arg(dir.join(shot + ".png")),
+                    };
+                    // Off the main thread: the window goes on drawing meanwhile.
+                    let _ = cx.background_executor().spawn(async move { capture.status() }).await;
+                    // More below: the next screen of it.
+                    let more = handle.update(cx, |this, _, cx| {
+                        let scroll = &this.page_scroll;
+                        let (down, most) = (-p(scroll.offset().y), p(scroll.max_offset().height));
+                        let shown = p(scroll.bounds().size.height);
+                        let more = down + 1. < most;
+                        if more {
+                            scroll.set_offset(point(px(0.), px(-(down + shown * 0.9).min(most))));
+                            cx.notify();
+                        }
+                        more
+                    });
+                    if !more.unwrap_or(false) {
+                        break;
+                    }
+                }
             }
         }
         let _ = cx.update(|cx| cx.quit());
@@ -529,6 +588,11 @@ impl AsidesWindow {
             edit_at_first: std::env::var("ASIDES_WINDOW_FOCUS").is_ok_and(|f| f == "edit"),
             setup: SetupStep::Welcome,
             asked: Vec::new(),
+            clips_since: Instant::now(),
+            clips_from: HashMap::new(),
+            clips_moving: false,
+            clips_next: None,
+            clips_due: None,
         };
         this.reload();
         this.selected = this.asides.first().map(|a| a.id.clone());
@@ -599,6 +663,9 @@ impl AsidesWindow {
     fn go(&mut self, page: Page, cx: &mut Context<Self>) {
         if page != self.page {
             self.page_scroll.set_offset(point(px(0.), px(0.)));
+            // Its clips play from the start.
+            self.clips_since = Instant::now();
+            self.clips_from.clear();
         }
         self.page = page;
         self.saw_whats_new();
@@ -1038,9 +1105,11 @@ impl Render for AsidesWindow {
             Page::Keys => self.keys(cx),
             Page::Voice => self.voice(window, cx),
             Page::Pins => self.pins(window, cx),
+            Page::Help => self.help(cx),
             Page::WhatsNew => self.whats_new(),
             Page::Setup => self.setup_page(window, cx),
         };
+        self.play_clips(window, cx);
         // Each page fades in as it's picked (and each of setup's steps), as the sidebar's selection
         // slides to it.
         let step = if self.page == Page::Setup { self.setup.name() } else { "" };
@@ -1052,6 +1121,7 @@ impl Render for AsidesWindow {
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
             .on_action(cx.listener(|this, _: &ShowSessions, _, cx| this.page_or_keys(Page::Sessions, "cmd+2", cx)))
             .on_action(cx.listener(|this, _: &ShowSettings, _, cx| this.page_or_keys(Page::General, "cmd+comma", cx)))
+            .on_action(cx.listener(|this, _: &ShowHelp, _, cx| this.page_or_keys(Page::Help, "cmd+shift+/", cx)))
             .on_action(cx.listener(|this, _: &SaveAside, _, cx| {
                 if let Some(id) = this.editing.clone() {
                     this.save_draft(&id, cx);
@@ -1188,7 +1258,10 @@ impl AsidesWindow {
                     .child(nav("nav-general", "General", "sliders", Page::General, None, cx))
                     .child(nav("nav-keys", "Keys", "keyboard", Page::Keys, None, cx))
                     .child(nav("nav-voice", "Voice", "mic", Page::Voice, None, cx))
-                    .child(nav("nav-pins", "Pins", "annotate", Page::Pins, None, cx)),
+                    .child(nav("nav-pins", "Pins", "annotate", Page::Pins, None, cx))
+                    .child(div().flex_1())
+                    .child(nav("nav-help", "Help", "help", Page::Help, None, cx))
+                    .child(div().h(px(6.))),
             )
             .child(self.foot(cx))
             .into_any_element()
@@ -1282,11 +1355,15 @@ impl AsidesWindow {
         let t = self.theme;
         if self.asides.is_empty() {
             let shortcut = pretty_shortcut(&self.config.shortcuts.asides);
-            return empty(
+            let how = button("history-help", "How to Use asides", t)
+                .icon("help")
+                .on_click(cx.listener(|this, _, _, cx| this.go(Page::Help, cx)));
+            return empty_with_action(
                 t,
-                "clock",
+                tile(t, "clock").into_any_element(),
                 "No asides yet",
                 &format!("Press {shortcut} over any app, click what's wrong and say why, then press {shortcut} again."),
+                how.into_any_element(),
             );
         }
         let today = Local::now().date_naive();
@@ -1743,12 +1820,304 @@ impl AsidesWindow {
             .into_any_element()
     }
 
+    // --- Help ---
+
+    /// A key as the window names it: an overlay action's (the shortest of its keys, as set), or the
+    /// shortcut (`open` and `send`, `live`); anything else as it is.
+    fn key_label(&self, name: &str) -> String {
+        match name {
+            "open" | "send" => pretty_shortcut(&self.config.shortcuts.asides),
+            "live" => pretty_shortcut(&self.config.shortcuts.freeze),
+            _ => match self.config.measure.keys.get(name) {
+                Some(keys) => keys::parse(keys)
+                    .iter()
+                    .map(Chord::label)
+                    .min_by_key(|label| label.chars().count())
+                    .unwrap_or_else(|| "none".into()),
+                None => name.to_string(),
+            },
+        }
+    }
+
+    /// Clip `name`, `width` wide, as it is now, and the step of the basics it shows. What it does
+    /// next is noted for `play_clips`.
+    fn clip(&mut self, name: &str, width: f32) -> (AnyElement, Option<usize>) {
+        let Some(clip) = help::clip(name) else { return (div().into_any_element(), None) };
+        let since = self.clips_from.get(name).copied().unwrap_or(self.clips_since);
+        let shown = clip.at(since.elapsed());
+        self.clips_moving |= shown.moving;
+        self.clips_next = match (self.clips_next, shown.next) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let view = help::view(clip, &shown, width, |key| self.key_label(key), self.theme);
+        (view, shown.step)
+    }
+
+    /// The clips just drawn: one moving, drawn again next frame; else again when one next changes.
+    fn play_clips(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (moving, next) = (std::mem::take(&mut self.clips_moving), self.clips_next.take());
+        if moving {
+            return window.request_animation_frame();
+        }
+        let Some(next) = next else { return };
+        let due = Instant::now() + next;
+        // Already asked for by then.
+        if self.clips_due.is_some_and(|at| at > Instant::now() && at <= due) {
+            return;
+        }
+        self.clips_due = Some(due);
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(next).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.clips_due == Some(due) {
+                    this.clips_due = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The basics' clip from step `step` on, to watch it.
+    fn watch_step(&mut self, step: usize, cx: &mut Context<Self>) {
+        if let Some(at) = help::clip("basics").and_then(|clip| clip.time_of_step(step)) {
+            self.clips_from.insert("basics", Instant::now().checked_sub(at).unwrap_or_else(Instant::now));
+            cx.notify();
+        }
+    }
+
+    /// The basics: their clip and its four steps, the one it shows lit (a click on one plays it);
+    /// `beside`, the steps in a column beside it (else two by two, under it). `width` for all of it.
+    fn basics(&mut self, width: f32, beside: bool, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let gap = if beside { 24. } else { 10. };
+        let steps_width = if beside { (width * 0.36).clamp(240., 300.) } else { width };
+        let clip_width = if beside { width - steps_width - gap } else { width };
+        let (clip, now) = self.clip("basics", clip_width);
+        let open = pretty_shortcut(&self.config.shortcuts.asides);
+        let steps = [
+            ("Freeze", format!("Press {open} over any app. Every screen freezes, the pill at the top.")),
+            ("Click what's wrong", "Click to pin it, or drag over an area. Each pin gets a number.".to_string()),
+            (
+                "Say why",
+                "Just talk: asides listens from the start, and each pin's number goes where you said it.".into(),
+            ),
+            ("Send", format!("Press {open} again: it's typed into your agent's chat, with the screenshot.")),
+        ];
+        let lit = if t.dark {
+            (t.accent.opacity(0.14), t.accent.opacity(0.5))
+        } else {
+            (t.accent.opacity(0.3), hex(style::UI_DEEP, 1.0))
+        };
+        let step_width = if beside { steps_width } else { (width - 8.) / 2. };
+        let mut cards = steps.into_iter().enumerate().map(|(i, (title, text))| {
+            let on = now == Some(i);
+            div()
+                .id(SharedString::from(format!("step-{i}")))
+                .w(px(step_width))
+                .px(px(12.))
+                .py(px(10.))
+                .flex()
+                .gap(px(10.))
+                .rounded(px(Radius::CARD))
+                .border_1()
+                .border_color(if on { lit.1 } else { t.card_stroke })
+                .bg(if on { lit.0 } else { t.card })
+                .cursor_pointer()
+                .when(!on, |d| d.hover(|s| s.bg(t.control_hover)))
+                .on_click(cx.listener(move |this, _, _, cx| this.watch_step(i, cx)))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(22.))
+                        .rounded_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(if on { t.accent } else { t.control })
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(if on { t.on_accent } else { t.secondary })
+                        .child((i + 1).to_string()),
+                )
+                .child(label_stack(title, Some(text.into()), t))
+                .into_any_element()
+        });
+        // Beside the clip, a column; under it, two rows of two.
+        let steps = match beside {
+            true => div().flex_none().w(px(steps_width)).flex().flex_col().gap(px(8.)).children(cards),
+            false => {
+                let rows: Vec<AnyElement> = (0..2)
+                    .map(|_| div().flex().gap(px(8.)).children(cards.by_ref().take(2)).into_any_element())
+                    .collect();
+                div().flex().flex_col().gap(px(8.)).children(rows)
+            }
+        };
+        match beside {
+            true => div().flex().items_center().gap(px(gap)).child(steps).child(clip),
+            false => div().flex().flex_col().gap(px(gap)).child(clip).child(steps),
+        }
+        .into_any_element()
+    }
+
+    /// How to use asides: the basics played, then the pill, where it goes, a pin's card, the
+    /// tools, live and frozen, every key, and what's left after.
+    fn help(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let width = (self.width - Metrics::SIDEBAR - 56.).clamp(320., Metrics::FORM + 60.);
+        let open = pretty_shortcut(&self.config.shortcuts.asides);
+        let live = pretty_shortcut(&self.config.shortcuts.freeze);
+        let k = |name: &str| self.key_label(name);
+        let (measure, draw, shot, annotate) = (k("measure"), k("draw"), k("shot"), k("annotate"));
+        let (next, keys, undo, clear, talk, done, close) =
+            (k("target"), k("help"), k("undo"), k("clear"), k("talk"), k("done"), k("close"));
+        let kept = match self.config.history_days {
+            0 => "Every aside is kept in History, sent or not".to_string(),
+            days => format!("Every aside is kept in History for {days} days, sent or not"),
+        };
+        // A topic: its title, what to know, and what it looks like.
+        let topic = |title: &str, text: String, media: Option<AnyElement>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(div().text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                .child(div().text_color(t.secondary).line_height(px(19.)).child(text))
+                .children(media.map(|m| div().pt(px(4.)).child(m)))
+                .into_any_element()
+        };
+        let basics = self.basics(width, false, cx);
+        let pill_width = help::clip("pill").map_or(300., |c| c.size.0);
+        let (pill, _) = self.clip("pill", pill_width);
+        let (target, _) = self.clip("target", width);
+        let (card, _) = self.clip("card", width);
+        let (tools, _) = self.clip("tools", width);
+        let keys_width = help::clip("keys").map_or(width, |c| c.size.0.min(width));
+        let (sheet, _) = self.clip("keys", keys_width);
+        let part = |glyph: &str, label: &str, text: String| {
+            div()
+                .min_h(px(44.))
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(tile(t, glyph))
+                .child(label_stack(label.to_string(), Some(text.into()), t))
+                .into_any_element()
+        };
+        let pill = div().flex().flex_col().gap(px(10.)).child(pill).child(rows(
+            [
+                part("help", "?", "Every key on the frozen screen.".into()),
+                part(
+                    "mic",
+                    "The microphone",
+                    format!("Listening from the start. Click it to mute; muted, hold {talk} to talk."),
+                ),
+                part("terminal", "Where it goes", "The agent session the aside is typed into.".into()),
+                part("check", "Send", format!("Or press {open}, or {done}.")),
+                part(
+                    "close",
+                    "Close",
+                    format!("Without sending. Or press {close} (twice, once there's something to lose)."),
+                ),
+            ],
+            t,
+        ));
+        let after = rows(
+            [
+                setting(
+                    "History",
+                    Some(&format!("{kept}: send it again, to another session, copy it, or edit it.")),
+                    button("help-history", "Open History", t)
+                        .on_click(cx.listener(|this, _, _, cx| this.go(Page::History, cx))),
+                    t,
+                ),
+                setting(
+                    "Something doesn't work",
+                    Some("Troubleshooting, in asides' guide."),
+                    button("help-troubleshooting", "Open the Guide", t).on_click(|_, _, _| open_url(TROUBLESHOOTING)),
+                    t,
+                ),
+            ],
+            t,
+        );
+        page(
+            "help",
+            &self.page_scroll,
+            t,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(32.))
+                .child(page_header(
+                    "How to use asides",
+                    Some("Click what's wrong, say why, and it's typed into your coding agent's chat.".into()),
+                    t,
+                ))
+                .child(topic("The basics", format!("Over any app: {open}, click, talk, {open}."), Some(basics)))
+                .child(topic(
+                    "The pill",
+                    "It's at the top of the frozen screen. Drag it anywhere: it stays there.".into(),
+                    Some(pill.into_any_element()),
+                ))
+                .child(topic(
+                    "Where it goes",
+                    format!(
+                        "To the agent session you typed into last: Claude Code, Codex, OpenCode and more, in \
+                         Terminal, Ghostty or Diri. {next} picks the next one. Point at its name for the list: \
+                         a new session in a folder, or History only, to send it later."
+                    ),
+                    Some(target),
+                ))
+                .child(topic(
+                    "Say more about one pin",
+                    format!(
+                        "Click a pin's number to open its card. Type there, or hold {talk} to talk about that pin \
+                         alone. ⌘1 to ⌘4 say what it is: a fix, a change, a question, an approval."
+                    ),
+                    Some(card),
+                ))
+                .child(topic(
+                    "Measure, draw, take a screenshot",
+                    format!(
+                        "{measure} measures: move for the distances to the nearest edges, drag for the size of \
+                         what's inside. {draw} draws: circle or underline, ⇧-drag for an arrow. {shot}, then a \
+                         drag, adds a screenshot of part of the screen. {annotate} goes back to pins."
+                    ),
+                    Some(tools),
+                ))
+                .child(topic(
+                    "Frozen or live",
+                    format!(
+                        "{live} brings the screen back to life: only the pill stays, and your app gets every click \
+                         and key, to get to what's next. Press it again to freeze anew: every freeze goes in the \
+                         same aside. With asides closed, {live} opens it live."
+                    ),
+                    None,
+                ))
+                .child(topic(
+                    "Every key",
+                    format!(
+                        "Point at the pill's ? (or press {keys}) for every key. {undo} takes back what's under the \
+                         pointer, {clear} clears everything, and a right-click has more. Change any of them \
+                         under Keys."
+                    ),
+                    Some(sheet),
+                ))
+                .child(topic("Afterwards", String::new(), Some(after.into_any_element()))),
+        )
+    }
+
     // --- Setup ---
 
     /// Goes to setup's `step`, telling the app how far it got (at Done, setup is over).
     fn setup_go(&mut self, step: SetupStep, cx: &mut Context<Self>) {
         self.setup = step;
         self.page_scroll.set_offset(point(px(0.), px(0.)));
+        self.clips_since = Instant::now();
+        self.clips_from.clear();
         let _ = send_link(&Link::Setup { step: step.name().into(), request: None });
         cx.notify();
     }
@@ -1769,6 +2138,7 @@ impl AsidesWindow {
             return self.setup_welcome(cx);
         }
         let body = match step {
+            SetupStep::Basics => self.setup_basics(cx),
             SetupStep::Sessions => self.setup_sessions(cx),
             SetupStep::Permissions => self.setup_permissions(cx),
             SetupStep::Voice => self.setup_voice(window, cx),
@@ -1777,7 +2147,8 @@ impl AsidesWindow {
         };
         let index = |s: SetupStep| SetupStep::ALL.iter().position(|x| *x == s).unwrap_or(0);
         // The steps between the welcome and done: those behind checked, this one lit.
-        let progress = div().flex().items_center().gap(px(20.)).children(SetupStep::ALL[1..5].iter().map(|&s| {
+        let between = &SetupStep::ALL[1..SetupStep::ALL.len() - 1];
+        let progress = div().flex().items_center().gap(px(20.)).children(between.iter().map(|&s| {
             let (behind, on) = (index(s) < index(step), s == step);
             let mark = match behind {
                 true => icon("check", 12., t.fresh).into_any_element(),
@@ -1846,7 +2217,7 @@ impl AsidesWindow {
                         .px(px(28.))
                         .pt(px(28.))
                         .pb(px(32.))
-                        .child(div().w_full().min_w_0().max_w(px(SETUP_WIDTH)).child(body)),
+                        .child(div().w_full().min_w_0().max_w(px(self.setup_width())).child(body)),
                 ),
                 "setup-bar".into(),
                 &self.page_scroll,
@@ -1888,7 +2259,7 @@ impl AsidesWindow {
                     .child(
                         button("setup-start", "Set Up asides", t)
                             .accent()
-                            .on_click(cx.listener(|this, _, _, cx| this.setup_go(SetupStep::Sessions, cx))),
+                            .on_click(cx.listener(|this, _, _, cx| this.setup_go(SetupStep::Basics, cx))),
                     )
                     .child(
                         button("setup-defaults", "Skip, Use the Defaults", t)
@@ -1898,13 +2269,37 @@ impl AsidesWindow {
             .child(
                 div().pt(px(6.)).max_w(px(420.)).child(
                     footnote(
-                        "A minute: where sessions open, what macOS must allow, and the voice model. Skipped, asides \
-                         asks for each when it first needs it; everything is in Settings later.",
+                        "A minute: how it works, where sessions open, what macOS must allow, and the voice model. \
+                         Skipped, asides asks for each when it first needs it; everything is in Settings and Help \
+                         later.",
                         t,
                     )
                     .text_center(),
                 ),
             )
+            .into_any_element()
+    }
+
+    /// Setup's column, as wide as the window allows.
+    fn setup_width(&self) -> f32 {
+        let most = if self.setup == SetupStep::Basics { BASICS_WIDTH } else { SETUP_WIDTH };
+        (self.width - 56.).clamp(320., most)
+    }
+
+    /// How it works: the basics, played, beside their steps (a click on one plays it).
+    fn setup_basics(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let width = self.setup_width();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header("How it works", Some("Over any app, in four steps.".into()), t))
+            .child(self.basics(width, true, cx))
+            .child(footnote(
+                "The rest, from choosing where it goes to measuring, is in Help, at the bottom of the sidebar.",
+                t,
+            ))
             .into_any_element()
     }
 
@@ -2287,7 +2682,11 @@ impl AsidesWindow {
                 ],
                 t,
             ))
-            .child(footnote("Everything here is in Settings; General → Set Up Again goes through it again.", t))
+            .child(footnote(
+                "Everything here is in Settings; General → Set Up Again goes through it again. How to use asides \
+                 is in Help, at the bottom of the sidebar.",
+                t,
+            ))
             .into_any_element()
     }
 
@@ -2477,7 +2876,8 @@ impl AsidesWindow {
             }
         }
         let set_up = button("set-up-again", "Set Up Again…", t).on_click(cx.listener(|this, _, _, cx| {
-            this.setup = SetupStep::Sessions;
+            this.setup = SetupStep::Basics;
+            this.clips_since = Instant::now();
             this.go(Page::Setup, cx);
         }));
         let c = &self.config;
@@ -2574,7 +2974,7 @@ impl AsidesWindow {
                     section("Setup", t).child(rows(
                         [setting(
                             "Set up asides again",
-                            Some("Where sessions open, the permissions, the voice model and the shortcuts, step by step."),
+                            Some("How it works, where sessions open, the permissions, the voice model and the shortcuts, step by step."),
                             set_up,
                             t,
                         )],
@@ -2909,13 +3309,17 @@ fn scrolled(area: impl IntoElement, bar: SharedString, scroll: &ScrollHandle, t:
     div().flex_1().min_h_0().relative().child(area).child(scrollbar(bar, scroll, t))
 }
 
-/// A page with nothing on it yet: what it'll show, and how.
-fn empty(t: Theme, glyph: &str, title: &str, text: &str) -> AnyElement {
-    empty_with(t, tile(t, glyph).into_any_element(), title, text)
+/// A page with nothing on it yet, under `mark`, and a way on.
+fn empty_with_action(t: Theme, mark: AnyElement, title: &str, text: &str, action: AnyElement) -> AnyElement {
+    empty_div(t, mark, title, text).child(div().pt(px(10.)).child(action)).into_any_element()
 }
 
 /// A page with nothing on it yet, under `mark`.
 fn empty_with(t: Theme, mark: AnyElement, title: &str, text: &str) -> AnyElement {
+    empty_div(t, mark, title, text).into_any_element()
+}
+
+fn empty_div(t: Theme, mark: AnyElement, title: &str, text: &str) -> gpui::Div {
     div()
         .size_full()
         .flex()
@@ -2927,7 +3331,6 @@ fn empty_with(t: Theme, mark: AnyElement, title: &str, text: &str) -> AnyElement
         .child(mark)
         .child(div().pt(px(4.)).text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
         .child(div().max_w(px(380.)).text_color(t.tertiary).text_center().child(text.to_string()))
-        .into_any_element()
 }
 
 /// A choice among several, as a row: its icon, what it is, and a round mark where it's chosen.

@@ -42,7 +42,7 @@ pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light (a few seconds on screen); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
 | the overlay | a replay (below) |
 | the app | `make install`, then use it (it quits and replaces the running asides); dev-hooks builds open setup only with `ASIDES_SETUP=1` |
 
@@ -91,6 +91,7 @@ ASIDES_BENCH=~/bench ASIDES_BENCH_MODELS="small.en=$M/ggml-small.en-q5_1.bin,lar
 | `ASIDES_ICON_DUMP=/tmp/i cargo test -p asides-app icons` | the menu-bar icons (RGBA) |
 | `asides simulate-measure shot.png script.json` | a scripted session on a screenshot (dev-hooks build; actions in `overlay::Action`) |
 | `python3 scripts/make-screenshot.py` | `guide/overlay.png`, the README's picture (Firefox, Pillow, Screen Recording) |
+| `python3 scripts/make-help.py` | `crates/asides-overlay/help/`, Help's clips: the real overlay on the demo, frame by frame, and `clips.json` (what happens between frames; Firefox, Pillow, Screen Recording) |
 
 **Replays.** `target/debug/asides-overlay <dir>` runs the real overlay on a session directory:
 `session.json` (`helper::Spec`) with a screen whose `pixels` file is raw RGBA, `windowed` for a
@@ -130,7 +131,7 @@ Run what your change touches, and say in the pull request what you tried.
   keyboard back with no gray frame.
 - [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,
   Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect;
-  light and dark.
+  Help's clips play smoothly and loop, keys shown as set; light and dark.
 - [ ] **Wispr Flow**: a dictation while frozen joins the aside; elsewhere, nothing.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.
@@ -206,7 +207,8 @@ Needs a Developer ID Application certificate.
 `docs/` is https://asides.mihaicristian.dev: one static `index.html`, no build step
 (`python3 -m http.server -d docs` to preview). Pushes to `main` that change `docs/` deploy it;
 `make publish-site` deploys by hand. After changing the demo, run `python3 scripts/make-og.py`
-(the share image, needs Firefox) and `python3 scripts/make-screenshot.py`. The page repeats the
+(the share image, needs Firefox), `python3 scripts/make-screenshot.py` and `python3
+scripts/make-help.py`. The page repeats the
 shortcuts, requirements and install steps from the README: update both.
 
 ## Reporting bugs

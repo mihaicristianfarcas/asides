@@ -1,0 +1,31 @@
+{
+  "basics": {"size": [640, 480], "frames": [
+    {"image": "basics-0.webp", "hold": 1800, "pointer": [600, 440], "key": "open", "step": 0},
+    {"image": "basics-1.webp", "hold": 1200, "pointer": [310, 170], "click": true, "step": 1},
+    {"image": "basics-2.webp", "hold": 1400, "path": [[140, 315], [200, 355], [268, 384]], "step": 1},
+    {"image": "basics-3.webp", "hold": 3400, "pointer": [600, 440], "say": "This card [1] needs room under the header, and this button [2] wraps.", "step": 2},
+    {"image": "basics-4.webp", "hold": 3600, "key": "send", "step": 3}
+  ]},
+  "pill": {"size": [293.0, 38.0], "radius": 12, "bare": true, "frames": [
+    {"image": "pill.webp", "hold": 0}
+  ]},
+  "target": {"size": [550, 460], "frames": [
+    {"image": "target-0.webp", "hold": 1500, "pointer": [450, 356]},
+    {"image": "target-1.webp", "hold": 1700, "key": "target"},
+    {"image": "target-2.webp", "hold": 3000, "pointer": [245, 33]}
+  ]},
+  "card": {"size": [640, 480], "frames": [
+    {"image": "card-0.webp", "hold": 1300, "pointer": [600, 440]},
+    {"image": "card-1.webp", "hold": 1000, "pointer": [310, 170], "click": true},
+    {"image": "card-2.webp", "hold": 1200, "pointer": [600, 440]},
+    {"image": "card-3.webp", "hold": 2600, "key": "⌘2"}
+  ]},
+  "tools": {"size": [720, 450], "frames": [
+    {"image": "tools-0.webp", "hold": 1800, "pointer": [226, 207], "key": "measure"},
+    {"image": "tools-1.webp", "hold": 1900, "path": [[34, 191], [176, 210], [420, 238]]},
+    {"image": "tools-2.webp", "hold": 2600, "pointer": [906, 440], "path": [[428.2, 334.0], [438.6, 323.8], [453.7, 315.3], [472.7, 309.1], [494.1, 305.7], [516.5, 305.2], [538.4, 307.7], [558.3, 313.0], [574.9, 320.7], [586.9, 330.4], [593.7, 341.4], [594.7, 352.8], [589.8, 364.0], [579.4, 374.2], [564.3, 382.7], [545.3, 388.9], [523.9, 392.3], [501.5, 392.8], [479.6, 390.3], [459.7, 385.0], [443.1, 377.3], [431.1, 367.6], [424.3, 356.6], [423.3, 345.2], [428.2, 334.0]], "key": "draw"}
+  ]},
+  "keys": {"size": [490, 450], "frames": [
+    {"image": "keys.webp", "hold": 0}
+  ]}
+}

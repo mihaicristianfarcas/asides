@@ -1,9 +1,10 @@
 # Using asides
 
-The first time asides opens, setup asks where new sessions open (Terminal, Ghostty or Diri, and
-the agent), what macOS must allow, the voice model and the shortcuts. Skip it for the defaults:
-asides asks for each permission and the model when it first needs them. General → **Set Up Again**
-goes through it again.
+The first time asides opens, setup shows how it works, then asks where new sessions open
+(Terminal, Ghostty or Diri, and the agent), what macOS must allow, the voice model and the
+shortcuts. Skip it for the defaults: asides asks for each permission and the model when it first
+needs them. General → **Set Up Again** goes through it again. **Help**, at the bottom of the asides
+window's sidebar, shows how to use asides, with clips of it.
 
 ## Freeze, pin, talk, send
 
@@ -102,6 +103,7 @@ closes it, `⌘Q` quits asides.
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
 - **General**, **Keys**, **Voice**, **Pins**: every [setting](settings.md). Click a shortcut or a
   key, then press the new one.
+- **Help** (`⌘?`): how to use asides, step by step, with clips of it.
 
 The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds and
 naming pins on or off, and opens History or Settings.

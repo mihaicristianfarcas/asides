@@ -66,7 +66,8 @@ crates/
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
-    window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins; setup
+    window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins, Help; setup
+    help.rs           Help's clips: frames of the overlay, the pointer between them, drawn when due
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
     windows.rs        opening, showing, hiding and moving the windows (the clock, as things happen)
     input.rs          the card's text field, and the area History edits Markdown in
@@ -77,7 +78,8 @@ crates/
     native.rs         AppKit glue: borderless panels, levels, kiosk, focus, drawing
     io.rs             stdin/stdout protocol, spec and pixels
     replay.rs         development: replays AppKit events and captures windows
-    assets.rs         SVG icons
+    assets.rs         SVG icons, and help/ (embedded by build.rs)
+    help/             the clips' frames and clips.json, made by scripts/make-help.py
   asides-app/      the menu-bar app (asides-app, renamed asides in the bundle)
     main.rs           App: event loop, recording, overlay sessions, sending
     tray.rs, icons.rs the status item, its menu and its icons
@@ -173,8 +175,9 @@ error.
 
 ### Setting up
 
-Until `onboarded`, the app opens the window on setup at launch (`--window`, page `setup`). Its steps
-change `config.toml` as the settings do, and ask the app through links: `asides://permission`
+Until `onboarded`, the app opens the window on setup at launch (`--window`, page `setup`). It shows
+how asides works first (the basics' clip, as Help does). Its steps change `config.toml` as the
+settings do, and ask the app through links: `asides://permission`
 (macOS's prompt; Automation with `AEDeterminePermissionToAutomateTarget`, the app started first),
 `asides://setup` (the step reached, to go on after a restart; `done` ends it). While the window is
 open, the app looks at the permissions again, off the main thread, into `state.permissions`, when an
