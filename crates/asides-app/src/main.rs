@@ -1246,6 +1246,8 @@ impl App {
                 }
                 self.flash(FLASH, Mark::Cross, "Closed: nothing was sent");
                 self.refresh();
+                // The CLI and the window stop saying it's listening.
+                self.publish();
             }
             OverlayMessage::Exited => {
                 let crashed = !overlay.over;
