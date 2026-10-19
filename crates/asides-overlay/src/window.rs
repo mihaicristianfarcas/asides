@@ -2526,7 +2526,9 @@ impl AsidesWindow {
             })
             .collect();
         if offered.is_none() && installed.is_empty() {
-            return empty(t, "sparkles", "No release notes yet", "They show here once asides has looked for updates.");
+            // The logo alone, as on setup's welcome.
+            let logo = icon("logo", 56., t.primary).into_any_element();
+            return empty_with(t, logo, "No release notes yet", "They show here once asides has looked for updates.");
         }
         page(
             "whats-new",
@@ -2782,6 +2784,11 @@ fn scrolled(area: impl IntoElement, bar: SharedString, scroll: &ScrollHandle, t:
 
 /// A page with nothing on it yet: what it'll show, and how.
 fn empty(t: Theme, glyph: &str, title: &str, text: &str) -> AnyElement {
+    empty_with(t, tile(t, glyph).into_any_element(), title, text)
+}
+
+/// A page with nothing on it yet, under `mark`.
+fn empty_with(t: Theme, mark: AnyElement, title: &str, text: &str) -> AnyElement {
     div()
         .size_full()
         .flex()
@@ -2790,7 +2797,7 @@ fn empty(t: Theme, glyph: &str, title: &str, text: &str) -> AnyElement {
         .justify_center()
         .gap(px(8.))
         .p(px(40.))
-        .child(tile(t, glyph))
+        .child(mark)
         .child(div().pt(px(4.)).text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
         .child(div().max_w(px(380.)).text_color(t.tertiary).text_center().child(text.to_string()))
         .into_any_element()
