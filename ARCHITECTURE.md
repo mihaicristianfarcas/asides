@@ -109,7 +109,7 @@ Casks/asides.rb       the Homebrew cask (the repository is a tap)
 | Worker | the `Transcriber`; **creating asides** | `UserEvent::Work` |
 | Model download | the `.part` file | `UserEvent::Model`, a `Condvar` for the worker |
 | Sending (per aside) | a plan's steps, the pasteboard | `UserEvent::Delivered` |
-| Sessions | `sessions::discover` when asked (asides opening, the window coming forward, an aside sent) and as one ends (kqueue) | `UserEvent::Sessions` |
+| Sessions | `sessions::discover` when asked (asides opening, the window coming forward, an aside sent, the user leaving Terminal, Ghostty or Diri), as one starts (its agent's file, FSEvents) and as one ends (kqueue) | `UserEvent::Sessions` |
 | Config watcher | `config.toml`, as it changes (FSEvents) | `UserEvent::ConfigFileChanged` |
 | Wispr Flow watcher | `flow.sqlite`, when it changes | `UserEvent::Wispr` |
 | Agent finder (launch) | the login shell's installed agents | `UserEvent::Agents` |
@@ -128,6 +128,11 @@ Background threads never touch AppKit (the pasteboard excepted); they send `User
 terminal), and reads their environment (`ps -E`) and folder (`lsof -d cwd`). `TERM_PROGRAM` or
 `DIRIJOR_SESSION_ID` gives the host app. The terminal device's access time is the last input: the
 latest reachable session is the default target (`sessions::latest`).
+
+Looking takes tens of milliseconds, so it's done before asides opens: as a session starts (Claude
+Code and Codex write a file, `sessions::start_folders`), when the user leaves a terminal app it can
+type into, and as one ends. Opening only reads the terminals' access times again (microseconds), so
+the pill names the session typed into last from its first frame.
 
 ### Opening, freezing, sending
 

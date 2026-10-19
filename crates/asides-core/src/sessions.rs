@@ -8,7 +8,7 @@
 //! own wins over one inherited from Diri). The session the user last typed into is the one whose
 //! terminal device was last read from: its access time, which is how `w` tells idle time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
@@ -297,13 +297,44 @@ pub fn discover() -> Vec<AgentSession> {
     let dirs = parse_lsof_cwd(&run("/usr/sbin/lsof", &["-a", "-d", "cwd", "-Fpn", "-p", &list]));
     for s in &mut sessions {
         s.dir = dirs.get(&s.pid).cloned().unwrap_or_default();
-        s.last_input = std::fs::metadata(format!("/dev/{}", s.tty)).and_then(|m| m.accessed()).ok();
         if s.agent == AgentKind::Claude {
             s.name = claude_name(s.pid);
         }
     }
     sessions.retain(|s| !s.dir.as_os_str().is_empty());
+    read_input_times(&mut sessions);
     sessions
+}
+
+/// Reads when each session's terminal last got input (its device's access time) again: which one
+/// was typed into last changes with every key, and reading it takes microseconds, where looking
+/// for the sessions takes tens of milliseconds.
+pub fn read_input_times(sessions: &mut [AgentSession]) {
+    for s in sessions {
+        s.last_input = std::fs::metadata(format!("/dev/{}", s.tty)).and_then(|m| m.accessed()).ok();
+    }
+}
+
+/// The folders agents write a file in as each of their sessions starts (with whether to look in
+/// the folders inside): Claude Code's `~/.claude/sessions/<pid>.json`, Codex's
+/// `~/.codex/sessions/<date>/rollout-….jsonl`. A file new there is a session to look for.
+pub fn start_folders(home: &Path) -> [(PathBuf, bool); 2] {
+    [(home.join(".claude/sessions"), false), (home.join(".codex/sessions"), true)]
+}
+
+/// The session files seen in the start folders: one seen for the first time is a session started.
+/// Its later writes (the session working) aren't.
+#[derive(Debug, Default)]
+pub struct Starts {
+    seen: HashSet<PathBuf>,
+}
+
+impl Starts {
+    /// `path` changed: whether it's a session file not seen before.
+    pub fn started(&mut self, path: &Path) -> bool {
+        let session_file = matches!(path.extension().and_then(|e| e.to_str()), Some("json" | "jsonl"));
+        session_file && self.seen.insert(path.to_path_buf())
+    }
 }
 
 /// Folders a new session can start in, most likely first, at most `limit`: those of the sessions
@@ -461,6 +492,20 @@ mod tests {
         for session in discover() {
             println!("{session:?} → {}", session.label());
         }
+    }
+
+    #[test]
+    fn a_session_file_seen_first_is_a_session_started() {
+        let mut starts = Starts::default();
+        let claude = Path::new("/h/.claude/sessions/62089.json");
+        assert!(starts.started(claude));
+        // The session working: its status written again and again.
+        assert!(!starts.started(claude));
+        assert!(starts.started(Path::new("/h/.claude/sessions/70001.json")));
+        assert!(starts.started(Path::new("/h/.codex/sessions/2026/10/19/rollout-2026-10-19T15-11-20-01a1.jsonl")));
+        // Not a session's file.
+        assert!(!starts.started(Path::new("/h/.claude/sessions/62089.792e0c80.key")));
+        assert!(!starts.started(Path::new("/h/.codex/sessions/2026/10/19")));
     }
 
     #[test]

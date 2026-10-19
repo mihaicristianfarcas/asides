@@ -11,8 +11,9 @@ use std::ptr::NonNull;
 use block2::RcBlock;
 use objc2::runtime::Bool;
 use objc2_app_kit::{
-    NSApplicationActivationOptions, NSRunningApplication, NSSound, NSWorkspace,
-    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceDidLaunchApplicationNotification,
+    NSApplicationActivationOptions, NSRunningApplication, NSSound, NSWorkspace, NSWorkspaceApplicationKey,
+    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceDidDeactivateApplicationNotification,
+    NSWorkspaceDidLaunchApplicationNotification,
 };
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSString};
@@ -153,6 +154,23 @@ pub fn on_permission_changes(changed: impl Fn() + 'static) {
     let accessibility = NSString::from_str("com.apple.accessibility.api");
     std::mem::forget(unsafe {
         distributed.addObserverForName_object_queue_usingBlock(Some(&accessibility), None, None, &block)
+    });
+}
+
+/// Calls `left` with the bundle ID of each app that stops being the one in front.
+pub fn on_app_left(left: impl Fn(&str) + 'static) {
+    let block = RcBlock::new(move |note: NonNull<NSNotification>| {
+        let info = unsafe { note.as_ref() }.userInfo();
+        let app = info.and_then(|info| info.objectForKey(unsafe { NSWorkspaceApplicationKey }));
+        let bundle = app.as_deref().and_then(|a| a.downcast_ref::<NSRunningApplication>()?.bundleIdentifier());
+        if let Some(bundle) = bundle {
+            left(&bundle.to_string());
+        }
+    });
+    let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+    let deactivated = unsafe { NSWorkspaceDidDeactivateApplicationNotification };
+    std::mem::forget(unsafe {
+        workspace.addObserverForName_object_queue_usingBlock(Some(deactivated), None, None, &block)
     });
 }
 

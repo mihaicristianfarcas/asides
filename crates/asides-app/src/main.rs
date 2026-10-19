@@ -400,8 +400,17 @@ impl App {
         self.watch_config();
         let (asked, requests) = std::sync::mpsc::channel();
         self.find_sessions = Some(asked.clone());
+        // Leaving a terminal asides types into, the user may have started a session there: it's
+        // looked for then, to be known before asides opens.
+        let left = asked.clone();
+        macos::on_app_left(move |bundle| {
+            if deliver::TERMINALS.iter().any(|t| deliver::bundle_id(t) == Some(bundle)) {
+                let _ = left.send(());
+            }
+        });
         let proxy = self.proxy.clone();
-        watch::sessions(requests, asked, move |found| proxy.send_event(UserEvent::Sessions(found)).is_ok());
+        let home = std::env::home_dir().unwrap_or_default();
+        watch::sessions(&home, requests, asked, move |found| proxy.send_event(UserEvent::Sessions(found)).is_ok());
         let proxy = self.proxy.clone();
         macos::on_permission_changes(move || {
             let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
@@ -1001,6 +1010,9 @@ impl App {
     /// Opens asides with every screen frozen (or, `live`, over the live screen).
     fn open_asides(&mut self, live: bool) {
         self.open_live = live;
+        // The sessions are known (looked for as they start); which was typed into last, read now,
+        // is what the pill names as it opens. Looked for again, for the list.
+        sessions::read_input_times(&mut self.sessions);
         self.looking = true;
         self.ask_for_sessions();
         self.capture_screens();

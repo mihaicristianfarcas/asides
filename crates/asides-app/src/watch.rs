@@ -1,11 +1,12 @@
 //! Watching on threads of their own: Wispr Flow's dictation history (read as its database
-//! changes), and the agent sessions running (looked for when asked, and again as one ends). Like
-//! the config watcher, these threads only report back; the main thread acts.
+//! changes), and the agent sessions running (looked for when asked, and again as one starts or
+//! ends). Like the config watcher, these threads only report back; the main thread acts.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use asides_core::sessions::{self, AgentSession};
+use asides_core::sessions::{self, AgentSession, Starts};
 use asides_core::watch::{self as files, Watch};
 use asides_core::wispr::{Dictation, History};
 use chrono::Utc;
@@ -64,12 +65,32 @@ pub fn wispr_flow(db: PathBuf, report: impl Fn(Result<Dictation, String>) -> boo
 }
 
 /// Reports the agent sessions running (`sessions::discover`) now, and each time something comes
-/// on `asked` (asides opening, the window wanting them, an aside sent) or one of them ends.
-pub fn sessions(asked: Receiver<()>, again: Sender<()>, report: impl Fn(Vec<AgentSession>) -> bool + Send + 'static) {
+/// on `asked` (asides opening, the window wanting them, an aside sent, the user leaving a terminal
+/// app), one of them starts (the file its agent writes, `sessions::start_folders`) or one ends:
+/// asides knows them before it opens.
+pub fn sessions(
+    home: &Path,
+    asked: Receiver<()>,
+    again: Sender<()>,
+    report: impl Fn(Vec<AgentSession>) -> bool + Send + 'static,
+) {
+    let starts: Vec<Watch> = sessions::start_folders(home)
+        .into_iter()
+        .filter_map(|(dir, deep)| {
+            let (again, starts) = (again.clone(), Mutex::new(Starts::default()));
+            files::folder(&dir, deep, move |path| {
+                if starts.lock().unwrap().started(path) {
+                    let _ = again.send(());
+                }
+            })
+            .ok()
+        })
+        .collect();
     let exits = Exits::new(again);
     std::thread::Builder::new()
         .name("asides-sessions".into())
         .spawn(move || {
+            let _starts = starts;
             loop {
                 let found = sessions::discover();
                 if let Some(exits) = &exits {
@@ -126,5 +147,31 @@ impl Exits {
             };
             unsafe { libc::kevent(self.queue, &event, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn looks_for_sessions_again_as_one_starts() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path().canonicalize().unwrap();
+        let folder = home.join(".claude/sessions");
+        std::fs::create_dir_all(&folder).unwrap();
+        let (asked, requests) = channel();
+        let (looked, looks) = channel();
+        sessions(&home, requests, asked, move |_| looked.send(()).is_ok());
+        let wait = Duration::from_secs(5);
+        // Once as it starts.
+        looks.recv_timeout(wait).unwrap();
+        // A session starting: its agent writes its file.
+        std::fs::write(folder.join("70001.json"), r#"{"status":"idle"}"#).unwrap();
+        looks.recv_timeout(wait).expect("a session starting is looked for");
+        // The same session working: its file written again isn't a session starting.
+        std::fs::write(folder.join("70001.json"), r#"{"status":"busy"}"#).unwrap();
+        assert!(looks.recv_timeout(Duration::from_secs(1)).is_err());
     }
 }
