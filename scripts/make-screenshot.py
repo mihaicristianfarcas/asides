@@ -21,12 +21,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 OUT = ROOT / "guide" / "overlay.png"
 FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
-# The screen, in points, drawn at 2×.
-WIDTH, HEIGHT = 1024, 640
+# The screen, the demo's 14-inch MacBook Pro, in points, drawn at 2×.
+WIDTH, HEIGHT = 1512, 945
 
 page = (DOCS / "index.html").read_text()
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
-desk = re.search(r'<div class="desk" data-app="terminal".*?(?=<div class="hud")', page, re.S).group(0)
+desk = re.search(r'<div class="desk".*?(?=<div class="hud")', page, re.S).group(0)
 
 
 def replace(text, old, new):
@@ -34,25 +34,26 @@ def replace(text, old, new):
     return text.replace(old, new, 1)
 
 
-# Safari in front, and nothing of the demo's own overlay: the real one draws on it.
-desk = replace(desk, 'data-app="terminal"', 'data-app="safari"')
-desk = replace(desk, '<div class="win safari inactive">', '<div class="win safari">')
+# Safari in front, Claude Code beside it with nothing sent yet, and nothing of the demo's own
+# overlay: the real one draws on it.
+desk = re.sub(r'<p class="you aside">.*?</p>\s*', "", desk, flags=re.S)
+desk = re.sub(r'<p class="reply">.*?</p>\s*', "", desk, flags=re.S)
 html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{DOCS.as_uri()}/">
 <style>{style}
 html, body {{ margin: 0; overflow: hidden; }}
 *, *::before, *::after {{ transition: none !important; animation: none !important; }}
 /* The demo scales with its width: twice the points is a 2× screen. */
 .display {{ width: {WIDTH * 2}px; border-radius: 0; }}
-.win.term, .pill, .outline, .pin, .pointer {{ display: none !important; }}
+.apill, .ruler, .outline, .marker, .pointer {{ display: none !important; }}
 </style></head><body><div class="display">{desk}</div></body></html>"""
 
 # Where the demo's styles put them, in points: after changing the demo, look at the picture.
 place = "Safari · \"Checkout · meadow\""
 page_of = {"app": "Safari", "window": "Checkout · meadow", "url": "localhost:5173/checkout"}
 card = {**page_of, "name": 'group "Order summary"', "selector": "main > aside.summary",
-        "frame": {"x": 464, "y": 142, "width": 262, "height": 278}}
+        "frame": {"x": 584, "y": 170, "width": 320, "height": 319.5}}
 pay = {**page_of, "name": 'button "Pay now · $72.00"', "selector": "aside.summary > button.pay",
-       "frame": {"x": 481, "y": 355, "width": 104, "height": 48}}
+       "frame": {"x": 604, "y": 417, "width": 124, "height": 51}}
 
 
 def pin(at, element):
@@ -64,12 +65,12 @@ def pin(at, element):
 replay = [
     {"wait": 500},
     {"recording": 14},
-    *pin([700, 157], card),
-    *pin([575, 364], pay),
+    *pin([870, 186], card),
+    *pin([700, 430], pay),
     # Measure: a drag around the email field snaps to it.
-    {"key": "m", "wait": 150}, {"down": [58, 221]}, {"drag": [200, 240]}, {"drag": [444, 268]},
-    {"up": [444, 268], "wait": 200},
-    {"key": "a", "wait": 200}, {"move": [930, 600], "wait": 300},
+    {"key": "m", "wait": 150}, {"down": [76, 277.5]}, {"drag": [210, 295]}, {"drag": [552, 330]},
+    {"up": [552, 330], "wait": 200},
+    {"key": "a", "wait": 200}, {"move": [1400, 880], "wait": 300},
     {"capture": "overlay.png"},
     {"key": "escape"}, {"key": "escape", "wait": 300},
 ]
@@ -90,13 +91,13 @@ with tempfile.TemporaryDirectory() as tmp:
         "screens": [{
             "display": 1, "screen": {"name": "Built-in Retina Display", "width": WIDTH, "height": HEIGHT, "scale": 2},
             "origin": [0, 0], "frame": {"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT},
-            "pixels": "screen-0.rgba", "width": WIDTH * 2, "height": HEIGHT * 2, "place": place, "menu_bar": 28,
+            "pixels": "screen-0.rgba", "width": WIDTH * 2, "height": HEIGHT * 2, "place": place, "menu_bar": 37,
         }],
         "color": "#FF2D55", "tolerance": 2, "identify": True,
         "record_shortcut": "⌃⌥Space", "freeze_shortcut": "⌃⌥P", "listen": True,
         "model": {"ready": True, "label": "English, 190 MB"},
         "targets": {
-            "sessions": [{"id": "200", "label": "Claude Code · shop", "app": "Terminal"}],
+            "sessions": [{"id": "200", "label": "Claude Code (shop)", "app": "Terminal"}],
             "folders": [{"path": "/Users/me/Developer/shop", "name": "shop"}],
             "agents": ["claude", "codex", "opencode"], "chosen": {"kind": "session", "id": "200"},
         },
@@ -108,7 +109,8 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run(["cargo", "build", "-q", "-p", "asides-overlay"], cwd=ROOT, check=True)
     subprocess.run([ROOT / "target" / "debug" / "asides-overlay", tmp], check=True, timeout=60,
                    stdout=subprocess.DEVNULL)
-    # 256 colors keep it a fifth of the size, with no difference to see at the README's width.
+    # 2048 pixels wide, and 256 colors, keep it small, with no difference to see at the README's width.
     image = Image.open(tmp / "overlay.png").convert("RGB")
+    image = image.resize((2048, round(image.height * 2048 / image.width)), Image.LANCZOS)
     image.quantize(colors=256, method=Image.Quantize.FASTOCTREE).save(OUT, optimize=True)
 print(f"Wrote {OUT}")

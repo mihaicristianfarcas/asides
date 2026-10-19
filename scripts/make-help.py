@@ -28,12 +28,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 OUT = ROOT / "crates" / "asides-overlay" / "help"
 FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
-# The screen, in points, drawn at 2×.
-WIDTH, HEIGHT = 1024, 640
+# The screen, the demo's 14-inch MacBook Pro, in points, drawn at 2×; its menu bar.
+WIDTH, HEIGHT = 1512, 945
+MENU_BAR = 37
 
 page = (DOCS / "index.html").read_text()
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
-desk = re.search(r'<div class="desk" data-app="terminal".*?(?=<div class="hud")', page, re.S).group(0)
+desk = re.search(r'<div class="desk".*?(?=<div class="hud")', page, re.S).group(0)
 
 
 def replace(text, old, new):
@@ -48,38 +49,35 @@ html, body {{ margin: 0; overflow: hidden; }}
 *, *::before, *::after {{ transition: none !important; animation: none !important; }}
 /* The demo scales with its width: twice the points is a 2× screen. */
 .display {{ width: {WIDTH * 2}px; border-radius: 0; }}
-.pill, .outline, .pin, .pointer {{ display: none !important; }}
+.apill, .ruler, .outline, .marker, .pointer {{ display: none !important; }}
 </style></head><body><div class="display">{markup}</div></body></html>"""
 
 
-# The demo's last frame: the aside in Claude Code's chat, in Terminal.
-terminal = desk
-# Before it: Safari in front, Terminal behind it with nothing sent yet. The real overlay draws on it.
-safari = replace(desk, 'data-app="terminal"', 'data-app="safari"')
-safari = replace(safari, '<div class="win safari inactive">', '<div class="win safari">')
-safari = replace(safari, '<div class="win term front">', '<div class="win term inactive">')
-safari = re.sub(r'<p class="you aside">.*?</p>\s*', "", safari, flags=re.S)
+# The demo's last frame: the aside in Claude Code's chat, in Terminal beside Safari, still in front.
+sent = desk
+# Before it: nothing sent yet. The real overlay draws on it.
+safari = re.sub(r'<p class="you aside">.*?</p>\s*', "", desk, flags=re.S)
 safari = re.sub(r'<p class="reply">.*?</p>\s*', "", safari, flags=re.S)
 
 # Where the demo's styles put things, in points: after changing the demo, look at the frames
 # (--keep).
 page_of = {"app": "Safari", "window": "Checkout · meadow", "url": "localhost:5173/checkout"}
 card = {**page_of, "name": 'group "Order summary"', "selector": "main > aside.summary",
-        "frame": {"x": 464, "y": 142, "width": 262, "height": 278}}
+        "frame": {"x": 584, "y": 170, "width": 320, "height": 319.5}}
 pay = {**page_of, "name": 'button "Pay now · $72.00"', "selector": "aside.summary > button.pay",
-       "frame": {"x": 481, "y": 355, "width": 104, "height": 48}}
-CARD = [640, 200]
+       "frame": {"x": 604, "y": 417, "width": 124, "height": 51}}
+CARD = [770, 225]
 # Dragged over the Pay button, pinning an area.
-AREA = [[470, 345], [530, 385], [598, 414]]
-# Measured: the email field, then a circle drawn around the Pay button.
-FIELD = [250, 237]
-FIELD_DRAG = [[58, 221], [200, 240], [444, 268]]
-CIRCLE = [[533 + 86 * math.cos(a), 379 + 44 * math.sin(a)]
+AREA = [[594, 407], [660, 448], [740, 478]]
+# Measured: the email field (84, 277.5, 460 × 38), then a circle drawn around the Pay button.
+FIELD = [240, 297]
+FIELD_DRAG = [[76, 277.5], [210, 295], [552, 330]]
+CIRCLE = [[666 + 98 * math.cos(a), 443 + 50 * math.sin(a)]
           for a in (math.radians(200 + 15 * i) for i in range(25))]
 # The pill's session name, in its window's points (one past its edge), once Tab picked Codex.
 NAME = [104, 20]
-# The pointer out of the way: on Terminal, beside Safari.
-REST = [930, 470]
+# The pointer out of the way: on the page, under the summary card.
+REST = [880, 540]
 CLOSE = [{"key": "escape"}, {"key": "escape", "wait": 300}]
 
 
@@ -138,7 +136,7 @@ RUNS = {
 # going to `pointer`, a `click` there), how long it stays (ms), and what's being said meanwhile. `key` "open"
 # and "send" are the shortcut, as set. The first frame's are what happens as the clip starts over.
 # After the frames, anything else the window needs: `radius`, its corners'; `bare`, no outline.
-BASICS = (330, 30, 640, 480)
+BASICS = (560, 36, 740, 600)
 # The pill's corners (`glass_panel` in the overlay's ui.rs).
 PILL_RADIUS = 12
 CLIPS = {
@@ -148,27 +146,28 @@ CLIPS = {
         {"image": "basics-2", "path": AREA, "hold": 1400, "step": 1},
         {"image": "basics-3", "pointer": REST, "hold": 3400, "step": 2,
          "say": "This card [1] needs room under the header, and this button [2] wraps."},
-        {"image": "terminal", "key": "send", "hold": 3600, "step": 3},
+        {"image": "sent", "key": "send", "hold": 3600, "step": 3},
     ]),
     # The pill alone, as it is (found on the frame, its corners cut out).
     "pill": ("pill", [{"image": "basics-0", "hold": 0}], {"radius": PILL_RADIUS, "bare": True}),
-    "target": ((250, 24, 550, 460), [
-        {"image": "target-0", "pointer": [700, 380], "hold": 1500},
+    "target": ((450, 36, 560, 470), [
+        {"image": "target-0", "pointer": [900, 400], "hold": 1500},
         {"image": "target-1", "key": "target", "hold": 1700},
-        {"image": "target-2", "pointer": [495, 57], "hold": 3000},
+        {"image": "target-2", "pointer": [738, 66], "hold": 3000},
     ]),
-    "card": (BASICS, [
+    # Wider to the right: a pin's card opens beside it.
+    "card": ((506, 36, 768, 540), [
         {"image": "card-0", "pointer": REST, "hold": 1300},
         {"image": "card-1", "pointer": CARD, "click": True, "hold": 1000},
         {"image": "card-2", "pointer": REST, "hold": 1200},
         {"image": "card-3", "key": "⌘2", "hold": 2600},
     ]),
-    "tools": ((24, 30, 720, 450), [
+    "tools": ((60, 36, 880, 520), [
         {"image": "tools-0", "pointer": FIELD, "key": "measure", "hold": 1800},
         {"image": "tools-1", "path": FIELD_DRAG, "hold": 1900},
         {"image": "tools-2", "path": CIRCLE, "pointer": REST, "key": "draw", "hold": 2600},
     ]),
-    "keys": ((350, 24, 490, 450), [{"image": "keys-0", "hold": 0}]),
+    "keys": ((595, 36, 490, 480), [{"image": "keys-0", "hold": 0}]),
 }
 
 
@@ -193,7 +192,7 @@ def run(name, screen, replay, tmp):
             "display": 1, "screen": {"name": "Built-in Retina Display", "width": WIDTH, "height": HEIGHT, "scale": 2},
             "origin": [0, 0], "frame": {"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT},
             "pixels": "screen-0.rgba", "width": WIDTH * 2, "height": HEIGHT * 2,
-            "place": "Safari · \"Checkout · meadow\"", "menu_bar": 28,
+            "place": "Safari · \"Checkout · meadow\"", "menu_bar": MENU_BAR,
         }],
         "color": "#FF2D55", "tolerance": 2, "identify": True,
         "record_shortcut": "⌃⌥Space", "freeze_shortcut": "⌃⌥P", "listen": True,
@@ -249,7 +248,7 @@ def main():
         tmp = pathlib.Path(tmp)
         (tmp / "frames").mkdir()
         screenshot(safari, tmp / "safari.png", tmp)
-        screenshot(terminal, tmp / "frames" / "terminal.png", tmp)
+        screenshot(sent, tmp / "frames" / "sent.png", tmp)
         for name, (screen, replay) in RUNS.items():
             run(name, screen, replay, tmp)
         if keep:

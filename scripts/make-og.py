@@ -29,16 +29,32 @@ def replace(text, old, new):
     return text.replace(old, new, 1)
 
 
-# The frame: testing the checkout page in Safari, the screen frozen under Asides' toolbar, seven
-# seconds into talking.
+# The frame: testing the checkout page in Safari, frozen under asides' pill, the gap under the sticky
+# header measured, seven seconds into talking.
 words = "The summary card is jammed under the header."
-device = replace(device, '<div class="desk" data-app="textedit"', '<div class="desk frozen" data-app="safari"')
-device = replace(device, '<div class="win safari inactive">', '<div class="win safari">')
-device = replace(device, '<div class="win editor open">', '<div class="win editor">')
-device = replace(device, '<span class="tb tb-mic">', '<span class="tb tb-mic rec">')
-device = replace(device, '<span class="tb-time"></span>', '<span class="tb-time">0:07</span>')
-device = replace(device, '<div class="pointer">', '<div class="pointer on crosshair" style="--x: 1000; --y: 250">')
+# Nothing in the agent's chat yet.
+device = replace(device, '<p class="you aside">', '<p class="you aside" hidden>')
+device = replace(device, '<p class="reply">', '<p class="reply" hidden>')
+device = replace(device, '<div class="apill">', '<div class="apill on measuring">')
+device = replace(device, '<span class="ap-mic">', '<span class="ap-mic listening">')
+device = replace(device, '<i class="level"></i>', '<i class="level" style="height: 60%"></i>')
+device = replace(device, '<div class="ruler"><i></i></div>', '<div class="ruler on"><i>6</i></div>')
+device = replace(device, '<div class="pointer">', '<div class="pointer on crosshair">')
 device = replace(device, '<p class="say" aria-live="polite"></p>', f'<p class="say">{words}</p>')
+
+# The ruler and the pointer go in the gap, wherever the page's styles put it (on the desktop's
+# 1512-point grid, as the page's demo places them).
+place = """<script>
+const desk = document.querySelector('.desk');
+const d = desk.getBoundingClientRect();
+const k = 1512 / d.width;
+const edge = (sel, side) => (desk.querySelector(sel).getBoundingClientRect()[side] - d[side === 'bottom' || side === 'top' ? 'top' : 'left']) * k;
+// (Not `top`: a page's script can't declare the window's own.)
+const [header, heading, x] = [edge('.site-head', 'bottom'), edge('.card h5', 'top'), edge('.card', 'left') + 14];
+const set = (sel, props) => Object.entries(props).forEach(([p, v]) => desk.querySelector(sel).style.setProperty(p, v));
+set('.ruler', { '--bx': x, '--by': header, '--bh': heading - header });
+set('.pointer', { '--x': x, '--y': (header + heading) / 2 });
+</script>"""
 
 html = f"""<!doctype html>
 <html lang="en">
@@ -63,10 +79,11 @@ html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
 <body>
 <div class="og-copy">
   <span class="mark">{mark} asides</span>
-  <h1>Talk through bugs while you test.</h1>
-  <p>Transcribed on your Mac, into a Markdown note in your repo, and straight to your coding agent.</p>
+  <h1>Report bugs out loud while you test.</h1>
+  <p>Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.</p>
 </div>
 <div class="og-device">{device}</div>
+{place}
 </body>
 </html>
 """
@@ -74,7 +91,9 @@ html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
 with tempfile.TemporaryDirectory() as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / "profile").mkdir()
-    (tmp / "profile" / "user.js").write_text(f'user_pref("layout.css.devPixelsPerPx", "{SCALE}");\n')
+    # The page in dark mode, whatever this Mac's appearance.
+    (tmp / "profile" / "user.js").write_text(f'user_pref("layout.css.devPixelsPerPx", "{SCALE}");\n'
+                                             'user_pref("ui.systemUsesDarkTheme", 1);\n')
     source = tmp / "og.html"
     source.write_text(html)
     shot = tmp / "og.png"

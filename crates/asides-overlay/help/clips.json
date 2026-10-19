@@ -1,31 +1,31 @@
 {
-  "basics": {"size": [640, 480], "frames": [
-    {"image": "basics-0.webp", "hold": 1800, "pointer": [600, 440], "key": "open", "step": 0},
-    {"image": "basics-1.webp", "hold": 1200, "pointer": [310, 170], "click": true, "step": 1},
-    {"image": "basics-2.webp", "hold": 1400, "path": [[140, 315], [200, 355], [268, 384]], "step": 1},
-    {"image": "basics-3.webp", "hold": 3400, "pointer": [600, 440], "say": "This card [1] needs room under the header, and this button [2] wraps.", "step": 2},
+  "basics": {"size": [740, 600], "frames": [
+    {"image": "basics-0.webp", "hold": 1800, "pointer": [320, 504], "key": "open", "step": 0},
+    {"image": "basics-1.webp", "hold": 1200, "pointer": [210, 189], "click": true, "step": 1},
+    {"image": "basics-2.webp", "hold": 1400, "path": [[34, 371], [100, 412], [180, 442]], "step": 1},
+    {"image": "basics-3.webp", "hold": 3400, "pointer": [320, 504], "say": "This card [1] needs room under the header, and this button [2] wraps.", "step": 2},
     {"image": "basics-4.webp", "hold": 3600, "key": "send", "step": 3}
   ]},
   "pill": {"size": [293.0, 38.0], "radius": 12, "bare": true, "frames": [
     {"image": "pill.webp", "hold": 0}
   ]},
-  "target": {"size": [550, 460], "frames": [
-    {"image": "target-0.webp", "hold": 1500, "pointer": [450, 356]},
+  "target": {"size": [560, 470], "frames": [
+    {"image": "target-0.webp", "hold": 1500, "pointer": [450, 364]},
     {"image": "target-1.webp", "hold": 1700, "key": "target"},
-    {"image": "target-2.webp", "hold": 3000, "pointer": [245, 33]}
+    {"image": "target-2.webp", "hold": 3000, "pointer": [288, 30]}
   ]},
-  "card": {"size": [640, 480], "frames": [
-    {"image": "card-0.webp", "hold": 1300, "pointer": [600, 440]},
-    {"image": "card-1.webp", "hold": 1000, "pointer": [310, 170], "click": true},
-    {"image": "card-2.webp", "hold": 1200, "pointer": [600, 440]},
+  "card": {"size": [768, 540], "frames": [
+    {"image": "card-0.webp", "hold": 1300, "pointer": [374, 504]},
+    {"image": "card-1.webp", "hold": 1000, "pointer": [264, 189], "click": true},
+    {"image": "card-2.webp", "hold": 1200, "pointer": [374, 504]},
     {"image": "card-3.webp", "hold": 2600, "key": "⌘2"}
   ]},
-  "tools": {"size": [720, 450], "frames": [
-    {"image": "tools-0.webp", "hold": 1800, "pointer": [226, 207], "key": "measure"},
-    {"image": "tools-1.webp", "hold": 1900, "path": [[34, 191], [176, 210], [420, 238]]},
-    {"image": "tools-2.webp", "hold": 2600, "pointer": [906, 440], "path": [[428.2, 334.0], [438.6, 323.8], [453.7, 315.3], [472.7, 309.1], [494.1, 305.7], [516.5, 305.2], [538.4, 307.7], [558.3, 313.0], [574.9, 320.7], [586.9, 330.4], [593.7, 341.4], [594.7, 352.8], [589.8, 364.0], [579.4, 374.2], [564.3, 382.7], [545.3, 388.9], [523.9, 392.3], [501.5, 392.8], [479.6, 390.3], [459.7, 385.0], [443.1, 377.3], [431.1, 367.6], [424.3, 356.6], [423.3, 345.2], [428.2, 334.0]], "key": "draw"}
+  "tools": {"size": [880, 520], "frames": [
+    {"image": "tools-0.webp", "hold": 1800, "pointer": [180, 261], "key": "measure"},
+    {"image": "tools-1.webp", "hold": 1900, "path": [[16, 241.5], [150, 259], [492, 294]]},
+    {"image": "tools-2.webp", "hold": 2600, "pointer": [820, 504], "path": [[513.9, 389.9], [525.7, 378.3], [543.0, 368.7], [564.6, 361.7], [589.0, 357.8], [614.5, 357.2], [639.5, 360.0], [662.2, 366.0], [681.1, 374.9], [694.8, 385.9], [702.5, 398.3], [703.6, 411.4], [698.1, 424.1], [686.3, 435.7], [669.0, 445.3], [647.4, 452.3], [623.0, 456.2], [597.5, 456.8], [572.5, 454.0], [549.8, 448.0], [530.9, 439.1], [517.2, 428.1], [509.5, 415.7], [508.4, 402.6], [513.9, 389.9]], "key": "draw"}
   ]},
-  "keys": {"size": [490, 450], "frames": [
+  "keys": {"size": [490, 480], "frames": [
     {"image": "keys.webp", "hold": 0}
   ]}
 }

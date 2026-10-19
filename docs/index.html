@@ -4,33 +4,50 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>asides · Report bugs out loud while you test</title>
-<meta name="description" content="A macOS menu-bar app. Press a shortcut, say what's wrong, and it's transcribed on your Mac into a Markdown note in your repo, screenshots inline, and handed straight to your coding agent.">
-<meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#0b0b0c">
+<meta name="description" content="A macOS menu-bar app. Freeze your screen, click what's wrong and say why: it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked. Transcribed on your Mac.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
 <link rel="canonical" href="https://asides.mihaicristian.dev/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="wallpaper.webp" as="image" type="image/webp">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asides.mihaicristian.dev/">
 <meta property="og:title" content="asides">
-<meta property="og:description" content="Talk through bugs while you test. Transcribed on your Mac into a Markdown note in your repo, and straight to your coding agent.">
+<meta property="og:description" content="Report bugs out loud while you test. Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.">
 <meta property="og:image" content="https://asides.mihaicristian.dev/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <script>document.documentElement.classList.add('js');</script>
 <style>
 :root {
-  /* Always dark, whatever the system's appearance. */
-  --bg: #0b0b0c;
-  --fg: #f2f2f4;
-  --muted: #98989f;
-  --line: #232326;
-  --code-bg: #161618;
-  /* The recording dot: the page's one color. */
-  --red: #ff453a;
+  /* Light or dark, as the system is. */
+  --bg: #fff;
+  --fg: #111113;
+  --muted: #6e6e73;
+  --line: #e8e8ec;
+  --code-bg: #f4f4f6;
+  /* The app's own color (style.rs's UI, "soft blue cloud"): the main buttons, selections, focus.
+     The focus ring takes its deeper shade on white, to be seen. */
+  --accent: #92b6f0;
+  --accent-fill: #c2d6f6;
+  --on-accent: #16213a;
+  /* Recording, red as in the menu bar. */
+  --red: #ff3b30;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  color-scheme: dark;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0b0c;
+    --fg: #f2f2f4;
+    --muted: #98989f;
+    --line: #232326;
+    --code-bg: #161618;
+    --accent: #c2d6f6;
+    --red: #ff453a;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -44,9 +61,9 @@ body {
   text-rendering: optimizeLegibility;
   overflow-x: clip;
 }
-::selection { background: var(--red); color: #fff; }
+::selection { background: var(--accent-fill); color: var(--on-accent); }
 a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 150ms ease, color 150ms ease; }
-a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-radius: 6px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 h1, h2, h3, p, ul, dl, dd { margin: 0; padding: 0; font-size: inherit; font-weight: inherit; }
 code, pre, kbd, button { font-size: inherit; }
 code, pre { font-family: var(--mono); }
@@ -83,9 +100,9 @@ kbd {
   padding: 10px 20px;
   font-weight: 500;
   white-space: nowrap;
-  color: var(--bg);
-  background: var(--fg);
-  border: 1px solid var(--fg);
+  color: var(--on-accent);
+  background: var(--accent-fill);
+  border: 1px solid var(--accent-fill);
   border-radius: 999px;
   text-decoration: none;
   transition: opacity 150ms ease, transform 160ms ease-out, background-color 150ms ease;
@@ -170,7 +187,6 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .menus { gap: calc(21 * var(--u)); }
 .menus b { font-weight: 700; }
 .menus svg { width: calc(14 * var(--u)); height: calc(17 * var(--u)); margin-right: calc(3 * var(--u)); fill: currentColor; filter: drop-shadow(0 0 calc(3 * var(--u)) rgba(0, 0, 0, 0.2)); }
-.desk[data-app="safari"] .m-textedit, .desk[data-app="textedit"] .m-safari { display: none; }
 .extras { gap: calc(4 * var(--u)); }
 .extras > svg, .extras > .status { filter: drop-shadow(0 0 calc(3 * var(--u)) rgba(0, 0, 0, 0.2)); }
 .extras > svg { width: calc(30 * var(--u)); height: calc(16 * var(--u)); padding: 0 calc(7 * var(--u)); }
@@ -206,50 +222,6 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .status[data-state="rec"] .i-rec,
 .status[data-state="busy"] .i-busy,
 .status[data-state="done"] .i-done { display: block; }
-.mic-on {
-  width: calc(6 * var(--u));
-  height: calc(6 * var(--u));
-  margin: 0 calc(4 * var(--u));
-  border-radius: 50%;
-  background: #ff9f0a;
-}
-.mic-on[hidden] { display: none; }
-
-/* The asides menu, a macOS 26 menu: glass, rounder, the highlight inset in it. */
-.menu {
-  position: absolute;
-  top: calc(41 * var(--u));
-  left: calc(var(--menu-x, 1100) * var(--u));
-  z-index: 6;
-  width: calc(272 * var(--u));
-  padding: calc(5 * var(--u));
-  background: rgba(240, 240, 242, 0.78);
-  -webkit-backdrop-filter: blur(calc(24 * var(--u))) saturate(1.8);
-  backdrop-filter: blur(calc(24 * var(--u))) saturate(1.8);
-  border-radius: calc(13 * var(--u));
-  box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.16), 0 0 0 calc(1 * var(--u)) rgba(255, 255, 255, 0.5) inset, 0 calc(10 * var(--u)) calc(30 * var(--u)) rgba(0, 0, 0, 0.22);
-  opacity: 0;
-  transform: scale(0.98);
-  transform-origin: 20% 0;
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
-}
-.menu.open { opacity: 1; transform: none; }
-.menu .item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: calc(16 * var(--u));
-  height: calc(24 * var(--u));
-  padding: 0 calc(10 * var(--u));
-  border-radius: calc(8 * var(--u));
-  white-space: nowrap;
-}
-.menu .off { color: rgba(0, 0, 0, 0.3); }
-.menu .key { color: rgba(0, 0, 0, 0.45); }
-.menu .item.hot { background: #0a84ff; color: #fff; }
-.menu .item.hot .key { color: rgba(255, 255, 255, 0.8); }
-.menu .sep { height: calc(1 * var(--u)); margin: calc(5 * var(--u)) calc(10 * var(--u)); background: rgba(0, 0, 0, 0.1); }
-
 /* Windows: macOS 26's rounder corners and soft shadows. */
 .win {
   position: absolute;
@@ -276,7 +248,7 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .inactive { box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.18), 0 calc(8 * var(--u)) calc(24 * var(--u)) rgba(0, 0, 0, 0.18); }
 
 /* Safari 26's compact toolbar: one row, the address in a glass pill, over the page. */
-.safari { top: calc(62 * var(--u)); left: calc(64 * var(--u)); width: calc(1040 * var(--u)); height: calc(820 * var(--u)); }
+.safari { top: calc(62 * var(--u)); left: calc(24 * var(--u)); width: calc(940 * var(--u)); height: calc(820 * var(--u)); }
 .safari .bar { height: calc(52 * var(--u)); background: #fff; }
 .url {
   display: flex;
@@ -358,33 +330,51 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
   text-align: center;
 }
 
-/* TextEdit, showing the note */
-.editor {
-  top: calc(170 * var(--u));
-  left: calc(560 * var(--u));
-  z-index: 2;
-  width: calc(840 * var(--u));
-  height: calc(640 * var(--u));
-  opacity: 0;
-  transform: scale(0.96);
-  transition: opacity 220ms var(--ease-out), transform 220ms var(--ease-out);
+/* Terminal beside Safari, with Claude Code: the aside arrives in its chat while Safari stays in
+   front. The chat starts at the top; once it fills the window, older lines leave at the top. */
+.term {
+  top: calc(62 * var(--u));
+  left: calc(976 * var(--u));
+  width: calc(512 * var(--u));
+  height: calc(560 * var(--u));
+  background: #1e1e1e;
 }
-.editor.open { opacity: 1; transform: none; }
-.editor .bar { height: calc(52 * var(--u)); background: #f6f6f6; border-bottom: calc(1 * var(--u)) solid #e4e4e6; }
-.doc-title { position: absolute; left: 50%; transform: translateX(-50%); color: #1d1d1f; font-weight: 600; }
-.doc { position: relative; height: calc(588 * var(--u)); overflow: hidden; }
-.doc pre {
-  margin: 0;
-  padding: calc(16 * var(--u)) calc(24 * var(--u)) calc(20 * var(--u));
-  font: calc(12 * var(--u))/1.55 var(--mono);
-  color: #1d1d1f;
-  white-space: pre-wrap;
-  transition: transform 1100ms cubic-bezier(0.65, 0, 0.35, 1);
+.term .bar { height: calc(28 * var(--u)); background: #2d2d2d; color: #a1a1a6; border-bottom: calc(1 * var(--u)) solid #111; }
+.term.inactive .bar { background: #282828; }
+.term.inactive .lights i { background: #48484b; }
+.term-title { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 600; }
+.screen {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: calc(9 * var(--u));
+  height: calc(532 * var(--u));
+  overflow: hidden;
+  padding: calc(12 * var(--u)) calc(16 * var(--u));
+  font: calc(12 * var(--u))/1.5 var(--mono);
+  color: #e5e5e5;
 }
-/* Scrolled to the end: the document's last line at the window's bottom edge. */
-.doc pre.end { transform: translateY(calc(588 * var(--u) - 100%)); }
-.doc .h { font-weight: 700; }
-.doc .fm { color: #8e8e93; }
+.screen::after { content: ""; flex: 1 0 0; margin-top: calc(-9 * var(--u)); }
+.screen p { margin: 0; white-space: pre-wrap; }
+.screen [hidden] { display: none; }
+.screen .you { padding: calc(2 * var(--u)) calc(7 * var(--u)); background: #2b2b2b; color: #b8b8b8; }
+/* Like Claude Code, a message's lines go under its text, not under its > or ⏺. */
+.screen .aside, .screen .reply { padding-left: calc(7 * var(--u) + 2ch); text-indent: -2ch; }
+.screen .reply { padding-left: 2ch; }
+.screen .star { color: #d97757; }
+.screen .dim { color: #8a8a8e; }
+.input {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--u));
+  min-height: calc(32 * var(--u));
+  margin-top: calc(4 * var(--u));
+  padding: 0 calc(11 * var(--u));
+  border: calc(1 * var(--u)) solid #5a5a5e;
+  border-radius: calc(7 * var(--u));
+}
+.caret { width: calc(8 * var(--u)); height: calc(16 * var(--u)); background: #d4d4d4; }
+.typed b { font-weight: 400; color: #a8c7fa; }
 
 /* The keys being pressed, and the pointer */
 /* Above the subtitles, which can show at the same moment. */
@@ -449,57 +439,46 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .say.swap { filter: blur(2px); }
 .say .w { transition: opacity 160ms ease; }
 .say .w.off { opacity: 0; }
-/* Above the toolbar while the screen is frozen. */
-.desk.frozen ~ .say { bottom: 7.4cqw; }
-.say { transition: opacity 180ms ease, filter 180ms ease, bottom 300ms var(--ease-out); }
+.say { transition: opacity 180ms ease, filter 180ms ease; }
 
-/* Asides on a frozen screen, drawn after the overlay itself (asides-overlay's ui.rs and style.rs):
-   the menu bar hides, the toolbar comes up at the bottom, measurements are pink lines with dark
-   pills, annotations numbered blue markers with a card. */
-.desk .menubar { transition: opacity 200ms ease; }
-.desk.frozen .menubar { opacity: 0; }
-.toolbar {
+/* asides on a frozen screen, drawn after the overlay itself (asides-overlay's ui.rs and style.rs).
+   The menu bar is part of the frozen picture, so it stays: the pill comes in under it, glass with a
+   hairline, its microphone soft red while listening and filling with how loud it hears. Measurements
+   are pink lines with dark labels, pins numbered blue markers where they were clicked. */
+.apill {
   position: absolute;
+  top: calc(47 * var(--u));
   left: 50%;
-  bottom: calc(22 * var(--u));
   z-index: 7;
   display: flex;
   align-items: center;
-  gap: calc(2 * var(--u));
-  padding: calc(5 * var(--u));
-  background: rgba(28, 28, 30, 0.98);
+  gap: calc(4 * var(--u));
+  height: calc(38 * var(--u));
+  padding: 0 calc(4 * var(--u));
+  color: rgba(255, 255, 255, 0.88);
+  font: 400 calc(13 * var(--u))/1 var(--sans);
+  white-space: nowrap;
+  background: rgba(28, 27, 26, 0.66);
+  -webkit-backdrop-filter: blur(calc(20 * var(--u))) saturate(1.3);
+  backdrop-filter: blur(calc(20 * var(--u))) saturate(1.3);
+  border: calc(1 * var(--u)) solid rgba(255, 255, 255, 0.1);
   border-radius: calc(12 * var(--u));
-  box-shadow: 0 0 0 calc(1 * var(--u)) rgba(255, 255, 255, 0.12) inset, 0 calc(10 * var(--u)) calc(30 * var(--u)) rgba(0, 0, 0, 0.35);
   opacity: 0;
-  transform: translate(-50%, calc(14 * var(--u)));
-  transition: opacity 200ms ease, transform 350ms var(--ease-out);
+  transform: translateX(-50%) scale(0.98);
+  transition: opacity 160ms ease-out, transform 160ms ease-out;
 }
-.desk.frozen .toolbar { opacity: 1; transform: translate(-50%, 0); }
-.toolbar svg, .acard svg { width: calc(16 * var(--u)); height: calc(16 * var(--u)); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.toolbar .grip { display: grid; place-items: center; width: calc(16 * var(--u)); color: rgba(255, 255, 255, 0.45); }
-.toolbar .grip svg { width: calc(14 * var(--u)); height: calc(14 * var(--u)); fill: currentColor; stroke: none; }
-.tb {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: calc(5 * var(--u));
-  height: calc(28 * var(--u));
-  min-width: calc(30 * var(--u));
-  padding: 0 calc(7 * var(--u));
-  font: 500 calc(12 * var(--u))/1 var(--sans);
-  font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.85);
-  border-radius: calc(7 * var(--u));
-  transition: background-color 120ms ease, color 120ms ease;
-}
-.tb.dim { opacity: 0.8; }
-.tb.on, .tb.done { color: #16213a; background: #c2d6f6; }
-.tb.done.down { background: #92b6f0; }
-.tb.rec { color: #fff; background: #ff3b30; }
-.tb-time:empty { display: none; }
-.tsep { width: calc(1 * var(--u)); height: calc(18 * var(--u)); margin: 0 calc(3 * var(--u)); background: rgba(255, 255, 255, 0.15); }
+.apill.on { opacity: 1; transform: translateX(-50%); }
+.apill svg { position: relative; width: calc(16 * var(--u)); height: calc(16 * var(--u)); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ap-icon, .ap-mic, .ap-send { position: relative; display: grid; place-items: center; width: calc(28 * var(--u)); height: calc(28 * var(--u)); overflow: hidden; border-radius: calc(8 * var(--u)); }
+.ap-mic.listening { color: #fff; background: rgba(236, 106, 94, 0.32); }
+.ap-mic .level { position: absolute; inset: auto 0 0; height: 0; background: #ec6a5e; transition: height 90ms linear; }
+.ap-to { padding: 0 calc(16 * var(--u)) 0 calc(8 * var(--u)); }
+.ap-tool { display: none; align-items: center; gap: calc(6 * var(--u)); height: calc(28 * var(--u)); padding: 0 calc(10 * var(--u)); margin-right: calc(12 * var(--u)); border-radius: calc(8 * var(--u)); background: rgba(255, 255, 255, 0.07); }
+.ap-tool svg { width: calc(14 * var(--u)); height: calc(14 * var(--u)); }
+.apill.measuring .ap-tool { display: flex; }
+.ap-send { width: calc(32 * var(--u)); color: #16213a; background: #c2d6f6; }
 
-.ruler, .outline, .marker, .acard { position: absolute; z-index: 6; opacity: 0; pointer-events: none; }
+.ruler, .outline, .marker { position: absolute; z-index: 6; opacity: 0; pointer-events: none; }
 .ruler, .outline { left: calc(var(--bx, 0) * var(--u)); top: calc(var(--by, 0) * var(--u)); height: calc(var(--bh, 0) * var(--u)); }
 .ruler { width: calc(1.5 * var(--u)); background: #ff2d55; }
 .ruler::before, .ruler::after { content: ""; position: absolute; left: calc(-4 * var(--u)); width: calc(9.5 * var(--u)); height: calc(1.5 * var(--u)); background: #ff2d55; }
@@ -517,7 +496,7 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
   border-radius: calc(6 * var(--u));
   transform: translateY(-50%);
 }
-.outline { width: calc(var(--bw, 0) * var(--u)); border: calc(1.5 * var(--u)) solid #3b82f6; border-radius: calc(4 * var(--u)); background: rgba(59, 130, 246, 0.1); }
+.outline { width: calc(var(--bw, 0) * var(--u)); border: calc(1.5 * var(--u)) solid #3b82f6; border-radius: calc(4 * var(--u)); }
 .ruler.on, .outline.on { opacity: 1; }
 .marker {
   left: calc(var(--bx, 0) * var(--u));
@@ -535,32 +514,6 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
   transition: opacity 120ms ease, transform 260ms var(--ease-out);
 }
 .marker.on { opacity: 1; transform: translate(-50%, -50%); }
-.acard {
-  left: calc(var(--bx, 0) * var(--u));
-  top: calc(var(--by, 0) * var(--u));
-  width: calc(236 * var(--u));
-  padding: calc(6 * var(--u));
-  font: 400 calc(12 * var(--u))/1.4 var(--sans);
-  color: #fff;
-  background: rgba(28, 28, 30, 0.98);
-  border-radius: calc(12 * var(--u));
-  box-shadow: 0 0 0 calc(1 * var(--u)) rgba(255, 255, 255, 0.12) inset, 0 calc(10 * var(--u)) calc(28 * var(--u)) rgba(0, 0, 0, 0.35);
-  transform: translateY(calc(-4 * var(--u))) scale(0.97);
-  transform-origin: 20% 0;
-  transition: opacity 140ms ease, transform 220ms var(--ease-out);
-}
-.acard.on { opacity: 1; transform: none; }
-.acard-text { min-height: calc(36 * var(--u)); padding: calc(7 * var(--u)) calc(8 * var(--u)); background: rgba(255, 255, 255, 0.06); border-radius: calc(7 * var(--u)); }
-.acard-text:empty::before { content: "What should change?"; color: rgba(255, 255, 255, 0.4); }
-.acard-text.listening { color: rgba(255, 255, 255, 0.6); }
-.acard-row { display: flex; align-items: center; justify-content: space-between; height: calc(30 * var(--u)); margin-top: calc(4 * var(--u)); }
-.acard-row .dots { display: flex; gap: calc(9 * var(--u)); padding-left: calc(6 * var(--u)); }
-.acard-row .dots i { width: calc(7 * var(--u)); height: calc(7 * var(--u)); border-radius: 50%; }
-.acard-row .dots i:nth-child(1) { background: #ff6b6b; box-shadow: 0 0 0 calc(2 * var(--u)) rgba(28, 28, 30, 1), 0 0 0 calc(3.5 * var(--u)) #ff6b6b; }
-.acard-row .dots i:nth-child(2) { background: #f5b14c; }
-.acard-row .dots i:nth-child(3) { background: #92b6f0; }
-.acard-row .dots i:nth-child(4) { background: #4cd28b; }
-
 /* Install */
 .steps { display: flex; flex-direction: column; gap: 12px; }
 .steps p { color: var(--muted); }
@@ -637,7 +590,7 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .qs .a { overflow: hidden; }
 .qs .a p { padding: 0 24px 14px 0; color: var(--muted); }
 
-.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; margin-top: 72px; padding: 20px 0 48px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; margin-top: 72px; padding: 20px 0 48px; font-size: 13px; color: var(--muted); }
 
 @media (hover: hover) and (pointer: fine) {
   a:hover { text-decoration-color: var(--fg); }
@@ -684,7 +637,7 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
       <span class="rec" aria-hidden="true"><svg viewBox="0 0 22 22" fill="none" stroke="var(--red)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="var(--red)" stroke="none"/></svg><span class="clock">0:07</span></span>
       <a href="#install">Install</a>
       <a href="https://github.com/mihaicristianfarcas/asides">GitHub</a>
-      <a class="pill" href="https://download.asides.mihaicristian.dev/Asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download</a>
+      <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download</a>
     </nav>
   </header>
 </div>
@@ -692,42 +645,42 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 <main class="page">
   <p class="rec" aria-hidden="true"><svg viewBox="0 0 22 22" fill="none" stroke="var(--red)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="var(--red)" stroke="none"/></svg><span class="clock">0:07</span></p>
   <h1>Report bugs out loud while you test.</h1>
-  <p class="lede">A Mac menu-bar app. Hold <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>, point at what's wrong and say it. asides writes it down, with screenshots, in a note in your repo, and passes it to your coding agent.</p>
+  <p class="lede">A Mac menu-bar app. Press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>, click what's wrong and say why. Press it again, and it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked.</p>
   <div class="buttons">
-    <a class="pill" href="https://download.asides.mihaicristian.dev/Asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Mac</a>
+    <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Mac</a>
     <a class="pill line" href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a>
   </div>
 
   <section class="section" aria-labelledby="features">
     <h2 class="label" id="features">Features</h2>
     <ul class="list">
+      <li><b>Into the chat you're in</b><span>The session you typed into last: Claude Code, Codex, OpenCode and more.</span></li>
+      <li><b>Nothing to install in it</b><span>Typed in as you would, in Terminal, Ghostty or Diri.</span></li>
+      <li><b>Point, don't describe</b><span>Click an element: its name, page and place go with your words.</span></li>
+      <li><b>Measure anything</b><span>Distances, sizes and guides, in any app, not just the browser.</span></li>
       <li><b>Local and free</b><span>Whisper on your Mac's GPU. No account, no audio sent.</span></li>
       <li><b>Verbatim</b><span>What you said, in any language. No rewriting.</span></li>
-      <li><b>Freeze and annotate</b><span>Measure, number and draw on any screen as you talk.</span></li>
-      <li><b>Screenshots in place</b><span>Next to the sentence you were saying.</span></li>
-      <li><b>In your repo</b><span>A Markdown note with the branch and commit.</span></li>
-      <li><b>Straight to your agent</b><span>Claude Code, Codex, OpenCode and more, listening.</span></li>
+      <li><b>Freeze, use, freeze again</b><span>One aside holds every freeze, in the order you went.</span></li>
+      <li><b>A history, not files</b><span>Every aside kept on your Mac for 30 days, to send again.</span></li>
     </ul>
   </section>
 
-  <div class="wide" role="group" aria-label="Example: one recording">
+  <div class="wide" role="group" aria-label="Example: one aside">
       <figure class="device" id="demo">
         <div class="display">
           <!-- The markup is the demo's last frame, so it reads fine without JavaScript. -->
-          <div class="desk" data-app="textedit" aria-hidden="true">
+          <div class="desk" aria-hidden="true">
             <div class="menubar">
               <div class="menus">
                 <svg viewBox="0 0 170 200"><path d="M150.4 155.9c-2.8 6.4-6.1 12.3-9.9 17.7-5.2 7.4-9.5 12.5-12.8 15.4-5.1 4.7-10.6 7.1-16.5 7.2-4.2 0-9.3-1.2-15.2-3.6-5.9-2.4-11.4-3.6-16.4-3.6-5.2 0-10.8 1.2-16.8 3.6-6 2.4-10.9 3.7-14.6 3.8-5.6.2-11.2-2.2-16.8-7.4-3.6-3.1-8-8.4-13.4-16-5.7-8-10.4-17.3-14.1-28C-.2 133.4-2 122.4-2 111.8c0-12.2 2.6-22.7 7.9-31.5 4.2-7.1 9.7-12.8 16.7-16.9 7-4.1 14.6-6.3 22.7-6.4 4.5 0 10.3 1.4 17.6 4.1 7.3 2.7 11.9 4.1 14 4.1 1.5 0 6.8-1.6 15.6-4.8 8.4-3 15.5-4.3 21.3-3.8 15.8 1.3 27.6 7.5 35.5 18.7-14.1 8.6-21.1 20.6-21 36 .1 12 4.5 22 13.1 29.9 3.9 3.7 8.3 6.6 13.1 8.6-1 3-2.2 5.9-3.4 8.7zM114.4 4c0 9.4-3.4 18.2-10.3 26.3-8.3 9.6-18.3 15.2-29.2 14.3-.1-1.1-.2-2.3-.2-3.6 0-9 3.9-18.7 10.9-26.6 3.5-4 7.9-7.3 13.2-10 5.3-2.6 10.4-4.1 15.1-4.3.1 1.3.2 2.6.2 3.9z"/></svg>
-                <b class="m-safari">Safari</b>
-                <b class="m-textedit">TextEdit</b>
+                <b>Safari</b>
                 <span>File</span>
                 <span>Edit</span>
-                <span class="m-textedit">Format</span>
                 <span>View</span>
-                <span class="m-safari">History</span>
-                <span class="m-safari">Bookmarks</span>
+                <span>History</span>
+                <span>Bookmarks</span>
                 <span>Window</span>
-                <span class="m-textedit">Help</span>
+                <span>Help</span>
               </div>
               <span class="notch"></span>
               <div class="extras">
@@ -738,7 +691,6 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
                   <svg class="i-done" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><path d="M13.2 7.2H9.3l-.2 3.6M8.95 11.46A2.3 2.3 0 1 1 8.95 13.54"/></svg>
                   <span class="status-title"></span>
                 </span>
-                <span class="mic-on" hidden></span>
                 <svg class="battery" viewBox="0 0 28 14" fill="none" stroke="currentColor"><rect x="0.75" y="0.75" width="23" height="12.5" rx="3.5" stroke-opacity="0.5" stroke-width="1.2"/><rect x="2.6" y="2.6" width="16" height="8.8" rx="1.8" fill="currentColor" stroke="none"/><path d="M26 5v4" stroke-opacity="0.5" stroke-width="1.6" stroke-linecap="round"/></svg>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 19.2 9.4 16.6a3.7 3.7 0 0 1 5.2 0zM6.6 13.8l-1.5-1.5a9.8 9.8 0 0 1 13.8 0l-1.5 1.5a7.7 7.7 0 0 0-10.8 0zM3.8 11 2.3 9.5a13.8 13.8 0 0 1 19.4 0L20.2 11a11.7 11.7 0 0 0-16.4 0z"/></svg>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="6" rx="3"/><rect x="3" y="13" width="18" height="6" rx="3"/><circle cx="15" cy="8" r="1.6" fill="currentColor"/><circle cx="9" cy="16" r="1.6" fill="currentColor"/></svg>
@@ -746,34 +698,13 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
               </div>
             </div>
 
-            <div class="menu">
-              <div class="item off status-line">Added #5 to Checkout session</div>
-              <div class="item"><span>Open Asides</span><span class="key">⌃⌥Space</span></div>
-              <div class="item"><span>Open Asides in a New Note</span><span class="key">⌃⌥N</span></div>
-              <div class="item"><span>Attach Clipboard Image</span><span class="key">⌃⌥V</span></div>
-              <div class="item"><span>Freeze the Screen</span><span class="key">⌃⌥P</span></div>
-              <div class="item off">Close Without Adding</div>
-              <div class="sep"></div>
-              <div class="item"><span>New Agent Session</span><span class="key">›</span></div>
-              <div class="sep"></div>
-              <div class="item"><span>Directory: shop</span><span class="key">›</span></div>
-              <div class="item off">shop › Checkout session · 5 entries</div>
-              <div class="item open-note">Open Note</div>
-              <div class="item">Reveal in Finder</div>
-              <div class="item">Copy Note Path</div>
-              <div class="sep"></div>
-              <div class="item"><span>Preferences</span><span class="key">›</span></div>
-              <div class="sep"></div>
-              <div class="item"><span>Quit Asides</span><span class="key">⌘Q</span></div>
-            </div>
-
-            <div class="win safari inactive">
+            <div class="win safari">
               <div class="bar">
                 <span class="lights"><i></i><i></i><i></i></span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M9.5 5v14"/></svg>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 6-6 6 6 6"/></svg>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="m9.5 6 6 6-6 6"/></svg>
-                <span class="url">localhost</span>
+                <span class="url">localhost:5173/checkout</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11M8.5 7 12 3.5 15.5 7M8 10H6.5v10h11V10H16"/></svg>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
               </div>
@@ -812,83 +743,48 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
               </div>
             </div>
 
-            <div class="win editor open">
+            <div class="win term inactive">
               <div class="bar">
                 <span class="lights"><i></i><i></i><i></i></span>
-                <span class="doc-title">notes.md</span>
+                <span class="term-title">shop — claude — 66×28</span>
               </div>
-              <div class="doc"><pre class="end"><span class="fm">---
-title: Checkout session
-created: 2026-10-15T14:32:07+01:00
-directory: /Users/sam/code/shop
-git:
-  branch: fix/checkout-layout
-  commit: 4f2c9e1
-  commit_subject: Move the order summary into a card
-  uncommitted_files: 3
-environment:
-  macos: "26.0"
-  browser: Safari 26.0
-  display: 3024x1964 @2x
-transcription: asides 0.7.4 · whisper large-v3-turbo (local)
----</span>
+              <div class="screen">
+                <p><span class="star">✻</span> Welcome to Claude Code</p>
+                <p class="you">&gt; Run the checkout tests</p>
+                <p>⏺ All 14 checkout tests pass.</p>
+                <p class="you aside">&gt; [Image #1]
 
-<span class="h">## 1 · 14:32</span>
-
-The logo in the header looks blurry.
-
-<span class="h">## 2 · 14:33</span>
-
-Shipping options take a while to load, and there's no spinner.
-
-<span class="h">## 3 · 14:34</span>
-
-The quantity buttons are too small to tap.
-
-<span class="h">## 4 · 14:35</span>
-
-The total doesn't update after removing the coupon.
-
-<span class="h">## 5 · 14:38</span>
-
-![14:38:12](images/05-143812.png)
-
-**In:** Safari · "Checkout — meadow"
+**In:** Safari ("Checkout · meadow", localhost:5173/checkout)
 
 The summary card is jammed under the header.
 
-- Distance from (612, 104): 6 down (y 98 to y 104)
+**Measured** in pt (screen: Built-in Retina Display, 1512 × 945 pt, @2x)
+- Distance from (610, 173): 6 down (y 170 to y 176)
 
-<span class="h">### 1. button "Pay now · $72.00"</span>
-**Intent:** fix
-**Said:** And the Pay button text wraps.</pre></div>
+And this button [1] wraps.
+
+### 1. button "Pay now · $72.00"
+**Location:** aside.summary &gt; button.pay</p>
+                <p class="thinking" hidden><span class="star">✻</span> Thinking…</p>
+                <p class="reply">⏺ I'll give the summary card room below the sticky header, and keep the Pay button's label on one line.</p>
+                <div class="input"><span class="dim">&gt;</span><span class="typed"></span><i class="caret"></i></div>
+                <p class="dim">? for shortcuts</p>
+              </div>
             </div>
 
+            <!-- asides on the frozen screen, drawn after the overlay (asides-overlay's ui.rs): the pill
+                 under the menu bar, a measurement, a pin. -->
+            <div class="apill">
+              <span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
+              <span class="ap-mic"><i class="level"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+              <span class="ap-to">Claude Code (shop)</span>
+              <span class="ap-tool"><svg viewBox="0 0 24 24"><path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/></svg>Measure</span>
+              <span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+              <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
+            </div>
             <div class="ruler"><i></i></div>
             <div class="outline"></div>
             <div class="marker">1</div>
-            <div class="acard"><div class="acard-text"></div><div class="acard-row"><span class="dots"><i></i><i></i><i></i><i></i></span><span class="tb card-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span></div></div>
-            <div class="toolbar">
-              <span class="grip"><svg viewBox="0 0 24 24"><circle cx="9" cy="6.5" r="1.3"/><circle cx="15" cy="6.5" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="17.5" r="1.3"/><circle cx="15" cy="17.5" r="1.3"/></svg></span>
-              <span class="tb tool-measure on"><svg viewBox="0 0 24 24"><path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/></svg></span>
-              <span class="tb tool-annotate"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.8-6.5-10.5a6.5 6.5 0 0 1 13 0C18.5 15.2 12 21 12 21z"/><circle cx="12" cy="10.5" r="2.2"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/></svg></span>
-              <i class="tsep"></i>
-              <span class="tb dim">Med</span>
-              <span class="tb dim">pt</span>
-              <i class="tsep"></i>
-              <span class="tb tb-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span class="tb-time"></span></span>
-              <i class="tsep"></i>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6A2 2 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M8 5.5v13L18.5 12z"/></svg></span>
-              <i class="tsep"></i>
-              <span class="tb done"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
-              <span class="tb"><svg viewBox="0 0 24 24"><path d="M14.5 6.5 9 12l5.5 5.5"/></svg></span>
-            </div>
             <div class="pointer">
               <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
               <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
@@ -906,9 +802,10 @@ The summary card is jammed under the header.
       <div class="code"><pre><code>brew tap mihaicristianfarcas/asides \
   https://github.com/mihaicristianfarcas/asides
 brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
-      <p>Or <a href="https://download.asides.mihaicristian.dev/Asides.dmg">download the disk image</a>. Apple silicon, macOS&nbsp;14 or later. Then run it in your project:</p>
-      <div class="code"><pre><code>cd ~/code/shop &amp;&amp; asides</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
-      <p>To have your agent listen, add it once, then ask it to listen to your asides:</p>
+      <p>Or <a href="https://download.asides.mihaicristian.dev/asides.dmg">download the disk image</a>. Signed and notarized by Apple, for Apple silicon and macOS&nbsp;14 or later. Setup shows how it works, then walks you through the permissions, the voice model and where new sessions open.</p>
+      <p>Start your coding agent as usual, in Terminal, Ghostty or Diri. There's nothing to set up in it:</p>
+      <div class="code"><pre><code>cd ~/code/shop &amp;&amp; claude</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
+      <p>Then press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span> over the app you're testing. Optionally, let your agent look up past asides and measure screenshots:</p>
       <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
 codex mcp add asides -- asides mcp
 opencode mcp add --global asides -- asides mcp
@@ -920,12 +817,11 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   <section class="section" id="usage" aria-labelledby="usage-label">
     <h2 class="label" id="usage-label">Shortcuts</h2>
     <dl class="keys">
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span></dt><dd>Freeze the screen and talk. Tap again to add it to your note.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>N</kbd></span></dt><dd>The same, into a new note.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>P</kbd></span></dt><dd>Back to the live screen while you talk, or freeze it again.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>V</kbd></span></dt><dd>Attach the image on the clipboard.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>↩</kbd></span></dt><dd>Send the batch to your agent.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Tab</kbd></span></dt><dd>Switch which agent session you're talking to.</dd>
+      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span></dt><dd>Freeze the screen, click what's wrong and say why. Press it again, or <kbd>⏎</kbd>, to send it.</dd>
+      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>P</kbd></span></dt><dd>Back to the live screen to use your app, still talking. Again: freeze it.</dd>
+      <dt><span class="combo"><kbd>Tab</kbd></span></dt><dd>The next agent session. Point at the pill's session for all of them, or a new one in any folder.</dd>
+      <dt><span class="combo"><kbd>M</kbd><kbd>D</kbd></span></dt><dd>Measure, or draw. <kbd>?</kbd> shows every key.</dd>
+      <dt><span class="combo"><kbd>Esc</kbd></span></dt><dd>Close without sending.</dd>
     </dl>
   </section>
 
@@ -933,16 +829,20 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     <h2 class="label" id="questions-label">Questions</h2>
     <div class="qs">
       <details>
-        <summary>Does my voice leave my Mac?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>No. Audio stays in memory until it's transcribed, then it's discarded. The only download is the speech model, the first time. Agents get the text, and may pass it to their model provider.</p></div>
+        <summary>Where do my asides go?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>Into the agent session you typed into last, typed in as your own message. Tab picks another; the pill's list also starts a new session in any folder, or keeps the aside in History only. Every aside stays in History on your Mac for 30 days, to send again.</p></div>
       </details>
       <details>
         <summary>Which agents work with it?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code: <code>asides claude</code> (and so on) starts one already listening. Any agent with MCP can listen through <code>asides mcp</code>.</p></div>
+        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code, in Terminal, Ghostty or Diri. asides types each aside in the way you would, so there's nothing to install in the agent. Any agent with MCP can also read past asides through <code>asides mcp</code>.</p></div>
+      </details>
+      <details>
+        <summary>Does my voice leave my Mac?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>No. Whisper transcribes it on your Mac, word for word, then the audio is discarded (or kept beside the aside, if you turn that on). The only download is the voice model. Your agent gets the text and screenshots, and may pass them to its model provider.</p></div>
       </details>
       <details>
         <summary>What permissions does it need?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>The microphone, and Screen Recording the first time you freeze the screen. Accessibility only if you turn on Identify UI Elements.</p></div>
+        <div class="a"><p>The microphone, and Screen Recording to freeze the screen. Automation the first time it types into Terminal or Ghostty (Diri needs none). Accessibility names what's under each pin; pins work without it.</p></div>
       </details>
       <details>
         <summary>Is it free?<span class="x" aria-hidden="true"></span></summary>
@@ -952,7 +852,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   </section>
 
   <footer class="foot">
-    <span>By <a href="https://github.com/mihaicristianfarcas">Mihai-Cristian Farcaș</a></span>
+    <span>By <a href="https://mihaicristian.dev">Mihai-Cristian Farcaș</a></span>
     <a href="https://github.com/mihaicristianfarcas/asides">Source on GitHub</a>
   </footer>
 </main>
@@ -1068,36 +968,28 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   const $ = (selector) => desk.querySelector(selector);
   const status = $('.status');
   const title = $('.status-title');
-  const micOn = $('.mic-on');
-  const menu = $('.menu');
-  const openNote = $('.open-note');
-  const safari = $('.safari');
-  const editor = $('.editor');
-  const doc = $('.doc pre');
-  const toolbar = $('.toolbar');
-  const tbMic = $('.tb-mic');
-  const tbTime = $('.tb-time');
-  const toolMeasure = $('.tool-measure');
-  const toolAnnotate = $('.tool-annotate');
-  const done = $('.tb.done');
+  const aside = $('.aside');
+  const thinking = $('.thinking');
+  const reply = $('.reply');
+  const typed = $('.typed');
+  const pill = $('.apill');
+  const mic = $('.ap-mic');
+  const level = $('.ap-mic .level');
   const ruler = $('.ruler');
   const outline = $('.outline');
   const marker = $('.marker');
-  const acard = $('.acard');
-  const acardText = $('.acard-text');
   const hud = device.querySelector('.hud');
   const pointer = $('.pointer');
   const say = device.querySelector('.say');
   // The subtitles are only ever what the tester says.
   const sentences = [
     'The summary card is jammed under the header.',
-    'And the Pay button text wraps.',
+    'And this button wraps.',
   ];
 
   let run = 0;
-  let timer;
   // It plays in a loop while it's on screen; a run that ends off screen starts over when it's
-  // back. With reduced motion it plays once and stays on the note.
+  // back. With reduced motion it plays once and stays on the agent's chat.
   const loop = !matchMedia('(prefers-reduced-motion: reduce)').matches;
   let onScreen = false;
   let due = true;
@@ -1154,54 +1046,36 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     el.style.setProperty('--bh', h.toFixed(1));
   }
 
-  // A clock counting from 0:00 into el while talking, as the toolbar and the card show it.
-  function talk(el, format = (t) => t) {
-    clearInterval(timer);
-    const start = Date.now();
-    const tick = () => {
-      const s = Math.floor((Date.now() - start) / 1000);
-      el.textContent = format(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
-    };
-    tick();
-    timer = setInterval(tick, 200);
-  }
-
+  // Each word as it's said, the pill's microphone filling with the voice.
   async function speak(sentence, id) {
     const words = sentence.split(' ');
     await caption(words.map((w) => `<span class="w off">${w}</span>`).join(' '), id);
-    for (const word of say.querySelectorAll('.w')) {
+    for (const [i, word] of [...say.querySelectorAll('.w')].entries()) {
+      level.style.height = `${[55, 80, 40, 70, 60][i % 5]}%`;
       await wait(150, id);
       word.classList.remove('off');
     }
+    level.style.height = '0';
     await wait(1000, id);
     await caption('', id);
   }
 
   // Back to the first frame, without animating there.
   function reset() {
-    clearInterval(timer);
     desk.classList.add('instant');
-    desk.dataset.app = 'safari';
-    safari.classList.remove('inactive');
-    editor.classList.remove('open');
-    doc.classList.remove('end');
-    menu.classList.remove('open');
-    status.classList.remove('open');
-    openNote.classList.remove('hot');
-    desk.classList.remove('frozen');
-    for (const el of [ruler, outline, marker, acard]) el.classList.remove('on');
-    tbMic.classList.remove('rec');
-    tbTime.textContent = '';
-    toolMeasure.classList.add('on');
-    toolAnnotate.classList.remove('on');
-    acardText.textContent = '';
-    acardText.classList.remove('listening');
+    for (const el of [pill, ruler, outline, marker]) el.classList.remove('on');
+    pill.classList.remove('measuring');
+    mic.classList.remove('listening');
+    level.style.height = '0';
+    aside.hidden = true;
+    thinking.hidden = true;
+    reply.hidden = true;
+    typed.innerHTML = '';
     hud.classList.remove('on');
     say.innerHTML = '';
-    micOn.hidden = true;
     show('idle', '');
     pointer.className = 'pointer on';
-    moveTo([820, 700], 0);
+    moveTo([840, 660], 0);
     desk.getBoundingClientRect();
     desk.classList.remove('instant');
   }
@@ -1217,18 +1091,21 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       moveTo(spot(card, 0.5, 0, 0, 40), 900);
       await wait(1200, id);
 
-      // Held, the shortcut freezes the screen and talks.
+      // The screen freezes under the pill, which listens at once. The menu bar is part of the
+      // frozen picture: only the pill is new.
       await press('⌃⌥Space', id, () => {
-        desk.classList.add('frozen');
-        tbMic.classList.add('rec');
-        talk(tbTime);
-        pointer.classList.add('crosshair');
+        pill.classList.add('on');
+        mic.classList.add('listening');
       });
       await wait(500, id);
 
       // Measure: the gap between the sticky header and the card's heading.
+      await press('M', id, () => {
+        pill.classList.add('measuring');
+        pointer.classList.add('crosshair');
+      });
       const top = spot($('.site-head'), 0, 1)[1];
-      const x = spot(card, 0, 0, 12)[0];
+      const x = spot(card, 0, 0, 14)[0];
       const bottom = spot(card.querySelector('h5'), 0, 0)[1];
       moveTo([x, (top + bottom) / 2], 800);
       const said = speak(sentences[0], id);
@@ -1239,18 +1116,14 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       await wait(500, id);
       await click(id);
       await said;
-      clearInterval(timer);
-      tbMic.classList.remove('rec');
-      tbTime.textContent = '';
-      pointer.classList.remove('crosshair');
 
-      // Annotate the Pay button, and say what's wrong with it in its card.
-      moveTo(spot(toolAnnotate, 0.5, 0.6), 900);
-      await wait(1000, id);
-      await click(id);
-      toolMeasure.classList.remove('on');
-      toolAnnotate.classList.add('on');
-      moveTo(spot(pay, 0.65, 0.6), 900);
+      // Back to pins: a click pins the Pay button, numbered where it was clicked.
+      await press('A', id, () => {
+        pill.classList.remove('measuring');
+        pointer.classList.remove('crosshair');
+      });
+      const at = spot(pay, 0.72, 0.32);
+      moveTo(at, 900);
       await wait(950, id);
       const [px, py] = spot(pay, 0, 0);
       const [qx, qy] = spot(pay, 1, 1);
@@ -1258,68 +1131,37 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       outline.classList.add('on');
       await wait(350, id);
       await click(id);
-      place(marker, px - 3, py - 3);
+      place(marker, ...at);
       marker.classList.add('on');
-      place(acard, px - 3, qy + 14);
-      acard.classList.add('on');
-      await wait(700, id);
-      await press('Space', id, () => {
-        acardText.classList.add('listening');
-        talk(acardText, (t) => `Listening… ${t}`);
-      });
+      await wait(200, id);
       await speak(sentences[1], id);
-      clearInterval(timer);
-      acardText.classList.remove('listening');
-      acardText.textContent = `“${sentences[1]}”`;
-      await wait(900, id);
 
-      // Done adds it all as one aside.
-      moveTo(spot(done, 0.5, 0.6), 1000);
-      await wait(1150, id);
-      done.classList.add('down');
-      await click(id);
-      done.classList.remove('down');
-      desk.classList.remove('frozen');
-      for (const el of [ruler, outline, marker, acard]) el.classList.remove('on');
-      show('busy', '');
-      // Transcribing.
-      await wait(1600, id);
-      show('done', '');
-      await wait(400, id);
+      // Pressed again, it's sent: asides closes at once and transcribes, and you stay in Safari.
+      await press('⌃⌥Space', id, () => {
+        for (const el of [pill, ruler, outline, marker]) el.classList.remove('on');
+        mic.classList.remove('listening');
+        show('busy', '');
+      });
+      await wait(1300, id);
 
-      moveTo(spot(status, 0.5, 0.6), 900);
-      await wait(1050, id);
-      await click(id);
-      // The menu opens under the status item, shifted left if it would run off the screen.
-      menu.style.setProperty('--menu-x', Math.min(spot(status, 0, 0)[0] - 4, 1512 - 272 - 8).toFixed(1));
-      status.classList.add('open');
-      menu.classList.add('open');
+      // asides types it into the session the pill named, in Terminal, with Safari still in front.
+      // As you would: the screenshot, then the text, then Return.
+      typed.innerHTML = '<b>[Image #1]</b> ';
       await wait(500, id);
-      moveTo(spot(openNote, 0.3, 0.55), 600);
-      await wait(650, id);
-      openNote.classList.add('hot');
-      await wait(250, id);
-      await click(id);
-      openNote.classList.remove('hot');
-      await wait(70, id);
-      openNote.classList.add('hot');
-      await wait(70, id);
-      menu.classList.remove('open');
-      status.classList.remove('open');
-      await wait(250, id);
-
+      typed.innerHTML = '<b>[Image #1]</b> <b>[Pasted text #1 +12 lines]</b>';
+      await wait(700, id);
+      typed.innerHTML = '';
+      aside.hidden = false;
+      thinking.hidden = false;
+      show('done', '');
+      await wait(1600, id);
+      thinking.hidden = true;
+      reply.hidden = false;
+      await wait(800, id);
       show('idle', '');
-      openNote.classList.remove('hot');
-      desk.dataset.app = 'textedit';
-      safari.classList.add('inactive');
-      editor.classList.add('open');
-      moveTo(spot(editor, 0.75, 0.6), 700);
-      // The front matter first, then down to the new entry.
-      await wait(2200, id);
-      doc.classList.add('end');
       if (!loop) return;
-      // A moment to read the note, then from the top.
-      await wait(4000, id);
+      // A moment to read it, then from the top.
+      await wait(5000, id);
       if (onScreen) play(); else due = true;
     } catch {
       // A newer run took over.
