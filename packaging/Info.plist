@@ -27,7 +27,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>asides records you while you describe a bug and transcribes it locally, on this Mac.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>asides opens the coding agents you start from its menu in a new tab of your terminal, instead of a new window.</string>
+	<string>asides types each aside into your coding agent's session in Terminal or Ghostty, and starts new sessions there.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
