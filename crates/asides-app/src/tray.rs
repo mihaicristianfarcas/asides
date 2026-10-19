@@ -1,6 +1,6 @@
 //! The status item and its menu: the asides mark (what's happening) and a short menu: what's
-//! going on, opening asides (frozen or live), copying the last aside, the settings wanted most
-//! often, History and Settings in the asides window, Quit.
+//! going on (and an update, when there's one), opening asides (frozen or live), copying the last
+//! aside, the settings wanted most often, History and Settings in the asides window, Quit.
 
 use std::str::FromStr;
 
@@ -26,15 +26,20 @@ pub enum MenuAction {
     /// The asides window, at History or the settings.
     History,
     Settings,
+    /// Downloads the update found and restarts into it.
+    Update,
     Quit,
 }
 
 pub struct Tray {
     icon: TrayIcon,
     /// Kept alive with the status item.
-    _menu: Menu,
+    menu: Menu,
     shown: Option<(Mark, Option<String>)>,
     status: MenuItem,
+    /// Under the status line while there's an update to install.
+    update: MenuItem,
+    update_shown: bool,
     open: MenuItem,
     live: MenuItem,
     copy_last: MenuItem,
@@ -57,11 +62,14 @@ pub struct View {
     pub open: bool,
     /// There's an aside to copy.
     pub has_last: bool,
+    /// The update's item, and whether it can be clicked; `None` hides it.
+    pub update: Option<(String, bool)>,
 }
 
 impl Tray {
     pub fn new(config: &Config, icon: &StatusIcon) -> anyhow::Result<Tray> {
         let status = MenuItem::new("", false, None);
+        let update = MenuItem::new("", true, None);
         let open = MenuItem::new("Open asides", true, accelerator(&config.shortcuts.asides));
         let live = MenuItem::new("Open Live", true, accelerator(&config.shortcuts.freeze));
         let copy_last = MenuItem::new("Copy the Last Aside", false, None);
@@ -100,9 +108,11 @@ impl Tray {
         let icon = builder.build()?;
         Ok(Tray {
             icon,
-            _menu: menu,
+            menu,
             shown: None,
             status,
+            update,
+            update_shown: false,
             open,
             live,
             copy_last,
@@ -125,6 +135,7 @@ impl Tray {
             (self.identify.id(), MenuAction::Identify),
             (self.history.id(), MenuAction::History),
             (self.settings.id(), MenuAction::Settings),
+            (self.update.id(), MenuAction::Update),
             (self.quit.id(), MenuAction::Quit),
         ]
         .into_iter()
@@ -146,6 +157,15 @@ impl Tray {
         self.open.set_text(if view.open { "Send the Aside" } else { "Open asides" });
         self.live.set_text(if view.open { "Frozen or Live" } else { "Open Live" });
         self.copy_last.set_enabled(view.has_last);
+        if let Some((text, enabled)) = &view.update {
+            self.update.set_text(menu_text(text));
+            self.update.set_enabled(*enabled);
+        }
+        if view.update.is_some() != self.update_shown {
+            let changed =
+                if self.update_shown { self.menu.remove(&self.update) } else { self.menu.insert(&self.update, 1) };
+            self.update_shown ^= changed.is_ok();
+        }
     }
 
     /// The settings changed: shortcuts, and what's on or off.

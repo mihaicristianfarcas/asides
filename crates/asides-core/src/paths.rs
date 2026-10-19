@@ -21,6 +21,11 @@ pub fn models_dir() -> PathBuf {
     support_dir().join("models")
 }
 
+/// Updates downloaded, and the logs of their installs: `~/Library/Caches/asides/updates/<version>`.
+pub fn updates_dir() -> PathBuf {
+    std::env::home_dir().expect("HOME is not set").join("Library/Caches").join(APP_NAME).join("updates")
+}
+
 /// Launch scripts for new sessions (each removes itself once it runs).
 pub fn launch_dir() -> PathBuf {
     std::env::temp_dir().join("asides-sessions")

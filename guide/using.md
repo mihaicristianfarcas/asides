@@ -100,6 +100,14 @@ closes it, `⌘Q` quits asides.
 The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds and
 naming pins on or off, and opens History or Settings.
 
+## Updates
+
+asides looks for a new version every 6 hours, downloads it, and installs it when it quits (General
+→ **Update automatically**). To install it now, click **Restart to update** at the bottom of the
+asides window's sidebar (or **Update to …** in the menu bar menu): asides reopens on the new
+version, then the sidebar offers **What's new**. **Check for Updates…** is in the asides menu.
+Copies built from source don't update themselves.
+
 ## The command
 
 | Command | |

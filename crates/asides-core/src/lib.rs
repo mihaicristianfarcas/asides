@@ -18,4 +18,5 @@ pub mod resample;
 pub mod sessions;
 pub mod state;
 pub mod takes;
+pub mod update;
 pub mod wispr;

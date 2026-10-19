@@ -56,6 +56,7 @@ crates/
     config.rs         config.toml schema and defaults
     models.rs         Whisper model catalog (sizes, SHA-256)
     resample.rs       resampling to 16 kHz
+    update.rs         updating asides: the feed, versions, the status shown, release notes
     paths.rs          bundle ID, URL scheme, paths
   asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
@@ -90,6 +91,7 @@ crates/
     elements.rs       what's under a pin: window list and accessibility tree
     stt.rs            model downloads, whisper-rs, language choice
     macos.rs          microphone permission, sounds, frontmost app, the command link
+    update.rs         the updater (check, download, verify), the swap script, Flow (its states)
 packaging/            Info.plist, icon, entitlements, Cloudflare Workers (download/, site/)
 scripts/              e2e, fixtures, signing, release, dmg, website images, icon
 docs/                 the website
@@ -112,6 +114,7 @@ Casks/asides.rb       the Homebrew cask (the repository is a tap)
 | Agent finder (launch) | the login shell's installed agents | `UserEvent::Agents` |
 | ScreenCaptureKit | screenshots → frames | `UserEvent::Captured` |
 | Overlay reader | the overlay's stdout | `UserEvent::Overlay` |
+| Updater | the feed, downloads into `~/Library/Caches/asides/updates` | `UserEvent::Update` |
 
 Background threads never touch AppKit (the pasteboard excepted); they send `UserEvent`s that
 `App::handle` runs on the main thread. The app writes overlay commands from the main thread.
@@ -162,6 +165,17 @@ latest reachable session is the default target (`sessions::latest`).
 `UserEvent::Delivered` records where it went (`Aside::record_delivery`) and flashes `[n]` or the
 error.
 
+### Updating
+
+The updater (`asides-app/src/update.rs`) reads `appcast.json` from the latest GitHub release
+(written by `release.sh`), 20 s after launch and every 6 hours with `auto_update`, or when asked
+(`asides://update`). A newer release is downloaded, checked (size and SHA-256, `codesign`, the same
+team and bundle ID, Gatekeeper, the version) and unpacked. `Flow` turns replies and clicks into
+`state.update`, which the window's sidebar and the menu show. When asides quits (or restarts for
+it), `update::install` starts a script in its own process group: it copies the update beside the
+app, waits for asides to exit, swaps them by renaming, and reopens asides. The new copy shows the
+notes it was handed (`Status::handed_over`) until they're seen (`whats_new_seen`).
+
 ## Invariants
 
 Break these only on purpose, and update this list.
@@ -190,6 +204,8 @@ Break these only on purpose, and update this list.
 15. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
     offscreen), following `style.rs`.
 16. **Each aside goes to one place**: a session, a new session, or the history.
+17. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
+    only once it has quit. Copies that aren't notarized never update themselves.
 
 ## Persistent state
 
@@ -197,10 +213,11 @@ Break these only on purpose, and update this list.
 |---|---|---|
 | `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
-| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside |
+| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen |
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |
+| `~/Library/Caches/asides/updates/<version>/` | updater | `staged/asides.app`, `install.sh`, `install.log`; removed once that version runs |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, overlay | a session's pixels, spec, result; removed on exit |
 | `~/Library/Application Support/Wispr Flow/flow.sqlite` | Wispr Flow | read-only, with `wispr_flow` on |
 
@@ -243,5 +260,8 @@ Break these only on purpose, and update this list.
   22 pt canvas (tray-icon's limit).
 - **Carbon hot keys**: no Accessibility needed.
 - **`/usr/local/bin` for the command**: on every shell's `PATH`; Homebrew links into its own `bin`.
+- **Updates trust Apple, as Diri's do**: Developer ID and notarization, checked on the download,
+  instead of Sparkle and a signing key of our own to keep. The feed is a release asset, so
+  publishing a release publishes the update.
 - **Wispr Flow through its database**, read with `/usr/bin/sqlite3`, columns discovered at run
   time.

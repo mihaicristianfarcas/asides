@@ -92,6 +92,16 @@ const ICONS: &[(&str, &str)] = &[
         icon(r#"<rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10h1M11.5 10h1M16 10h1M8 14h8"/>"#),
     ),
     ("minus", icon(r#"<path d="M5.5 12h13"/>"#)),
+    // Updates: one to download, one to restart into, what's new in it, one that failed.
+    ("download", icon(r#"<path d="M12 4.5v10M7.5 10.5 12 15l4.5-4.5M5 18.5h14"/>"#)),
+    ("restart", icon(r#"<path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/>"#)),
+    (
+        "sparkles",
+        icon(
+            r#"<path d="M10.5 4.5c.6 3.9 2.6 5.9 6.5 6.5-3.9.6-5.9 2.6-6.5 6.5-.6-3.9-2.6-5.9-6.5-6.5 3.9-.6 5.9-2.6 6.5-6.5z"/><path d="M18 14.5c.2 1.3.9 2 2.2 2.2-1.3.2-2 .9-2.2 2.2-.2-1.3-.9-2-2.2-2.2 1.3-.2 2-.9 2.2-2.2z"/>"#,
+        ),
+    ),
+    ("warning", icon(r#"<path d="M12 4.5 20.5 19h-17z"/><path d="M12 10v4M12 16.6v.1"/>"#)),
     // asides' mark: brackets around a point.
     ("mark", icon(r#"<path d="M8.5 4.5h-3v15h3M15.5 4.5h3v15h-3"/><circle cx="12" cy="12" r="1.6"/>"#)),
 ];

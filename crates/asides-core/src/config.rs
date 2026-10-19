@@ -16,6 +16,7 @@ const HEADER: &str = r#"# asides settings (the asides window changes every one o
 # languages: Whisper codes to choose between, e.g. ["en", "ro"]; [] detects any language (only the
 # multilingual models use them).
 # history_days: how long asides stay in ~/.asides/history; 0 keeps them.
+# auto_update: look for a new asides every 6 hours, download it, and install it when asides quits.
 # annotation_detail: how much each annotation says in an aside: "compact", "standard", "detailed"
 # or "forensic".
 # [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
@@ -46,6 +47,8 @@ pub struct Config {
     pub languages: Vec<String>,
     /// How many days the history keeps asides; 0 keeps them all.
     pub history_days: u32,
+    /// Look for a new asides every few hours, download it, and install it when asides quits.
+    pub auto_update: bool,
     /// Wispr Flow dictations made while the screen is frozen join the aside.
     pub wispr_flow: bool,
     /// How much asides puts in an aside about each annotation.
@@ -323,6 +326,7 @@ impl Default for Config {
             input_device: String::new(),
             languages: Vec::new(),
             history_days: 30,
+            auto_update: true,
             wispr_flow: false,
             annotation_detail: Detail::default(),
             measure: Measure::default(),

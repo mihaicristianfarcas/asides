@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::agents::AgentKind;
 use crate::paths::URL_SCHEME;
+use crate::update::Step;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Link {
@@ -34,6 +35,11 @@ pub enum Link {
     /// Downloads speech model `model` (`models::MODELS`).
     Download {
         model: String,
+        request: Option<String>,
+    },
+    /// asides' own update: look for one, install it (restarting), or what was shown, dismissed.
+    Update {
+        step: Step,
         request: Option<String>,
     },
     Quit,
@@ -79,6 +85,9 @@ impl Link {
                 }
                 Link::Download { model, .. } => {
                     q.append_pair("model", model);
+                }
+                Link::Update { step, .. } => {
+                    q.append_pair("step", step.as_str());
                 }
                 Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                     q.append_pair("wav", &wav.to_string_lossy());
@@ -126,6 +135,7 @@ impl Link {
                 request,
             }),
             "download" => Some(Link::Download { model: nonempty("model")?, request }),
+            "update" => Some(Link::Update { step: Step::parse(&get("step")?)?, request }),
             "quit" => Some(Link::Quit),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
@@ -152,6 +162,7 @@ impl Link {
             Link::Send { .. } => "send",
             Link::NewSession { .. } => "new-session",
             Link::Download { .. } => "download",
+            Link::Update { .. } => "update",
             Link::Quit => "quit",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
@@ -166,6 +177,7 @@ impl Link {
             | Link::Send { request, .. }
             | Link::NewSession { request, .. }
             | Link::Download { request, .. }
+            | Link::Update { request, .. }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
             Link::Quit => None,
@@ -195,6 +207,9 @@ mod tests {
             request: None,
         });
         round_trip(Link::Download { model: "small.en".into(), request: None });
+        for step in Step::ALL {
+            round_trip(Link::Update { step, request: Some("r3".into()) });
+        }
         round_trip(Link::Quit);
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
@@ -219,6 +234,7 @@ mod tests {
         assert_eq!(Link::parse(&Url::parse("asides://nope").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://send").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://send?id=").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://update?step=reboot").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://new-session?id=a&agent=cursor&dir=/x").unwrap()), None);
     }
 }

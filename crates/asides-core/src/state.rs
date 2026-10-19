@@ -44,6 +44,10 @@ pub struct AppState {
     /// Where the user put asides' pill: its center, as a fraction of the screen's width and height
     /// (`None`: at the top, in the middle).
     pub pill_at: Option<(f64, f64)>,
+    /// asides' own updates: the one found, its download, how the last check went, What's New.
+    pub update: crate::update::Status,
+    /// The newest version whose What's New the user saw (a fresh install starts at its own).
+    pub whats_new_seen: Option<String>,
     pub updated_ms: u64,
 }
 

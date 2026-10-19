@@ -33,6 +33,14 @@ multilingual one ([Settings](settings.md)).
 **A shortcut does nothing.** Another app may use it: pick another in Settings → General. macOS refuses
 shortcuts whose only modifiers are Option, or Option and Shift.
 
+**"Updates are off."** The reason follows: a copy built from source (not notarized), or one that
+isn't in an app, doesn't update itself. "asides can't write to …" means its folder isn't yours:
+download the new version from the website.
+
+**An update didn't install.** What happened is in
+`~/Library/Caches/asides/updates/<version>/install.log`; if anything failed, the old app stays.
+The update installs only once asides has quit.
+
 **macOS asks for the microphone after every update.** Your build is signed ad hoc. Run `make cert`
 once, or use an Apple Development or Developer ID certificate (see
 [CONTRIBUTING.md](../CONTRIBUTING.md)).

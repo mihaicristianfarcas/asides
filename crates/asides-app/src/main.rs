@@ -15,6 +15,7 @@ mod overlay;
 mod stt;
 mod terminal;
 mod tray;
+mod update;
 mod watch;
 mod worker;
 
@@ -43,6 +44,7 @@ use asides_core::paths;
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::{self as app_state, AppState};
 use asides_core::takes;
+use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
 use chrono::{DateTime, Local};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
@@ -61,6 +63,7 @@ use crate::macos::{CommandLink, Mic};
 use crate::overlay::{Message as OverlayMessage, Overlay, Standby};
 use crate::stt::{ModelManager, ModelState};
 use crate::tray::{MenuAction, Tray, View};
+use crate::update::{Flow, Next, Reply as UpdateReply, Request as UpdateRequest, Updater};
 use crate::worker::{AsideJob, CapturedImage, Job, Outcome, TranscribeJob};
 
 /// A press shorter than this on an annotation's microphone toggles it; longer, it talks until let go.
@@ -103,6 +106,8 @@ enum UserEvent {
     Captured(Result<Vec<Capture>, String>),
     /// What the overlay (its process id) said.
     Overlay(u32, OverlayMessage),
+    /// What the updater found, downloaded or couldn't do.
+    Update(UpdateReply),
 }
 
 struct Recording {
@@ -226,6 +231,13 @@ struct App {
     window: Option<Child>,
     /// The microphones, for the window's settings.
     input_devices: Vec<String>,
+    /// asides' own updates: the thread that checks and downloads, and where the update is.
+    updater: Option<Updater>,
+    updates: Flow,
+    /// asides restarts into the update as it quits (and opens the window again, if it was open).
+    restart: Option<bool>,
+    /// The newest version whose What's New the user saw.
+    whats_new_seen: String,
     quit_when_idle: bool,
     quit: bool,
 }
@@ -264,6 +276,7 @@ fn main() {
             Event::NewEvents(StartCause::Init) => app.init(),
             Event::Opened { urls } => urls.iter().for_each(|url| app.handle_link(url)),
             Event::UserEvent(event) => app.handle(event),
+            Event::LoopDestroyed => app.exit(),
             _ => {}
         }
         *control_flow = if app.quit {
@@ -291,6 +304,10 @@ impl App {
         });
         let previous = AppState::read(&paths::state_path()).unwrap_or_default();
         let model_state = models.state(&config.model);
+        // A fresh copy starts with its own What's New seen; one just updated is told what's new by
+        // the copy before it, until it checks.
+        let whats_new_seen = previous.whats_new_seen.clone().unwrap_or_else(|| Version::current().to_string());
+        let updates = Flow::new(UpdateStatus { notes: previous.update.handed_over(), ..UpdateStatus::default() });
         App {
             mtm,
             proxy,
@@ -334,6 +351,10 @@ impl App {
             overlay_tips_seen: previous.overlay_tips_seen,
             window: None,
             input_devices: audio::input_device_names(),
+            updater: None,
+            updates,
+            restart: None,
+            whats_new_seen,
             quit_when_idle: false,
             quit: false,
         }
@@ -369,6 +390,7 @@ impl App {
         self.prune_history();
         self.link_command();
         self.stand_by();
+        self.start_updater();
         self.refresh();
         self.publish();
     }
@@ -444,6 +466,7 @@ impl App {
                 self.fail(message);
             }
             UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
+            UserEvent::Update(reply) => self.on_update(reply),
         }
     }
 
@@ -462,6 +485,7 @@ impl App {
                 self.model_state = self.models.state(&self.config.model);
                 self.models.download(&self.config.model);
             }
+            Link::Update { step, .. } => self.update_step(step),
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                 #[cfg(feature = "dev-hooks")]
@@ -536,6 +560,7 @@ impl App {
             MenuAction::Identify => self.update_config(|c| c.measure.identify_elements = !c.measure.identify_elements),
             MenuAction::History => self.open_window_at(Some("history")),
             MenuAction::Settings => self.open_window_at(Some("general")),
+            MenuAction::Update => self.update_step(Step::Install),
             MenuAction::Quit => self.request_quit(),
         }
     }
@@ -1479,7 +1504,19 @@ impl App {
             (Mark::Letter, None, status)
         };
         let has_last = self.last_aside.is_some();
-        let view = View { mark, icon: icons.get(mark), title, status, open: self.overlay.is_some(), has_last };
+        let updating = &self.updates.status;
+        let version = updating.release.as_ref().map_or("", |r| r.version.as_str());
+        let update = match updating.phase {
+            Phase::Available => Some((format!("Update to {version}"), true)),
+            Phase::Downloading if self.updates.restarting_after_download() => {
+                Some((format!("Downloading {version}… {:.0}%", updating.progress * 100.0), false))
+            }
+            Phase::Ready => Some((format!("Restart to Update to {version}"), true)),
+            Phase::Installing => Some(("Restarting…".into(), false)),
+            _ => None,
+        };
+        let open = self.overlay.is_some();
+        let view = View { mark, icon: icons.get(mark), title, status, open, has_last, update };
         if let Some(tray) = &mut self.tray {
             tray.show(&view);
         }
@@ -1529,6 +1566,8 @@ impl App {
             command_link_declined: self.command_link_declined,
             overlay_tips_seen: self.overlay_tips_seen,
             pill_at: self.pill_at,
+            update: self.updates.status.clone(),
+            whats_new_seen: Some(self.whats_new_seen.clone()),
             updated_ms: history::now_ms(),
         };
         if let Err(err) = state.write(&paths::state_path()) {
@@ -1574,6 +1613,76 @@ impl App {
         }
     }
 
+    // --- Updating asides ---
+
+    /// Starts the updater: its first check comes sooner when this copy is new here (for its notes).
+    fn start_updater(&mut self) {
+        let new_here = Version::parse(&self.whats_new_seen).is_some_and(|seen| seen < Version::current());
+        let first = if new_here { Duration::from_secs(3) } else { asides_core::update::FIRST_CHECK };
+        let proxy = self.proxy.clone();
+        self.updater = Some(update::spawn(self.config.auto_update, first, move |reply| {
+            proxy.send_event(UserEvent::Update(reply)).is_ok()
+        }));
+    }
+
+    fn send_update(&self, request: UpdateRequest) {
+        if let Some(updater) = &self.updater {
+            updater.send(request);
+        }
+    }
+
+    fn on_update(&mut self, reply: UpdateReply) {
+        let next = self.updates.reply(reply, self.config.auto_update);
+        self.follow_update(next);
+        self.refresh();
+        self.publish();
+    }
+
+    /// What the window (or the menu) asked of the updater.
+    fn update_step(&mut self, step: Step) {
+        match step {
+            Step::Seen => self.whats_new_seen = Version::current().to_string(),
+            step => {
+                let next = self.updates.step(step);
+                self.follow_update(next);
+            }
+        }
+        self.refresh();
+    }
+
+    fn follow_update(&mut self, next: Vec<Next>) {
+        for next in next {
+            match next {
+                Next::Ask(request) => self.send_update(request),
+                Next::Restart => self.restart_into_update(),
+            }
+        }
+    }
+
+    /// Quits to swap the update in, and opens asides again (its window too, if it was open).
+    fn restart_into_update(&mut self) {
+        let window = self.window.as_mut().is_some_and(|w| w.try_wait().ok().flatten().is_none());
+        self.restart = Some(window);
+        self.updates.status.phase = Phase::Installing;
+        self.publish();
+        self.request_quit();
+    }
+
+    /// asides is quitting: the update downloaded goes in now. Asked for, asides opens again;
+    /// installed as asides quits (automatic updates), it stays closed.
+    fn exit(&mut self) {
+        let Some(staged) = self.updates.staged.take() else { return };
+        let reopen = match self.restart {
+            Some(true) => Some("asides://window"),
+            Some(false) => Some(""),
+            None if self.config.auto_update => None,
+            None => return,
+        };
+        if let Err(err) = update::install(&staged, reopen) {
+            eprintln!("asides: could not install {}: {err}", staged.release.version);
+        }
+    }
+
     /// The last aside, as Markdown with its screenshots' paths, on the clipboard.
     fn copy_last(&mut self) {
         match self.last_aside.as_ref().and_then(|id| history::find(&history::dir(), id)) {
@@ -1607,7 +1716,12 @@ impl App {
         let shortcuts_changed = config.shortcuts != self.config.shortcuts;
         let model_changed = config.model != self.config.model;
         let history_changed = config.history_days != self.config.history_days;
+        let auto_update_changed = config.auto_update != self.config.auto_update;
         self.config = config;
+        if auto_update_changed {
+            let next = self.updates.automatic(self.config.auto_update);
+            self.follow_update(next);
+        }
         if model_changed {
             self.model_state = self.models.state(&self.config.model);
             self.tell_overlay_model();

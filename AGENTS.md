@@ -144,6 +144,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   --data-format=LEI16@16000` fails: use `--file-format=WAVE`.
 - `git rev-parse --abbrev-ref HEAD` fails before the first commit: `git branch --show-current`.
 - `ditto -c -k` garbles diacritics in zip names: export uses the `zip` crate.
+- The updater refuses a release zip holding symlinks (`check_zip`): a framework in the bundle
+  (`Versions/Current`) would need that changed first.
 - macOS has no `timeout` (wait with a loop and `kill`), and its `grep` has no `\|` (`grep -E`).
 - `pgrep -f "<text>"` also matches the shell whose wait loop contains the text.
 - `launchctl setenv` reaches every app launched afterwards: `launchctl unsetenv` when done.

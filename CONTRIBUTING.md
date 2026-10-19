@@ -61,12 +61,15 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
   (`CLAUDE_CODE_CHILD_SESSION`…) to every shell, and Claude Code then stops saving transcripts.
 - **A release installed too** has the same bundle ID. The CLI talks to the app it ships in (or
   `ASIDES_APP`); opened from Spotlight, either may start. Quit the one you're not testing.
+- **Updates** are off in builds that aren't notarized (`make install`'s). To try one on a copy of a
+  release: `ASIDES_UPDATE_FEED=file:///…/appcast.json` points it at a feed of your own, and
+  `ASIDES_UPDATE_UNNOTARIZED=1` lets a build of yours update (to a notarized release only).
 
 ## Tests
 
 | Layer | Command | Covers |
 |---|---|---|
-| Unit | `make test` | history, sessions, delivery plans, messages, links, config, measuring, the overlay session, its rendering, the MCP server |
+| Unit | `make test` | history, sessions, delivery plans, messages, links, config, measuring, the overlay session, its rendering, the MCP server, updates (the feed, `Flow`, the swap script) |
 | Speech | `make test-speech` | transcribing the fixtures, a real model download |
 | End-to-end | `make e2e` | a dev-hooks build driven through the CLI with a history of its own: recordings, scripted sessions, Wispr Flow, sending to a stand-in agent (Diri, else Terminal), `asides mcp`. Restores your config and clipboard. |
 | Overlay | replays (below) | the real windows, driven by AppKit events, captured to PNGs |
@@ -130,6 +133,8 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Measuring**: distances, holds, guides, snapping, tolerance, units, copying, `R`.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
+- [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart
+  to update** reopens asides on it, with its window if it was open, and **What's new**.
 
 ## Common changes
 
@@ -180,12 +185,16 @@ Needs a Developer ID Application certificate.
 1. Once: create an app-specific password at [account.apple.com](https://account.apple.com), then
    `xcrun notarytool store-credentials asides-notary --apple-id <Apple ID> --team-id <Team ID>`
    (another name: `NOTARY_PROFILE`).
-2. Set the version in `Cargo.toml` (`[workspace.package]`).
-3. `make release`: builds, signs, notarizes and staples; writes `dist/asides-<version>.zip` and
-   `.dmg`, and the version and checksum into `Casks/asides.rb`.
+2. Set the version in `Cargo.toml` (`[workspace.package]`), and write the release notes in
+   `dist/notes-<version>.md` (Markdown, what changes for people: the app's What's New shows them).
+3. `make release`: builds, signs, notarizes and staples; writes `dist/asides-<version>.zip`,
+   `.dmg` and `appcast.json` (the update feed), and the version and checksum into `Casks/asides.rb`.
 4. `make publish-dmg`: uploads the disk image to the download link (Wrangler, logged in to
    Cloudflare).
-5. `git tag v<version> && git push --tags`, then `gh release create v<version> dist/asides-<version>.zip`.
+5. `git tag v<version> && git push --tags`, then `gh release create v<version>
+   dist/asides-<version>.zip dist/asides-<version>.dmg dist/appcast.json --notes-file
+   dist/notes-<version>.md` (`make release` prints it). Installed copies update from the latest
+   release's `appcast.json`, so it goes up with the zip it names.
 6. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
 
 ## The website

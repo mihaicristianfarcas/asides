@@ -14,6 +14,8 @@ cask "asides" do
     strategy :github_latest
   end
 
+  # asides updates itself (Settings → Updates); `brew upgrade --greedy` updates it too.
+  auto_updates true
   depends_on arch: :arm64
   depends_on macos: :sonoma
 

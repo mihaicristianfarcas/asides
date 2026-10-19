@@ -1,7 +1,9 @@
 //! The asides window (`asides-overlay --window`): History (every aside: what was sent where, sent
 //! again, copied, revealed, deleted), Sessions (the agent sessions asides go to, and where new ones
-//! start) and the settings (General, Keys, Voice, Pins), every one of them. The app starts it from its menu (and `asides`); a
-//! line `show` on standard input brings it back. Its look is `controls.rs`'.
+//! start) and the settings (General, Keys, Voice, Pins), every one of them; its foot says what
+//! asides is doing, or offers an update (one click installs it), then What's New. The app starts it
+//! from its menu (and `asides`); a line `show` on standard input brings it back. Its look is
+//! `controls.rs`'.
 //!
 //! It reads what the app publishes (`state.json`), the history (`~/.asides/history`) and the
 //! settings (`config.toml`, which the app reloads when it changes); what only the app can do (send,
@@ -26,6 +28,7 @@ use asides_core::models::{MODELS, ModelSpec};
 use asides_core::paths::{self, tilde};
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
+use asides_core::update::{self, Block, Notes, Phase, Span, Step};
 use chrono::{Local, TimeZone};
 use gpui::{
     AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
@@ -34,7 +37,10 @@ use gpui::{
     actions, div, img, point, prelude::*, px, size,
 };
 
-actions!(asides_window, [ShowHistory, ShowSessions, ShowSettings, QuitAsides, HideAsides, Minimize, CloseWindow]);
+actions!(
+    asides_window,
+    [ShowHistory, ShowSessions, ShowSettings, CheckForUpdates, QuitAsides, HideAsides, Minimize, CloseWindow]
+);
 
 use crate::controls::{
     Choice, Glide, Metrics, Radius, Theme, Type, button, chip, fade_in, floating, font, footnote, hex, icon,
@@ -58,6 +64,8 @@ enum Page {
     Keys,
     Voice,
     Pins,
+    /// What's new in this asides and the update found (not in the sidebar: its foot leads here).
+    WhatsNew,
 }
 
 impl Page {
@@ -69,6 +77,7 @@ impl Page {
             "keys" => Page::Keys,
             "voice" => Page::Voice,
             "pins" => Page::Pins,
+            "whats-new" => Page::WhatsNew,
             _ => return None,
         })
     }
@@ -190,6 +199,8 @@ pub struct AsidesWindow {
     fields: HashMap<&'static str, (Entity<TextInput>, String)>,
     /// The shortcut or key being recorded: the next key pressed.
     recording: Option<Recording>,
+    /// What's New was read, up to this version (told to the app once).
+    told_seen: Option<String>,
 }
 
 /// Opens the window; it quits when it's closed.
@@ -219,11 +230,15 @@ pub fn run() {
             cx.quit();
         });
         cx.on_action(|_: &HideAsides, cx| cx.hide());
+        cx.on_action(|_: &CheckForUpdates, _| {
+            let _ = send_link(&Link::Update { step: Step::Check, request: None });
+        });
         cx.set_menus(vec![
             Menu {
                 name: "asides".into(),
                 items: vec![
                     MenuItem::action("Settings…", ShowSettings),
+                    MenuItem::action("Check for Updates…", CheckForUpdates),
                     MenuItem::separator(),
                     MenuItem::action("Hide asides", HideAsides),
                     MenuItem::separator(),
@@ -318,6 +333,7 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
         (Page::Keys, "keys"),
         (Page::Voice, "voice"),
         (Page::Pins, "pins"),
+        (Page::WhatsNew, "whats-new"),
     ];
     cx.spawn(async move |cx| {
         for (theme, look) in [(Theme::dark(), "dark"), (Theme::light(), "light")] {
@@ -364,6 +380,7 @@ impl AsidesWindow {
             page_scroll: ScrollHandle::new(),
             fields: HashMap::new(),
             recording: None,
+            told_seen: None,
         };
         this.reload();
         this.selected = this.asides.first().map(|a| a.id.clone());
@@ -415,6 +432,12 @@ impl AsidesWindow {
             self.toast = None;
         }
         self.reload();
+        // What's New open: it's read.
+        let newest = self.state.update.unseen(self.state.whats_new_seen.as_deref()).first().map(|n| n.version.clone());
+        if self.page == Page::WhatsNew && newest.is_some() && newest != self.told_seen {
+            let _ = send_link(&Link::Update { step: Step::Seen, request: None });
+            self.told_seen = newest;
+        }
         cx.notify();
     }
 
@@ -663,6 +686,55 @@ fn ago(at: SystemTime) -> String {
     }
 }
 
+/// A release in What's New: its version and date (and a button), then its notes.
+fn release_card(t: Theme, notes: &Notes, action: Option<AnyElement>) -> AnyElement {
+    let date = notes
+        .published
+        .as_deref()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+        .map(|d| SharedString::from(d.format("%-d %B %Y").to_string()));
+    let head = div()
+        .px(px(12.))
+        .py(px(10.))
+        .flex()
+        .items_center()
+        .gap(px(16.))
+        .child(label_stack(format!("asides {}", notes.version), date, t))
+        .children(action);
+    let mut body = div().px(px(14.)).py(px(12.)).flex().flex_col().gap(px(8.)).line_height(px(19.));
+    for block in update::blocks(&notes.notes) {
+        body = body.child(match block {
+            Block::Heading(text) => div().pt(px(2.)).font_weight(FontWeight::SEMIBOLD).child(text),
+            Block::Paragraph(spans) => div().child(styled(spans, t)),
+            Block::Item(spans) => div()
+                .flex()
+                .gap(px(8.))
+                .child(div().flex_none().text_color(t.tertiary).child("•"))
+                .child(div().flex_1().min_w_0().child(styled(spans, t))),
+        });
+    }
+    rows([head.into_any_element(), body.into_any_element()], t).into_any_element()
+}
+
+/// Release notes' runs: bold as bold, code on a quiet fill.
+fn styled(spans: Vec<Span>, t: Theme) -> gpui::StyledText {
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+    for span in spans {
+        let start = text.len();
+        text.push_str(&span.text);
+        if span.bold || span.code {
+            let style = gpui::HighlightStyle {
+                font_weight: span.bold.then_some(FontWeight::SEMIBOLD),
+                background_color: span.code.then_some(t.control),
+                ..Default::default()
+            };
+            highlights.push((start..text.len(), style));
+        }
+    }
+    gpui::StyledText::new(text).with_highlights(highlights)
+}
+
 /// What asides is doing, as the sidebar's foot says it, and its color (an error stands out).
 fn status(state: &AppState, t: Theme) -> (String, Hsla) {
     let detail = || state.detail.clone().unwrap_or_default();
@@ -690,6 +762,7 @@ impl Render for AsidesWindow {
             Page::Keys => self.keys(cx),
             Page::Voice => self.voice(window, cx),
             Page::Pins => self.pins(window, cx),
+            Page::WhatsNew => self.whats_new(),
         };
         div()
             .track_focus(&self.focus)
@@ -795,7 +868,8 @@ impl AsidesWindow {
                 .text_color(t.tertiary)
                 .child(label)
         };
-        let (state, color) = status(&self.state, t);
+        // What's New isn't in the sidebar.
+        let selected = (current != Page::WhatsNew).then_some(current as usize);
         div()
             .flex_none()
             .w(px(Metrics::SIDEBAR))
@@ -815,7 +889,7 @@ impl AsidesWindow {
                     .flex_col()
                     .gap(px(2.))
                     .relative()
-                    .child(self.nav_glide.layer(Some(current as usize), t.selected, t.selected_stroke, Radius::ROW))
+                    .child(self.nav_glide.layer(selected, t.selected, t.selected_stroke, Radius::ROW))
                     .child(nav("nav-history", "History", "clock", Page::History, Some(self.asides.len()), cx))
                     .child(nav(
                         "nav-sessions",
@@ -831,10 +905,89 @@ impl AsidesWindow {
                     .child(nav("nav-voice", "Voice", "mic", Page::Voice, None, cx))
                     .child(nav("nav-pins", "Pins", "annotate", Page::Pins, None, cx)),
             )
-            .child(
-                // asides' version, or what it's doing when that's more than waiting.
-                div().flex_none().px(px(17.)).pb(px(14.)).text_size(px(12.)).text_color(color).truncate().child(state),
-            )
+            .child(self.foot(cx))
+            .into_any_element()
+    }
+
+    /// The sidebar's foot: what asides is doing; waiting, an update (one click installs it), then
+    /// What's New once it's in, else asides' version.
+    fn foot(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let update = &self.state.update;
+        let row = |id: &'static str| {
+            div()
+                .id(id)
+                .flex_none()
+                .mx(px(8.))
+                .mb(px(8.))
+                .h(px(Metrics::NAV_ROW))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .rounded(px(Radius::ROW))
+                .text_size(px(12.))
+        };
+        let idle = self.state.status == "idle";
+        if idle && update.shows() {
+            let step = update.click();
+            let (glyph, tint) = match update.phase {
+                Phase::Available => ("download", t.fresh),
+                Phase::Ready => ("restart", t.fresh),
+                Phase::Failed => ("warning", t.danger),
+                Phase::UpToDate => ("check", t.tertiary),
+                Phase::Installing => ("restart", t.tertiary),
+                _ => ("download", t.tertiary),
+            };
+            return row("update")
+                .child(icon(glyph, 14., tint))
+                .child(div().flex_1().min_w_0().truncate().text_color(tint).child(update.summary()))
+                .when_some(step, |d, step| {
+                    d.cursor_pointer().hover(|s| s.bg(t.hover)).on_click(move |_, _, _| {
+                        let _ = send_link(&Link::Update { step, request: None });
+                    })
+                })
+                .into_any_element();
+        }
+        if let (true, Some(newest)) = (idle, update.unseen(self.state.whats_new_seen.as_deref()).first()) {
+            return row("whats-new")
+                .group("whats-new")
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .on_click(cx.listener(|this, _, _, cx| this.go(Page::WhatsNew, cx)))
+                .child(icon("sparkles", 14., t.accent))
+                .child(div().flex_1().min_w_0().truncate().child(format!("What's new in {}", newest.version)))
+                .child(
+                    // Hovered, it can be put away unread.
+                    div()
+                        .id("whats-new-seen")
+                        .flex_none()
+                        .size(px(18.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(Radius::CHIP))
+                        .opacity(0.)
+                        .group_hover("whats-new", |s| s.opacity(1.))
+                        .hover(|s| s.bg(t.hover))
+                        .child(icon("close", 11., t.tertiary))
+                        .on_click(|_, _, cx| {
+                            cx.stop_propagation();
+                            let _ = send_link(&Link::Update { step: Step::Seen, request: None });
+                        }),
+                )
+                .into_any_element();
+        }
+        // asides' version, or what it's doing when that's more than waiting.
+        let (state, color) = status(&self.state, t);
+        div()
+            .flex_none()
+            .px(px(17.))
+            .pb(px(14.))
+            .text_size(px(12.))
+            .text_color(color)
+            .truncate()
+            .child(state)
             .into_any_element()
     }
 
@@ -1345,6 +1498,7 @@ impl AsidesWindow {
         let audio = self.setter(cx, |c, on| c.keep_audio = on);
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
+        let auto_update = self.setter(cx, |c, on| c.auto_update = on);
         let shortcut = |s: &str| if s.trim().is_empty() { Vec::new() } else { vec![pretty_shortcut(s)] };
         let open = self.recorder("record-asides", shortcut(&c.shortcuts.asides), Recording::Asides, cx);
         let freeze = self.recorder("record-freeze", shortcut(&c.shortcuts.freeze), Recording::Freeze, cx);
@@ -1430,6 +1584,20 @@ impl AsidesWindow {
                     )),
                 )
                 .child(
+                    section("Updates", t).child(rows(
+                        [
+                            setting(
+                                "Update automatically",
+                                Some("Looks for a new asides every 6 hours, downloads it, and installs it when asides quits."),
+                                switch("auto-update", c.auto_update, t).on_toggle(auto_update),
+                                t,
+                            ),
+                            self.update_row(cx),
+                        ],
+                        t,
+                    )),
+                )
+                .child(
                     section("Permissions", t)
                         .child(rows(
                             [
@@ -1442,6 +1610,91 @@ impl AsidesWindow {
                         ))
                         .child(footnote("macOS asks for each the first time asides needs it.", t)),
                 ),
+        )
+    }
+
+    /// asides' version, where its update is, and the button that moves it on.
+    fn update_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let update = &self.state.update;
+        let version = update.release.as_ref().map_or("", |r| r.version.as_str());
+        let detail = match update.phase {
+            Phase::Idle | Phase::UpToDate => match update.checked_ms {
+                Some(ms) => {
+                    format!("Up to date (checked {}).", ago(SystemTime::UNIX_EPOCH + Duration::from_millis(ms)))
+                }
+                None => "Not checked yet.".into(),
+            },
+            Phase::Available => format!("asides {version} is out."),
+            Phase::Ready => format!("asides {version} is ready: restart to update."),
+            _ => format!("{}.", update.summary().trim_end_matches('.')),
+        };
+        let step = |step: Step| {
+            move |_: &gpui::ClickEvent, _: &mut Window, _: &mut App| {
+                let _ = send_link(&Link::Update { step, request: None });
+            }
+        };
+        let main = match update.phase {
+            Phase::Available => button("update-now", "Update", t).accent().on_click(step(Step::Install)),
+            Phase::Ready => button("update-now", "Restart to Update", t).accent().on_click(step(Step::Install)),
+            phase => button("update-check", "Check Now", t)
+                .disabled(matches!(phase, Phase::Off | Phase::Checking | Phase::Downloading | Phase::Installing))
+                .on_click(step(Step::Check)),
+        };
+        let notes = !update.notes.is_empty() || update.release.is_some();
+        let whats_new = notes.then(|| {
+            button("whats-new", "What's New", t).on_click(cx.listener(|this, _, _, cx| this.go(Page::WhatsNew, cx)))
+        });
+        setting(
+            format!("asides {}", env!("CARGO_PKG_VERSION")),
+            Some(&detail),
+            div().flex().gap(px(8.)).children(whats_new).child(main),
+            t,
+        )
+    }
+
+    // --- What's New ---
+
+    /// The update found (with its button), then what came in this asides and the ones before.
+    fn whats_new(&mut self) -> AnyElement {
+        let t = self.theme;
+        let update = &self.state.update;
+        let pending = matches!(update.phase, Phase::Available | Phase::Downloading | Phase::Ready | Phase::Installing);
+        let offered = update.release.as_ref().filter(|_| pending).map(|release| {
+            let action = match update.phase {
+                Phase::Available => button("update-now", "Update", t).accent(),
+                Phase::Ready => button("update-now", "Restart to Update", t).accent(),
+                _ => button("update-now", update.summary(), t).disabled(true),
+            };
+            let action = action.on_click(|_, _, _| {
+                let _ = send_link(&Link::Update { step: Step::Install, request: None });
+            });
+            let title = if update.phase == Phase::Available { "Update available" } else { "Ready to install" };
+            section(title, t).child(release_card(t, release, Some(action.into_any_element())))
+        });
+        let installed: Vec<AnyElement> = update
+            .notes
+            .iter()
+            .enumerate()
+            .map(|(i, notes)| {
+                let title = if i == 0 && notes.version == env!("CARGO_PKG_VERSION") { "This version" } else { "" };
+                section(title, t).child(release_card(t, notes, None)).into_any_element()
+            })
+            .collect();
+        if offered.is_none() && installed.is_empty() {
+            return empty(t, "sparkles", "No release notes yet", "They show here once asides has looked for updates.");
+        }
+        page(
+            "whats-new",
+            &self.page_scroll,
+            t,
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(20.))
+                .child(page_header("What's new", Some(format!("asides {}", env!("CARGO_PKG_VERSION")).into()), t))
+                .children(offered)
+                .children(installed),
         )
     }
 

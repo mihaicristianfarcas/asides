@@ -11,6 +11,7 @@ model = "small.en"              # or "medium.en", "large-v3-turbo", "large-v3", 
 input_device = ""               # microphone name; "" is the system default
 languages = []                  # multilingual models: e.g. ["en", "ro"]
 history_days = 30               # 0 keeps asides forever
+auto_update = true              # look for updates every 6 hours, install them as asides quits
 wispr_flow = false              # Wispr Flow dictations made while frozen join the aside
 annotation_detail = "standard"  # "compact", "standard", "detailed" or "forensic"
 

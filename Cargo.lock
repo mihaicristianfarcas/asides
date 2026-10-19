@@ -286,6 +286,7 @@ dependencies = [
  "ureq",
  "url",
  "whisper-rs",
+ "zip",
 ]
 
 [[package]]

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds asides.app (with the CLI inside), signs it with a Developer ID certificate and a secure
 # timestamp, has Apple notarize it, staples the ticket, and zips it for a GitHub release and packs it
-# into a disk image for the website.
+# into a disk image for the website. Writes the update feed (dist/appcast.json, a release asset that
+# installed copies read) with the release notes, from dist/notes-<version>.md.
 #
 # One-time setup: store notarytool credentials under a profile name (an app-specific password from
 # account.apple.com), then run `make release`:
@@ -23,8 +24,15 @@ if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; the
     exit 1
 fi
 
-make bundle TIMESTAMP=--timestamp SIGN_ID="$IDENTITY"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+NOTES="dist/notes-$VERSION.md"
+if [ ! -s "$NOTES" ]; then
+    echo "Write the release notes first, in $NOTES: Markdown, what changes for people using asides." >&2
+    echo "asides shows them in What's New, and they're the GitHub release's notes." >&2
+    exit 1
+fi
+
+make bundle TIMESTAMP=--timestamp SIGN_ID="$IDENTITY"
 APP=dist/asides.app
 ZIP="dist/asides-$VERSION.zip"
 
@@ -50,7 +58,31 @@ SHA=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)
 sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/asides.rb
 # The website's download button serves a disk image of the same stapled app.
 scripts/make-dmg.sh "$APP" "dist/asides-$VERSION.dmg"
+
+# The update feed: this release, then the newest few before it, as published.
+REPO=mihaicristianfarcas/asides
+PUBLISHED=$(curl -fsL "https://github.com/$REPO/releases/latest/download/appcast.json" || echo '{"releases": []}')
+OLDEST_MACOS=$(plutil -extract LSMinimumSystemVersion raw packaging/Info.plist)
+python3 -I - "$REPO" "$VERSION" "$ZIP" "$SHA" "$OLDEST_MACOS" "$NOTES" "$PUBLISHED" >dist/appcast.json <<'PY'
+import datetime, json, os, sys
+repo, version, zip_path, sha, oldest_macos, notes, published = sys.argv[1:]
+release = {
+    "version": version,
+    "url": f"https://github.com/{repo}/releases/download/v{version}/{os.path.basename(zip_path)}",
+    "size": os.path.getsize(zip_path),
+    "sha256": sha,
+    "minimum_system_version": oldest_macos,
+    "published": datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
+    "notes": open(notes, encoding="utf-8").read().strip(),
+}
+before = [r for r in json.loads(published).get("releases", []) if r.get("version") != version]
+print(json.dumps({"releases": [release] + before[:4]}, indent=2, ensure_ascii=False))
+PY
+
 echo "SHA-256: $SHA"
-echo "Ready: $ZIP"
+echo "Ready: $ZIP, dist/asides-$VERSION.dmg and dist/appcast.json (the update feed)"
+echo "Publish all three in one release:"
+echo "  git tag v$VERSION && git push --tags"
+echo "  gh release create v$VERSION $ZIP dist/asides-$VERSION.dmg dist/appcast.json --title \"asides $VERSION\" --notes-file $NOTES"
 echo "Updated Casks/asides.rb; commit it after publishing the GitHub release."
 echo "Publish the disk image behind the website's download button with \`make publish-dmg\`."

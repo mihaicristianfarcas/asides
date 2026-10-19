@@ -6,8 +6,9 @@
   keeping it).
 - **asides** are kept in `~/.asides/history` (what was sent, its screenshots, where it went) and
   deleted after `history_days`.
-- **The network** is used for one thing: downloading the voice model from Hugging Face, when you
-  ask.
+- **The network** is used for two things: downloading the voice model from Hugging Face, when you
+  ask, and looking for updates on GitHub every 6 hours (turn off **Update automatically** to look
+  only when you ask). Neither sends anything about you or your asides.
 - **Your agent** gets each aside like anything you type, and may send it to its model provider.
 - **Wispr Flow**, when you turn the integration on: asides reads the history Wispr Flow keeps on your
   Mac. Wispr Flow itself transcribes under its own terms.
