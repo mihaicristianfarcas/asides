@@ -145,6 +145,20 @@ pub fn draw_now(views: &[usize]) {
     }
 }
 
+/// Runs `f` in one Core Animation transaction: the windows it moves or resizes and what it draws
+/// (`draw_now` presents within the transaction) reach the screen together.
+pub fn transaction<R>(f: impl FnOnce() -> R) -> R {
+    let class = AnyClass::get(c"CATransaction");
+    if let Some(class) = class {
+        let _: () = unsafe { msg_send![class, begin] };
+    }
+    let result = f();
+    if let Some(class) = class {
+        let _: () = unsafe { msg_send![class, commit] };
+    }
+    result
+}
+
 /// Shows the window; with `key`, it takes the keyboard too.
 pub fn show(pointer: usize, key: bool) {
     let Some(window) = view(pointer).and_then(|v| v.window()) else { return };

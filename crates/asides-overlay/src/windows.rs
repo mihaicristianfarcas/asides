@@ -381,7 +381,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     }
     if shown.is_some() {
         hide_pill(overlay, cx)?;
-        follow_toolbar(overlay, cx)?;
+        follow_toolbar(overlay, cx, None)?;
     }
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
@@ -438,14 +438,21 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
 fn prepare_toolbar(overlay: &Entity<Overlay>, toolbar: usize, cx: &mut AsyncApp) -> anyhow::Result<()> {
     native::pointer_moved(toolbar);
     native::draw_now(&[toolbar]);
-    follow_toolbar(overlay, cx).map(drop)
+    follow_toolbar(overlay, cx, None).map(drop)
 }
 
 /// The pill's window, following the pill at once (between the clock's ticks): it was just drawn at
 /// a new size (where the aside goes changed), or a toast waits for it. What goes with it on the
 /// frozen screen (`ScreenView::notes`) is drawn now too, so they change together.
 pub fn follow_now(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
-    let changed = follow_toolbar(overlay, cx).unwrap_or_else(|err| {
+    // A new name for where the aside goes shows as the window takes the pill's new width: the
+    // window is resized and drawn, the glass and what goes with the pill too, in one transaction.
+    native::transaction(|| follow_now_inside(overlay, cx));
+}
+
+fn follow_now_inside(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
+    let width = cx.update(|cx| overlay.update(cx, |o, cx| o.take_next_label(cx))).ok().flatten();
+    let changed = follow_toolbar(overlay, cx, width).unwrap_or_else(|err| {
         eprintln!("asides-overlay: {err:#}");
         false
     });
@@ -674,13 +681,19 @@ fn handed_back(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<b
 
 /// The pill's window: the pill where it goes (`pill_place`), under the pointer while it's moved,
 /// and the window as big as the pill and its list as drawn (`toolbar_frame`). macOS blurs what's
-/// behind them only (`native::set_glass`). Whether what goes with the pill moved.
-fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<bool> {
+/// behind them only (`native::set_glass`). With `width`, the pill's width about to be drawn (a new
+/// name), not as last drawn. Whether what goes with the pill moved.
+fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f64>) -> anyhow::Result<bool> {
     let state = cx.update(|cx| {
         let o = overlay.read(cx);
         let p = |v: gpui::Pixels| f32::from(v) as f64;
         let size = |b: Option<gpui::Bounds<gpui::Pixels>>| b.map(|b| (p(b.size.width), p(b.size.height)));
-        let (pill, whole) = (size(o.pill_bounds).unwrap_or(PILL_GUESS), size(o.toolbar_bounds));
+        let (mut pill, mut whole) = (size(o.pill_bounds).unwrap_or(PILL_GUESS), size(o.toolbar_bounds));
+        // About to be drawn wider or narrower (a new name): as it will be, with what's around it.
+        if let Some(width) = width {
+            whole = whole.map(|w| if (w.0 - pill.0).abs() < 1.0 { (width, w.1) } else { (w.0.max(width), w.1) });
+            pill.0 = width;
+        }
         // The pill and, open, its list (fading with it): where macOS blurs what's behind (in the
         // window's points).
         let rect = |b: gpui::Bounds<gpui::Pixels>| {
@@ -689,7 +702,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
         let (list, keys) = (o.list.shown(), o.keys_sheet.shown());
         let shapes: Shapes = o
             .pill_bounds
-            .map(|b| (rect(b), 12.0, 1.0))
+            .map(|b| (PtRect { width: pill.0, ..rect(b) }, 12.0, 1.0))
             .into_iter()
             .chain(o.list_bounds.filter(|_| list > 0.0).map(|b| (rect(b), 12.0, list as f64)))
             .chain(o.keys_bounds.filter(|_| keys > 0.0 && list == 0.0).map(|b| (rect(b), 12.0, keys as f64)))

@@ -255,6 +255,13 @@ pub struct Overlay {
     pub toast_waits: bool,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
+    /// Where the aside goes, as the pill shows it. Another (Tab, the list) is first drawn unseen
+    /// beside it, to know its width (`label_widths`: the one shown, the one to come): the pill's
+    /// window then takes the pill's new width (`pill_next`) as it draws it, in one go. Drawn first
+    /// in the old window, a longer name was cut off for a frame, and a shorter one moved.
+    pill_label: SharedString,
+    pub label_widths: (Option<f32>, Option<f32>),
+    pill_next: Option<f64>,
     /// The keys under the pill: shown (`?`, its button, the first freeze), or while the pointer is
     /// on its button; fading in and out.
     help: bool,
@@ -405,6 +412,9 @@ impl Overlay {
             toast: None,
             toast_waits: false,
             following: false,
+            pill_label: spec.targets.label(spec.targets.chosen.as_ref()).into(),
+            label_widths: (None, None),
+            pill_next: None,
             help: spec.tips && !spec.live,
             help_hover: false,
             keys_sheet: Fade::default(),
@@ -650,9 +660,30 @@ impl Overlay {
     /// goes), or a toast waits.
     pub fn drawn_pill(&mut self, bounds: Bounds<Pixels>) -> bool {
         self.pill_bounds = Some(bounds);
-        let follow = (!self.pill_fits() || self.toast_waits) && !self.following && self.shown.is_some();
+        let width = f64::from(f32::from(bounds.size.width));
+        let relabel = self.target_label() != self.pill_label;
+        if relabel && self.pill_next.is_none() {
+            // The pill's width with the name to come, both drawn just now.
+            let (shown, next) = self.label_widths;
+            self.pill_next = Some(width + f64::from(next.unwrap_or_default() - shown.unwrap_or_default()));
+        }
+        let follow = (relabel || !self.pill_fits() || self.toast_waits) && !self.following && self.shown.is_some();
         self.following |= follow;
         follow
+    }
+
+    /// Where the aside goes, as its name reads.
+    fn target_label(&self) -> SharedString {
+        self.spec.targets.label(self.target.as_ref()).into()
+    }
+
+    /// The name to come shows now, and the pill's width with it (for its window to take as it's
+    /// drawn).
+    pub fn take_next_label(&mut self, cx: &mut Context<Self>) -> Option<f64> {
+        let width = self.pill_next.take()?;
+        (self.pill_label, self.label_widths) = (self.target_label(), (None, None));
+        cx.notify();
+        Some(width)
     }
 
     /// The pill's window fits the pill as last drawn, and what goes with it is placed for it.
@@ -2310,7 +2341,23 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .child(div().max_w(px(240.)).truncate().child(o.spec.targets.label(o.target.as_ref())))
+                .relative()
+                .child(div().relative().max_w(px(240.)).truncate().child(o.pill_label.clone()).child({
+                    let o4 = overlay.clone();
+                    measured(move |b, cx| o4.update(cx, |o, _| o.label_widths.0 = Some(f32::from(b.size.width))))
+                }))
+                // The name to come, unseen, to know its width before it shows (`Overlay::pill_label`):
+                // in a row of the most it takes (absolute, it would take only the name's room).
+                .children((o.target_label() != o.pill_label).then(|| {
+                    let o5 = overlay.clone();
+                    div().absolute().top_0().left_0().w(px(240.)).flex().opacity(0.).child(
+                        div().relative().flex_none().max_w(px(240.)).truncate().child(o.target_label()).child(
+                            measured(move |b, cx| {
+                                o5.update(cx, |o, _| o.label_widths.1 = Some(f32::from(b.size.width)))
+                            }),
+                        ),
+                    )
+                }))
                 .into_any_element(),
             Box::new(|o, _, _| o.click_list()),
         ),
