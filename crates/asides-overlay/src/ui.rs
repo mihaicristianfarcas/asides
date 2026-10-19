@@ -22,8 +22,8 @@ use gpui::{
     AnyElement, AnyWindowHandle, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, Div, Entity,
     FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, ImageSource, KeyDownEvent, KeyUpEvent, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point,
-    Render, RenderImage, Rgba, SharedString, Window, canvas, deferred, div, img, point, prelude::*, px, quad, size,
-    svg, transparent_black,
+    Render, RenderImage, Rgba, ScrollHandle, SharedString, Window, canvas, deferred, div, img, point, prelude::*, px,
+    quad, size, svg, transparent_black,
 };
 
 use crate::controls::{Fade, Glide, fade_in};
@@ -269,6 +269,8 @@ pub struct Overlay {
     /// pointer leaves that and the list (since when it's away).
     list_hovered: bool,
     list_left_at: Option<Instant>,
+    /// Where its rows are scrolled to (its bar), past `LIST_ROWS_HEIGHT`.
+    list_scroll: ScrollHandle,
     /// The agent a new session starts (the list's chips).
     new_agent: AgentKind,
     /// Choose Folder… was clicked (the clock opens the panel, after the click), or its panel shows.
@@ -411,6 +413,7 @@ impl Overlay {
             list: Fade::default(),
             list_hovered: false,
             list_left_at: None,
+            list_scroll: ScrollHandle::new(),
             folder_asked: false,
             folder_panel: false,
             new_agent: spec.targets.agents.first().copied().unwrap_or(AgentKind::Claude),
@@ -2498,7 +2501,9 @@ enum Pick {
 }
 
 /// The pill's list, a menu under it: the sessions running (the ones asides can't type into, dimmed,
-/// with why), a new session (the agent, then the folder, or Choose Folder…), and History only.
+/// with why), a new session (the agent, then the folder, or Choose Folder…), and History only. Its
+/// rows keep their height (`flex_none`): past `LIST_ROWS_HEIGHT` it scrolls (a truncated line can
+/// shrink to nothing in a flex column, and with five sessions they overlapped).
 fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElement {
     let targets = &o.spec.targets;
     // Firmer than on a solid surface: what's behind shows through.
@@ -2508,6 +2513,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
         let pick = overlay.clone();
         div()
             .id(SharedString::from(id))
+            .flex_none()
             .flex()
             .items_center()
             .gap(px(8.))
@@ -2552,6 +2558,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     };
     let heading = |text: &str| {
         div()
+            .flex_none()
             .px(px(8.))
             .pt(px(6.))
             .pb(px(3.))
@@ -2560,7 +2567,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
             .text_color(tertiary)
             .child(text.to_string())
     };
-    let hairline = || div().h(px(1.)).mx(px(8.)).my(px(4.)).bg(color(0xffffff, 0.08)).into_any_element();
+    let hairline = || div().flex_none().h(px(1.)).mx(px(8.)).my(px(4.)).bg(color(0xffffff, 0.08)).into_any_element();
     let mut rows: Vec<AnyElement> = Vec::new();
     if !targets.sessions.is_empty() || targets.looking {
         rows.push(heading("Sessions").into_any_element());
@@ -2615,6 +2622,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
         });
         rows.push(
             div()
+                .flex_none()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -2709,11 +2717,13 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 .id("targets-rows")
                 .max_h(px(LIST_ROWS_HEIGHT as f32))
                 .overflow_y_scroll()
+                .track_scroll(&o.list_scroll)
                 .p(px(4.))
                 .flex()
                 .flex_col()
                 .children(rows),
         )
+        .child(crate::controls::scrollbar("targets-bar", &o.list_scroll, crate::controls::Theme::dark()))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.list_bounds = Some(bounds))))
         .into_any_element()
 }
