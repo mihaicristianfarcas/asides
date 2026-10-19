@@ -382,6 +382,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     if shown.is_some() {
         hide_pill(overlay, cx)?;
         follow_toolbar(overlay, cx, None)?;
+        redraw_undrawn(overlay, cx)?;
     }
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
@@ -394,6 +395,27 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         (false, true) => show_live(overlay, cx),
         (false, false) => show_frozen(overlay, cx),
     }
+}
+
+/// A new name or a toast waits, and the pill wasn't drawn since (`ui::UNDRAWN`): its window and the
+/// frozen screens are drawn now, and GPUI draws them on the display's frames again
+/// (`native::revive`). Pressing Tab fast, the pill once stopped changing until asides went live.
+fn redraw_undrawn(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let views = cx.update(|cx| {
+        overlay.update(cx, |o, _| {
+            let since = o.undrawn_since.filter(|since| since.elapsed() >= crate::ui::UNDRAWN)?;
+            // Once, until it's drawn: then again after as long.
+            o.undrawn_since = Some(Instant::now());
+            let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
+            let frozen = (o.shown == Some(false)).then(|| o.windows.iter().map(|w| w.view)).into_iter().flatten();
+            Some((toolbar.into_iter().chain(frozen).collect::<Vec<usize>>(), since))
+        })
+    })?;
+    let Some((views, since)) = views else { return Ok(()) };
+    let shown: Vec<bool> = views.iter().map(|&v| native::on_screen(v)).collect();
+    native::debug(&format!("redrawn: undrawn for {:?}, on screen {shown:?}", since.elapsed()));
+    native::revive(&views);
+    Ok(())
 }
 
 /// Frozen, the glass under surfaces that moved since, out of the screens' windows.
@@ -461,7 +483,12 @@ fn follow_now_inside(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
             o.following = false;
             let waited = std::mem::take(&mut o.toast_waits);
             if waited {
+                // The new toast takes the last one's place, in the same frame as the pill.
+                o.toast_shown = o.toast.as_ref().map(|(text, _)| text.clone());
                 cx.notify();
+            }
+            if width.is_some() || waited {
+                o.undrawn_since = None;
             }
             let frozen = o.shown == Some(false) && o.handoff.is_none();
             match (waited || changed) && frozen {
@@ -613,6 +640,8 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
             o.shown = Some(true);
             o.handoff = None;
             o.pill_hidden = false;
+            // The live screen shows: what was done on the frozen one goes in the aside.
+            o.keep_last();
         })
     })
 }
@@ -659,13 +688,7 @@ fn handed_back(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<b
     };
     let in_place = frames.iter().zip(&visible).all(|(f, v)| same(&native::visible_frame(*f), v));
     let is_back = !native::is_active() && in_place;
-    // Where the Dock shows (the visible part is short of a side other than the top, the menu
-    // bar's), it slides back in.
-    let dock = frames
-        .iter()
-        .zip(&visible)
-        .any(|(f, v)| v.y - f.y > 1.0 || v.x - f.x > 1.0 || (f.x + f.width) - (v.x + v.width) > 1.0);
-    let settle = if dock { HANDOFF_SETTLE_DOCK } else { HANDOFF_SETTLE };
+    let settle = settle(&frames, &visible);
     match (is_back, back) {
         (true, Some(at)) => Ok(at.elapsed() >= settle),
         (true, None) => {
@@ -677,6 +700,32 @@ fn handed_back(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<b
             Ok(false)
         }
     }
+}
+
+/// How long the frozen screens stay once the system is back (`HANDOFF_SETTLE`): where the Dock
+/// shows (the visible part of a screen is short of a side other than the top, the menu bar's), it
+/// slides back in first.
+fn settle(frames: &[PtRect], visible: &[PtRect]) -> Duration {
+    let dock = frames
+        .iter()
+        .zip(visible)
+        .any(|(f, v)| v.y - f.y > 1.0 || v.x - f.x > 1.0 || (f.x + f.width) - (v.x + v.width) > 1.0);
+    if dock { HANDOFF_SETTLE_DOCK } else { HANDOFF_SETTLE }
+}
+
+/// When the clock must look at the windows again: the frozen screens take the system over at the
+/// latest, or give way (settled, or at the latest), or the pill wasn't drawn with a new name or
+/// toast (`ui::UNDRAWN`). What they wait for otherwise wakes it (`ui::wake_clock`): the screens on
+/// screen, the user's app in front, the Dock and the menu bar back.
+pub fn deadline(o: &Overlay) -> Option<Instant> {
+    let over = o.taking_over.map(|since| since + TAKEOVER_TIMEOUT);
+    let handoff = o.handoff.as_ref().map(|h| {
+        let latest = h.since + HANDOFF_TIMEOUT;
+        let frames: Vec<PtRect> = o.spec().screens.iter().map(|s| s.frame).collect();
+        h.back.map_or(latest, |back| (back + settle(&frames, &o.visible)).min(latest))
+    });
+    let undrawn = o.undrawn_since.map(|since| since + crate::ui::UNDRAWN);
+    [over, handoff, undrawn].into_iter().flatten().min()
 }
 
 /// The pill's window: the pill where it goes (`pill_place`), under the pointer while it's moved,
@@ -700,6 +749,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
             PtRect::new(p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height))
         };
         let (list, keys) = (o.list.shown(), o.keys_sheet.shown());
+        let fades = (list, keys);
         let shapes: Shapes = o
             .pill_bounds
             .map(|b| (PtRect { width: pill.0, ..rect(b) }, 12.0, 1.0))
@@ -711,14 +761,27 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         o.toolbar_window.as_ref().map(|t| {
             let screens = spec.screens.clone();
             let place = (o.toolbar_at, o.toolbar_screen, o.pill_rect);
-            (t.view, pill, whole.unwrap_or(pill), shapes, o.moving_toolbar, place, screens, spec.windowed, sides)
+            let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades);
+            (t.view, pill, whole.unwrap_or(pill), shapes, moved, place, screens, spec.windowed, sides)
         })
     })?;
-    let Some((view, pill, whole, shapes, moving, (mut at, mut index, last), screens, windowed, sides)) = state else {
+    let Some((
+        view,
+        pill,
+        whole,
+        shapes,
+        (moving, grabbed, fades),
+        (mut at, mut index, last),
+        screens,
+        windowed,
+        sides,
+    )) = state
+    else {
         return Ok(false);
     };
     let Some(frame) = native::frame(view) else { return Ok(false) };
-    let (mut moved, mut let_go) = (false, false);
+    // Let go: the mouse-up came, or the button's up.
+    let (mut moved, mut let_go) = (false, grabbed && moving.is_none());
     if let Some((gx, gy)) = moving {
         if native::mouse_pressed() {
             // Its top-left corner, on the screen under the pointer.
@@ -769,11 +832,12 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
             if let Some(shapes) = glass {
                 o.glass_shapes = Some((shapes, (f.width, f.height)));
             }
+            o.glass_fades = fades;
             if moved {
                 (o.toolbar_at, o.toolbar_screen) = (at, index);
             }
             if let_go {
-                o.moving_toolbar = None;
+                (o.moving_toolbar, o.let_go) = (None, false);
                 o.placed_toolbar();
             }
             if changed {

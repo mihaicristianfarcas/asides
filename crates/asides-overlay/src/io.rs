@@ -62,7 +62,7 @@ pub fn threads() -> usize {
     std::thread::available_parallelism().map_or(1, |n| n.get()).min(8)
 }
 
-/// The app's commands, read on a thread. When the app goes away (standard input ends), the
+/// The app's commands, read on a thread (each wakes the clock). When the app goes away (standard input ends), the
 /// overlay closes, unless `close_on_end` is off (a development run).
 pub fn commands(close_on_end: bool) -> Receiver<Command> {
     let (tx, rx) = channel();
@@ -106,11 +106,13 @@ fn forward(lines: impl Iterator<Item = std::io::Result<String>>, tx: &Sender<Com
                 if tx.send(command).is_err() {
                     return;
                 }
+                crate::ui::wake_clock();
             }
             Err(err) => eprintln!("asides-overlay: ignored {line:?}: {err}"),
         }
     }
     if close_on_end {
         let _ = tx.send(Command::Close);
+        crate::ui::wake_clock();
     }
 }

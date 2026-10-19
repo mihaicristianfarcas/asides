@@ -195,7 +195,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   `handle.update` never told GPUI. Change windows outside updates, by their views (`native::show`,
   `set_frame`).
 - GPUI can't show, hide or move a window from inside that window's event: the overlay does it from
-  the clock (`windows::sync`).
+  the clock (`windows::sync`), which runs as things happen (`ui::wake_clock`), or right after
+  (`ui::follow_soon`).
 - An input event sent while its window updates is dropped: replays send between updates; focus the
   card's field with the `window` in hand.
 - `cx.open_window` with `show: true` shows before the first frame: open hidden. When nothing else
@@ -203,9 +204,15 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - A hidden window isn't drawn and shows its last frame when shown: `native::draw_now` draws first.
   Pop-ups fade showing old content: the overlay turns the animation off.
 - `RenderImage`s stay in the atlas until `Window::drop_image`: drop a freeze's once the next is drawn.
-- No `start_window_move` on macOS: the pill follows the mouse from the clock
-  (`windows::follow_toolbar`), which replays can't drive. `Window::dispatch_event` returns a private
-  type.
+- No `start_window_move` on macOS: the pill's window follows each mouse-drag event it gets
+  (`ui::dragged`; polled every 8 ms, it stuttered), which replays can't drive.
+  `Window::dispatch_event` returns a private type.
+- GPUI adds destination alpha (its pipelines' factor is one): anything half drawn over the window's
+  glass (a menu fading in) hid the blur first, a dark square. The window process makes them blend
+  "over" (`native::blend_alpha_over`).
+- GPUI draws a window on the display's frames, and stops for one macOS says is hidden until it says
+  it shows. Once, fast Tabs left the pill unchanged until asides went live: a name or toast not
+  drawn within `ui::UNDRAWN` draws it again (`native::revive`, logged to the debug log).
 - Changing a window's style mask (`native::make_overlay`) resets the first responder: keys arrive
   but typed text doesn't. Make GPUI's view first responder again (replays didn't show it).
 - Synthetic events: `mouseEventWithType…` has no button number (every click is left; send a
@@ -247,7 +254,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
   accessibility. `native::choose_folder` puts it above the frozen screens.
 - GPUI updates hover only on pointer moves inside a window: leaving the pill's window, `on_hover`
-  never hears it. What hovering opens there closes from the clock too (`Overlay::pointer_on_pill`).
+  never hears it. What hovering opens there closes as the pointer moves away: while it matters, the
+  overlay hears every pointer move (`native::watch_pointer`, `Overlay::pointer_on_pill`).
 - GPUI can't blur behind an element. The pill's window (and the asides window) is `Blurred`: GPUI
   puts an `NSVisualEffectView` beside its view in the window's content view, blurring the whole
   window; its `maskImage` keeps it to the pill's shapes (`native::set_glass`, again when the window

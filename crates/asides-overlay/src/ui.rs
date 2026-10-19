@@ -18,6 +18,7 @@ use asides_core::inspect::{Annotation, Axis, Element, Intent, Measurement, PtRec
 use asides_core::keys::{self, Chord, Mods};
 use asides_core::measure::{Frame, Tolerance};
 use asides_core::overlay::{MARKER, Part, Placed, Saved, Session, Tool, lookups, move_lookup};
+use futures::StreamExt;
 use gpui::{
     AnyElement, AnyWindowHandle, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, Div, Entity,
     FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, ImageSource, KeyDownEvent, KeyUpEvent, Modifiers,
@@ -31,11 +32,9 @@ use crate::export::{self, Exporter};
 use crate::input::TextInput;
 use crate::{finish, glass, io, style};
 
-/// How often the overlay looks at the app's commands and the clock.
-const TICK: Duration = Duration::from_millis(33);
-/// ...and while the frozen screens give way (whether the system is back with the user's app), the
-/// pill moves or its list fades.
-const HANDOFF_TICK: Duration = Duration::from_millis(8);
+/// A new name or a toast not drawn on the pill after this: its window is drawn again
+/// (`windows::sync`).
+pub const UNDRAWN: Duration = Duration::from_millis(150);
 const TOAST: Duration = Duration::from_millis(1600);
 /// A recording about an annotation ended: shown as being transcribed this long at most, until the
 /// app says it is (it doesn't for one too short to keep).
@@ -250,9 +249,13 @@ pub struct Overlay {
     card: Option<Card>,
     menu: Option<Menu>,
     /// A short message by the pill, and until when. It waits for the pill to be drawn as it is now
-    /// (`toast_waits`), and its window to fit it: placed under the pill as it was, it jumped.
-    toast: Option<(SharedString, Instant)>,
+    /// (`toast_waits`), and its window to fit it: placed under the pill as it was, it jumped. The
+    /// one shown (`toast_shown`) stays until then, and the new one takes its place.
+    pub toast: Option<(SharedString, Instant)>,
     pub toast_waits: bool,
+    pub toast_shown: Option<SharedString>,
+    /// Since when a new name or a toast waits for the pill to be drawn (`UNDRAWN`).
+    pub undrawn_since: Option<Instant>,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
     /// Where the aside goes, as the pill shows it. Another (Tab, the list) is first drawn unseen
@@ -331,6 +334,8 @@ pub struct Overlay {
     pub target_bounds: Option<Bounds<Pixels>>,
     pub keys_bounds: Option<Bounds<Pixels>>,
     pub glass_shapes: Option<(crate::windows::Shapes, (f64, f64))>,
+    /// How much of the list and of the keys showed then (fading, the glass behind them fades too).
+    pub glass_fades: (f32, f32),
     /// Where the pill is: its screen, and its frame there (points from the screen's top left), for
     /// what goes with it on the frozen screen (`ScreenView::notes`).
     pub pill_rect: Option<(usize, PtRect)>,
@@ -340,8 +345,10 @@ pub struct Overlay {
     pub list_up: bool,
     /// The pill is hidden with the rest (`Cmd::Hide`).
     pub pill_hidden: bool,
-    /// The pill being moved: where it was grabbed, from its top-left corner.
+    /// The pill being moved: where it was grabbed, from its top-left corner; and let go (macOS may
+    /// still say the button's down as the mouse-up comes).
     pub moving_toolbar: Option<(f64, f64)>,
+    pub let_go: bool,
     /// The keys still to show, the first time a screen freezes.
     tips: bool,
     /// Space down in a card: since when, and whether it's talking yet (`SPACE_HOLD`).
@@ -411,6 +418,8 @@ impl Overlay {
             menu: None,
             toast: None,
             toast_waits: false,
+            toast_shown: None,
+            undrawn_since: None,
             following: false,
             pill_label: spec.targets.label(spec.targets.chosen.as_ref()).into(),
             label_widths: (None, None),
@@ -455,11 +464,13 @@ impl Overlay {
             target_bounds: None,
             keys_bounds: None,
             glass_shapes: None,
+            glass_fades: (0.0, 0.0),
             pill_rect: None,
             list_left: false,
             list_up: false,
             pill_hidden: false,
             moving_toolbar: None,
+            let_go: false,
             tips: spec.tips && spec.live,
             space_hold: None,
             talked: spec.recording.is_some(),
@@ -564,7 +575,7 @@ impl Overlay {
     }
 
     /// The last freeze, kept for the aside if it isn't yet.
-    fn keep_last(&mut self) {
+    pub fn keep_last(&mut self) {
         if let Some(keeping) = self.keeping.take()
             && let Err(err) = self.keep(keeping, false, false)
         {
@@ -594,7 +605,7 @@ impl Overlay {
     fn grab_toolbar(&mut self, at: Point<Pixels>) {
         let origin = self.pill_bounds.map_or(at, |b| b.origin);
         self.moving_toolbar = Some((f64::from(f32::from(at.x - origin.x)), f64::from(f32::from(at.y - origin.y))));
-        self.hint = None;
+        (self.let_go, self.hint) = (false, None);
     }
 
     /// Opens or closes the pill's list, fading.
@@ -632,11 +643,6 @@ impl Overlay {
         changed
     }
 
-    /// The clock runs fast while the pill moves or what's under it fades.
-    pub fn animating(&self) -> bool {
-        self.moving_toolbar.is_some() || self.list.moving() || self.keys_sheet.moving()
-    }
-
     /// The name of the pill's button `id` under the pointer, by the pill. Leaving a button clears
     /// only its own name (whichever of the two GPUI tells first): going straight to the next one, the
     /// name changes without a gap. A press clears it, as a tooltip goes.
@@ -655,21 +661,32 @@ impl Overlay {
         cx.notify();
     }
 
-    /// The pill, just drawn (`bounds`, in its window): what goes with it waits for this. Whether its
-    /// window must follow it at once: drawn at a new size, it no longer fits (or isn't where it
-    /// goes), or a toast waits.
-    pub fn drawn_pill(&mut self, bounds: Bounds<Pixels>) -> bool {
+    /// The pill, just drawn (`bounds`, in its window): what goes with it waits for this. With a new
+    /// name to come, its width with it.
+    pub fn drawn_pill(&mut self, bounds: Bounds<Pixels>) {
         self.pill_bounds = Some(bounds);
-        let width = f64::from(f32::from(bounds.size.width));
-        let relabel = self.target_label() != self.pill_label;
-        if relabel && self.pill_next.is_none() {
+        if self.target_label() != self.pill_label && self.pill_next.is_none() {
             // The pill's width with the name to come, both drawn just now.
             let (shown, next) = self.label_widths;
+            let width = f64::from(f32::from(bounds.size.width));
             self.pill_next = Some(width + f64::from(next.unwrap_or_default() - shown.unwrap_or_default()));
         }
-        let follow = (relabel || !self.pill_fits() || self.toast_waits) && !self.following && self.shown.is_some();
-        self.following |= follow;
-        follow
+    }
+
+    /// The pill and what's under it, just drawn (`bounds`, in its window): whether its window must
+    /// follow at once (`windows::follow_now`). A new name to show, the pill or what's under it drawn
+    /// at a size the window isn't, the list or the keys fading (the glass behind them fades too), or a
+    /// toast waits.
+    pub fn drawn_toolbar(&mut self, bounds: Bounds<Pixels>) -> bool {
+        self.toolbar_bounds = Some(bounds);
+        let p = |v: Pixels| f64::from(f32::from(v));
+        let size = |v: Pixels| (p(v) + 2.0 * TOOLBAR_MARGIN).ceil();
+        let fits = self.glass_shapes.as_ref().is_some_and(|(_, (w, h))| {
+            (w - size(bounds.size.width)).abs() < 0.5 && (h - size(bounds.size.height)).abs() < 0.5
+        });
+        let fading = (self.list.shown(), self.keys_sheet.shown()) != self.glass_fades;
+        let relabel = self.target_label() != self.pill_label;
+        (relabel || !self.pill_fits() || !fits || fading || self.toast_waits) && self.shown.is_some()
     }
 
     /// Where the aside goes, as its name reads.
@@ -753,12 +770,14 @@ impl Overlay {
     fn toast(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + TOAST));
         self.toast_waits = true;
+        self.undrawn_since.get_or_insert_with(Instant::now);
     }
 
     /// A message the user must read (an error from the app): it stays longer.
     fn notice(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + NOTICE));
         self.toast_waits = true;
+        self.undrawn_since.get_or_insert_with(Instant::now);
     }
 
     /// Without a speech model there's nothing to listen with: the app is asked to download one (the
@@ -781,6 +800,7 @@ impl Overlay {
     /// Where the aside goes now.
     fn choose_target(&mut self, target: Target) {
         self.target = Some(target.clone());
+        self.undrawn_since.get_or_insert_with(Instant::now);
         self.chose_target = true;
         self.show_list(false);
         io::emit(&Event::Target { target });
@@ -1388,7 +1408,7 @@ impl Overlay {
             self.apply_command(command, cx);
         }
         if self.toast.as_ref().is_some_and(|(_, until)| Instant::now() > *until) {
-            self.toast = None;
+            (self.toast, self.toast_shown) = (None, None);
             changed = true;
         }
         let seconds = self.recording.map_or(0, |(s, at)| (s + at.elapsed().as_secs_f32()) as u32);
@@ -1403,9 +1423,6 @@ impl Overlay {
         if self.awaiting.is_some_and(|(_, at)| at.elapsed() >= AWAIT_TRANSCRIPT) {
             self.awaiting = None;
             changed = true;
-        }
-        if self.shown == Some(true) {
-            self.keep_last();
         }
         // GPUI isn't told when the pointer leaves the pill's window: the keys go with it, and the
         // list opened by pointing, a moment after.
@@ -1424,9 +1441,25 @@ impl Overlay {
             }
         }
         changed |= self.show_keys();
+        crate::native::watch_pointer(self.help_hover || (self.list_hovered && self.list.is_open()));
         if changed {
             cx.notify();
         }
+    }
+
+    /// When what shows next changes with time (the clock runs then, `run_clock`): a toast ends, the
+    /// recording's next second, Space held long enough to talk, a transcript waited for long enough,
+    /// the list opened by pointing closes.
+    pub fn due(&self) -> Option<Instant> {
+        let toast = self.toast.as_ref().map(|(_, until)| *until);
+        let second = self.recording.map(|(seconds, at)| {
+            let next = (seconds + at.elapsed().as_secs_f32()).floor() + 1.0;
+            at + Duration::from_secs_f32((next - seconds).max(0.0))
+        });
+        let space = self.space_hold.filter(|(_, talking)| !talking).map(|(since, _)| since + SPACE_HOLD);
+        let awaiting = self.awaiting.map(|(_, at)| at + AWAIT_TRANSCRIPT);
+        let linger = self.list_left_at.filter(|_| self.list_hovered).map(|at| at + LIST_LINGER);
+        [toast, second, space, awaiting, linger].into_iter().flatten().min()
     }
 
     /// The pointer is on where the aside goes, the list, or between them (always, in development
@@ -2848,16 +2881,49 @@ fn toolbar_panel(
                 })
                 // Grabbed anywhere but its buttons; they fill it, their corners inside its own.
                 .child(div().flex().items_center().gap(px(2.)).p(px(4.)).children(items))
-                .child(measured(move |bounds, cx| {
-                    if measure_pill.update(cx, |o, _| o.drawn_pill(bounds)) {
-                        let overlay = measure_pill.clone();
-                        cx.spawn(async move |cx| crate::windows::follow_now(&overlay, cx)).detach();
-                    }
-                })),
+                .child(measured(move |bounds, cx| measure_pill.update(cx, |o, _| o.drawn_pill(bounds)))),
         )
         .children(list)
-        .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.toolbar_bounds = Some(bounds))))
+        .child(measured(move |bounds, cx| {
+            if measure.update(cx, |o, _| o.drawn_toolbar(bounds)) {
+                follow_soon(&measure, cx);
+            }
+        }))
+        .child(dragged(overlay))
         .into_any_element()
+}
+
+/// The pill's window follows the pill at once (`windows::follow_now`), unless it's about to.
+fn follow_soon(overlay: &Entity<Overlay>, cx: &mut App) {
+    if overlay.update(cx, |o, _| !std::mem::replace(&mut o.following, true)) {
+        let overlay = overlay.clone();
+        cx.spawn(async move |cx| crate::windows::follow_now(&overlay, cx)).detach();
+    }
+}
+
+/// Grabbed, the pill moves with each move of the mouse, and stays where it's let go (macOS sends
+/// them to the window it was grabbed in, wherever the pointer is).
+fn dragged(overlay: &Entity<Overlay>) -> impl IntoElement {
+    let overlay = overlay.clone();
+    canvas(
+        |_, _, _| (),
+        move |_, _, window, _| {
+            let (moved, let_go) = (overlay.clone(), overlay.clone());
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble && moved.read(cx).moving_toolbar.is_some() {
+                    follow_soon(&moved, cx);
+                }
+            });
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
+                if phase == DispatchPhase::Bubble && let_go.read(cx).moving_toolbar.is_some() {
+                    let_go.update(cx, |o, _| o.let_go = true);
+                    follow_soon(&let_go, cx);
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 /// The pill's microphone: listening (a soft red, filling with how loud it hears) or not (crossed
@@ -3003,9 +3069,10 @@ impl ScreenView {
     /// under the pointer, the keys. Under it, or above it in the lower half of the screen.
     fn notes(&self, o: &Overlay, (ox, oy): (f64, f64), wh: f64) -> Option<AnyElement> {
         // Moving, they'd trail behind the pill (another window); drawn at a new size, they wait for
-        // its window to fit it, and a toast for the pill to be drawn as it is now.
+        // its window to fit it, and a new toast for the pill to be drawn as it is now (the last one
+        // shows until then).
         let (_, pill) = o.pill_rect.filter(|_| o.moving_toolbar.is_none() && o.pill_fits())?;
-        let toast = o.toast.as_ref().filter(|_| !o.toast_waits).map(|(t, _)| t.clone());
+        let toast = o.toast_shown.clone();
         let tip = (!o.keys_sheet.is_open() && !o.list.is_open())
             .then(|| o.hint.as_ref().map(|(_, name)| name.clone()))
             .flatten();
@@ -3254,29 +3321,60 @@ fn capitalized(s: &'static str) -> &'static str {
     }
 }
 
-/// The clock: every `TICK`, the app's commands and what changes with time, then the windows.
+/// What wakes the clock before its tick (`wake_clock`).
+static WAKE: std::sync::OnceLock<futures::channel::mpsc::UnboundedSender<()>> = std::sync::OnceLock::new();
+
+/// Something the clock looks at happened: the overlay changed, a command came from the app, or
+/// macOS says a window showed or hid, an app came to the front, the screens changed or the pointer
+/// moved (`native::on_system_changes`).
+pub fn wake_clock() {
+    if let Some(wake) = WAKE.get() {
+        let _ = wake.unbounded_send(());
+    }
+}
+
+/// The clock: the app's commands and what changes with time, then the windows. It runs when
+/// something happened (`wake_clock`) and when something is due (`Overlay::due`,
+/// `windows::deadline`), never on a timer of its own.
 pub fn run_clock(overlay: &Entity<Overlay>, cx: &mut App) {
+    let (wake, mut woken) = futures::channel::mpsc::unbounded();
+    let _ = WAKE.set(wake);
+    crate::native::on_system_changes(wake_clock);
+    // What changes the overlay may change its windows.
+    cx.observe(overlay, |_, _| wake_clock()).detach();
     // It keeps the overlay as long as the app runs (its windows open from here).
     let overlay = overlay.clone();
     cx.spawn(async move |cx| {
         loop {
+            if overlay.update(cx, |o, cx| o.tick(cx)).is_err() {
+                break;
+            }
             if let Err(err) = crate::windows::sync(&overlay, cx) {
                 eprintln!("asides-overlay: {err:#}");
                 break;
             }
             crate::windows::ask_folder(&overlay, cx);
-            // Handing the system back, the frozen screens give way as soon as it's back.
-            let handing = cx
+            // Only what's still to come: what was due and didn't change waits for something else.
+            let now = Instant::now();
+            let due = cx
                 .update(|cx| {
                     let o = overlay.read(cx);
-                    o.handoff.is_some() || o.taking_over.is_some()
+                    [o.due(), crate::windows::deadline(o)].into_iter().flatten().filter(|at| *at > now).min()
                 })
-                .unwrap_or_default();
-            let fast = handing || cx.update(|cx| overlay.read(cx).animating()).unwrap_or_default();
-            cx.background_executor().timer(if fast { HANDOFF_TICK } else { TICK }).await;
-            if overlay.update(cx, |o, cx| o.tick(cx)).is_err() {
+                .ok()
+                .flatten();
+            let woke = match due {
+                Some(at) => {
+                    let due = cx.background_executor().timer(at - now);
+                    futures::future::select(due, woken.next()).await;
+                    true
+                }
+                None => woken.next().await.is_some(),
+            };
+            if !woke {
                 break;
             }
+            while let Ok(()) = woken.try_recv() {}
         }
     })
     .detach();

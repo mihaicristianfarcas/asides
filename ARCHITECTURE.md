@@ -68,7 +68,7 @@ crates/
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
     window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins; setup
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
-    windows.rs        opening, showing and hiding the windows (from the clock); the pill's
+    windows.rs        opening, showing, hiding and moving the windows (the clock, as things happen)
     input.rs          the card's text field, and the area History edits Markdown in
     export.rs         images that leave it, drawn with AppKit
     finish.rs         result.json

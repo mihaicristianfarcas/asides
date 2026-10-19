@@ -493,6 +493,81 @@ pub fn blend_alpha_over() {
     let _ = ORIGINAL.set(unsafe { std::mem::transmute::<Imp, NewPipeline>(original) });
 }
 
+/// Calls `changed` when macOS says what the overlay waits on may have changed: one of its windows
+/// showed or hid, an app came to the front or went to the background, the screens changed (the
+/// Dock and the menu bar coming back change the part of a screen left to windows), or the pointer
+/// moved while `watch_pointer` asks.
+pub fn on_system_changes(changed: fn()) {
+    use objc2_app_kit::{
+        NSApplicationDidBecomeActiveNotification, NSApplicationDidChangeScreenParametersNotification,
+        NSApplicationDidResignActiveNotification, NSEventMask, NSWindowDidChangeOcclusionStateNotification,
+        NSWorkspaceDidActivateApplicationNotification,
+    };
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    use std::ptr::NonNull;
+    use std::sync::atomic::Ordering;
+
+    let notified = RcBlock::new(move |_: NonNull<NSNotification>| changed());
+    let center = NSNotificationCenter::defaultCenter();
+    let names = unsafe {
+        [
+            NSWindowDidChangeOcclusionStateNotification,
+            NSApplicationDidBecomeActiveNotification,
+            NSApplicationDidResignActiveNotification,
+            NSApplicationDidChangeScreenParametersNotification,
+        ]
+    };
+    for name in names {
+        std::mem::forget(unsafe {
+            center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &notified)
+        });
+    }
+    let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+    let name = unsafe { NSWorkspaceDidActivateApplicationNotification };
+    std::mem::forget(unsafe {
+        workspace.addObserverForName_object_queue_usingBlock(Some(name), None, None, &notified)
+    });
+    // The pointer, over the overlay's windows and over other apps'.
+    let moves = NSEventMask::MouseMoved | NSEventMask::LeftMouseDragged;
+    let local = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
+        if POINTER_WATCHED.load(Ordering::Relaxed) {
+            changed();
+        }
+        event.as_ptr()
+    });
+    std::mem::forget(unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(moves, &local) });
+    let global = RcBlock::new(move |_: NonNull<NSEvent>| {
+        if POINTER_WATCHED.load(Ordering::Relaxed) {
+            changed();
+        }
+    });
+    std::mem::forget(NSEvent::addGlobalMonitorForEventsMatchingMask_handler(moves, &global));
+}
+
+/// Whether the pointer's moves matter (`on_system_changes`): GPUI doesn't say when the pointer
+/// leaves a window, and the keys and the list opened by pointing close as it leaves the pill.
+static POINTER_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn watch_pointer(watched: bool) {
+    POINTER_WATCHED.store(watched, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Draws these windows now, and has GPUI draw them on the display's frames again: it stops for a
+/// window macOS says is hidden, until it says it shows (`windowDidChangeOcclusionState:`, which it
+/// asks again here).
+pub fn revive(views: &[usize]) {
+    let changed = objc2::sel!(windowDidChangeOcclusionState:);
+    for window in views.iter().filter_map(|&v| view(v)).filter_map(|v| v.window()) {
+        let Some(delegate) = window.delegate() else { continue };
+        let delegate: &AnyObject = delegate.as_ref();
+        let responds: bool = unsafe { msg_send![delegate, respondsToSelector: changed] };
+        if responds {
+            let _: () = unsafe { msg_send![delegate, windowDidChangeOcclusionState: std::ptr::null::<AnyObject>()] };
+        }
+    }
+    draw_now(views);
+}
+
 /// Development: logs when the app's activation, key window or the frontmost app change.
 pub fn debug_focus() {
     use std::sync::Mutex;
