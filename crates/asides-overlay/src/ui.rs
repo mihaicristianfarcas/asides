@@ -45,6 +45,9 @@ const CLOSE_AGAIN: Duration = Duration::from_millis(2500);
 /// In a card, Space held this long talks about its annotation; shorter, it types a space.
 const SPACE_HOLD: Duration = Duration::from_millis(300);
 const NOTICE: Duration = Duration::from_millis(5000);
+/// The pill's list, opened by pointing at where the aside goes, stays this long after the pointer
+/// leaves the name and the list.
+const LIST_LINGER: Duration = Duration::from_millis(200);
 const CARD_WIDTH: f64 = 440.0;
 /// The card's trash button and the gap before it.
 const TRASH_WIDTH: f64 = 34.0;
@@ -246,8 +249,12 @@ pub struct Overlay {
     opened: Instant,
     card: Option<Card>,
     menu: Option<Menu>,
-    /// A short message at the bottom, and until when.
+    /// A short message by the pill, and until when. It waits for the pill to be drawn as it is now
+    /// (`toast_waits`), and its window to fit it: placed under the pill as it was, it jumped.
     toast: Option<(SharedString, Instant)>,
+    pub toast_waits: bool,
+    /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
+    pub following: bool,
     /// The keys under the pill: shown (`?`, its button, the first freeze), or while the pointer is
     /// on its button; fading in and out.
     help: bool,
@@ -258,6 +265,10 @@ pub struct Overlay {
     chose_target: bool,
     /// The pill's list of sessions: open, or fading in or out.
     pub list: Fade,
+    /// It opened as the pointer came onto where the aside goes (not clicked): it closes once the
+    /// pointer leaves that and the list (since when it's away).
+    list_hovered: bool,
+    list_left_at: Option<Instant>,
     /// The agent a new session starts (the list's chips).
     new_agent: AgentKind,
     /// Choose Folder… was clicked (the clock opens the panel, after the click), or its panel shows.
@@ -307,6 +318,8 @@ pub struct Overlay {
     pub toolbar_bounds: Option<Bounds<Pixels>>,
     pub pill_bounds: Option<Bounds<Pixels>>,
     pub list_bounds: Option<Bounds<Pixels>>,
+    /// Where the aside goes, on the pill: pointed at, the list opens.
+    pub target_bounds: Option<Bounds<Pixels>>,
     pub keys_bounds: Option<Bounds<Pixels>>,
     pub glass_shapes: Option<(crate::windows::Shapes, (f64, f64))>,
     /// Where the pill is: its screen, and its frame there (points from the screen's top left), for
@@ -388,12 +401,16 @@ impl Overlay {
             card: None,
             menu: None,
             toast: None,
+            toast_waits: false,
+            following: false,
             help: spec.tips && !spec.live,
             help_hover: false,
             keys_sheet: Fade::default(),
             target: spec.targets.chosen.clone(),
             chose_target: false,
             list: Fade::default(),
+            list_hovered: false,
+            list_left_at: None,
             folder_asked: false,
             folder_panel: false,
             new_agent: spec.targets.agents.first().copied().unwrap_or(AgentKind::Claude),
@@ -422,6 +439,7 @@ impl Overlay {
             toolbar_bounds: None,
             pill_bounds: None,
             list_bounds: None,
+            target_bounds: None,
             keys_bounds: None,
             glass_shapes: None,
             pill_rect: None,
@@ -569,6 +587,27 @@ impl Overlay {
     /// Opens or closes the pill's list, fading.
     pub fn show_list(&mut self, open: bool) {
         self.list.set(open);
+        if !open {
+            (self.list_hovered, self.list_left_at) = (false, None);
+        }
+    }
+
+    /// The pointer came onto where the aside goes: the list opens, as the keys do on `?`, until the
+    /// pointer leaves it (`tick`). A click then keeps it open.
+    fn hover_list(&mut self) {
+        if !self.list.is_open() && self.moving_toolbar.is_none() {
+            self.show_list(true);
+            (self.list_hovered, self.help_hover) = (true, false);
+        }
+    }
+
+    /// Where the aside goes, clicked: the list opened by pointing stays; otherwise it opens or
+    /// closes.
+    fn click_list(&mut self) {
+        match self.list_hovered {
+            true => (self.list_hovered, self.list_left_at) = (false, None),
+            false => self.show_list(!self.list.is_open()),
+        }
     }
 
     /// The keys under the pill, as `help` and `help_hover` say (not over its list): whether that
@@ -594,7 +633,34 @@ impl Overlay {
         } else if self.hint.as_ref().is_some_and(|(shown, _)| *shown == id) {
             self.hint = None;
         }
+        // Where the aside goes opens the list; another button, opened so, closes it.
+        match (hovered, id) {
+            (true, "target") => self.hover_list(),
+            (true, _) if self.list_hovered => self.show_list(false),
+            _ => {}
+        }
         cx.notify();
+    }
+
+    /// The pill, just drawn (`bounds`, in its window): what goes with it waits for this. Whether its
+    /// window must follow it at once: drawn at a new size, it no longer fits (or isn't where it
+    /// goes), or a toast waits.
+    pub fn drawn_pill(&mut self, bounds: Bounds<Pixels>) -> bool {
+        self.pill_bounds = Some(bounds);
+        let follow = (!self.pill_fits() || self.toast_waits) && !self.following && self.shown.is_some();
+        self.following |= follow;
+        follow
+    }
+
+    /// The pill's window fits the pill as last drawn, and what goes with it is placed for it.
+    fn pill_fits(&self) -> bool {
+        let p = |v: Pixels| f64::from(f32::from(v));
+        match (self.pill_rect, self.pill_bounds) {
+            (Some((_, r)), Some(b)) => {
+                (r.width - p(b.size.width)).abs() < 0.5 && (r.height - p(b.size.height)).abs() < 0.5
+            }
+            _ => false,
+        }
     }
 
     /// The moved pill, remembered for next time.
@@ -652,11 +718,13 @@ impl Overlay {
 
     fn toast(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + TOAST));
+        self.toast_waits = true;
     }
 
     /// A message the user must read (an error from the app): it stays longer.
     fn notice(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + NOTICE));
+        self.toast_waits = true;
     }
 
     /// Without a speech model there's nothing to listen with: the app is asked to download one (the
@@ -1305,14 +1373,51 @@ impl Overlay {
         if self.shown == Some(true) {
             self.keep_last();
         }
-        // GPUI isn't told when the pointer leaves the pill's window: the keys go with it.
+        // GPUI isn't told when the pointer leaves the pill's window: the keys go with it, and the
+        // list opened by pointing, a moment after.
         if self.help_hover && !self.pointer_on_pill() {
             self.help_hover = false;
+        }
+        if self.list_hovered && self.list.is_open() {
+            match self.pointer_on_list() {
+                true => self.list_left_at = None,
+                false => {
+                    if self.list_left_at.get_or_insert_with(Instant::now).elapsed() >= LIST_LINGER {
+                        self.show_list(false);
+                        changed = true;
+                    }
+                }
+            }
         }
         changed |= self.show_keys();
         if changed {
             cx.notify();
         }
+    }
+
+    /// The pointer is on where the aside goes, the list, or between them (always, in development
+    /// windows).
+    fn pointer_on_list(&self) -> bool {
+        if self.spec.windowed.is_some() {
+            return true;
+        }
+        let view = self.toolbar_window.as_ref().map(|t| t.view);
+        let (Some(target), Some(list), Some(f)) =
+            (self.target_bounds, self.list_bounds, view.and_then(crate::native::frame))
+        else {
+            return false;
+        };
+        let (mx, my) = crate::native::mouse();
+        // In the window's points, from its top left, as GPUI lays it out.
+        let (x, y) = (mx - f.x, f.y + f.height - my);
+        let p = |v: Pixels| f64::from(f32::from(v));
+        let edges = |b: Bounds<Pixels>| (p(b.left()), p(b.top()), p(b.right()), p(b.bottom()));
+        let (t, l) = (edges(target), edges(list));
+        // Between them: the pill's padding and the gap, above the list or under it.
+        let bridge = (t.0.min(l.0), t.3.min(l.3), t.2.max(l.2), t.1.max(l.1));
+        let inside =
+            |(left, top, right, bottom): (f64, f64, f64, f64)| x >= left && x <= right && y >= top && y <= bottom;
+        inside(t) || inside(l) || inside(bridge)
     }
 
     /// The pointer is on the pill (always, in development windows: it's someone else's pointer).
@@ -2106,10 +2211,14 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     let still = o.moving_toolbar.is_none();
     // An icon (or short text) button; its name shows by the pill while the pointer is on it.
     let button = |id: &'static str, name: String, emphasis: Emphasis, content: AnyElement, on: Box<OnPress>| {
-        let (o1, o2) = (overlay.clone(), overlay.clone());
+        let (o1, o2, o3) = (overlay.clone(), overlay.clone(), overlay.clone());
         let name: SharedString = name.into();
         div()
             .id(id)
+            // Where the aside goes: pointed at, the list opens, and stays while the pointer is on it.
+            .when(id == "target", |d| {
+                d.relative().child(measured(move |b, cx| o3.update(cx, |o, _| o.target_bounds = Some(b))))
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -2167,6 +2276,10 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             let hovered = *hovered;
             hover.update(cx, |o, cx| {
                 o.help_hover = hovered && o.moving_toolbar.is_none();
+                if hovered && o.list_hovered {
+                    o.show_list(false);
+                    cx.notify();
+                }
                 if o.show_keys() {
                     cx.notify();
                 }
@@ -2196,7 +2309,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .gap(px(4.))
                 .child(div().max_w(px(240.)).truncate().child(o.spec.targets.label(o.target.as_ref())))
                 .into_any_element(),
-            Box::new(|o, _, _| o.show_list(!o.list.is_open())),
+            Box::new(|o, _, _| o.click_list()),
         ),
     ])];
     if !o.live && session.tool != Tool::Annotate {
@@ -2678,7 +2791,12 @@ fn toolbar_panel(
                 })
                 // Grabbed anywhere but its buttons; they fill it, their corners inside its own.
                 .child(div().flex().items_center().gap(px(2.)).p(px(4.)).children(items))
-                .child(measured(move |bounds, cx| measure_pill.update(cx, |o, _| o.pill_bounds = Some(bounds)))),
+                .child(measured(move |bounds, cx| {
+                    if measure_pill.update(cx, |o, _| o.drawn_pill(bounds)) {
+                        let overlay = measure_pill.clone();
+                        cx.spawn(async move |cx| crate::windows::follow_now(&overlay, cx)).detach();
+                    }
+                })),
         )
         .children(list)
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.toolbar_bounds = Some(bounds))))
@@ -2827,9 +2945,10 @@ impl ScreenView {
     /// What goes with the pill, by it (in its own window, above): a toast, the name of the button
     /// under the pointer, the keys. Under it, or above it in the lower half of the screen.
     fn notes(&self, o: &Overlay, (ox, oy): (f64, f64), wh: f64) -> Option<AnyElement> {
-        // Moving, they'd trail behind the pill (another window).
-        let (_, pill) = o.pill_rect.filter(|_| o.moving_toolbar.is_none())?;
-        let toast = o.toast.as_ref().map(|(t, _)| t.clone());
+        // Moving, they'd trail behind the pill (another window); drawn at a new size, they wait for
+        // its window to fit it, and a toast for the pill to be drawn as it is now.
+        let (_, pill) = o.pill_rect.filter(|_| o.moving_toolbar.is_none() && o.pill_fits())?;
+        let toast = o.toast.as_ref().filter(|_| !o.toast_waits).map(|(t, _)| t.clone());
         let tip = (!o.keys_sheet.is_open() && !o.list.is_open())
             .then(|| o.hint.as_ref().map(|(_, name)| name.clone()))
             .flatten();

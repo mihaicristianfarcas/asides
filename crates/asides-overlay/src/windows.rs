@@ -438,7 +438,32 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
 fn prepare_toolbar(overlay: &Entity<Overlay>, toolbar: usize, cx: &mut AsyncApp) -> anyhow::Result<()> {
     native::pointer_moved(toolbar);
     native::draw_now(&[toolbar]);
-    follow_toolbar(overlay, cx)
+    follow_toolbar(overlay, cx).map(drop)
+}
+
+/// The pill's window, following the pill at once (between the clock's ticks): it was just drawn at
+/// a new size (where the aside goes changed), or a toast waits for it. What goes with it on the
+/// frozen screen (`ScreenView::notes`) is drawn now too, so they change together.
+pub fn follow_now(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
+    let changed = follow_toolbar(overlay, cx).unwrap_or_else(|err| {
+        eprintln!("asides-overlay: {err:#}");
+        false
+    });
+    let screens = cx.update(|cx| {
+        overlay.update(cx, |o, cx| {
+            o.following = false;
+            let waited = std::mem::take(&mut o.toast_waits);
+            if waited {
+                cx.notify();
+            }
+            let frozen = o.shown == Some(false) && o.handoff.is_none();
+            match (waited || changed) && frozen {
+                true => o.windows.iter().map(|w| w.view).collect(),
+                false => Vec::new(),
+            }
+        })
+    });
+    native::draw_now(&screens.unwrap_or_default());
 }
 
 /// Choose Folder…: its panel, after the click that asked for it (`native::choose_folder`). Live,
@@ -649,8 +674,8 @@ fn handed_back(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<b
 
 /// The pill's window: the pill where it goes (`pill_place`), under the pointer while it's moved,
 /// and the window as big as the pill and its list as drawn (`toolbar_frame`). macOS blurs what's
-/// behind them only (`native::set_glass`).
-fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+/// behind them only (`native::set_glass`). Whether what goes with the pill moved.
+fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<bool> {
     let state = cx.update(|cx| {
         let o = overlay.read(cx);
         let p = |v: gpui::Pixels| f32::from(v) as f64;
@@ -677,9 +702,9 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
         })
     })?;
     let Some((view, pill, whole, shapes, moving, (mut at, mut index, last), screens, windowed, sides)) = state else {
-        return Ok(());
+        return Ok(false);
     };
-    let Some(frame) = native::frame(view) else { return Ok(()) };
+    let Some(frame) = native::frame(view) else { return Ok(false) };
     let (mut moved, mut let_go) = (false, false);
     if let Some((gx, gy)) = moving {
         if native::mouse_pressed() {
@@ -697,7 +722,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
             let_go = true;
         }
     }
-    let Some(screen) = screens.get(index) else { return Ok(()) };
+    let Some(screen) = screens.get(index) else { return Ok(false) };
     let place = pill_place(screen, windowed, at, pill);
     let (f, left, up) = toolbar_frame(screen, windowed, place, whole);
     // Where it shows is where it's kept: let go past an edge, it comes back there next time too.
@@ -747,5 +772,5 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Resul
     if resized || changed {
         native::draw_now(&[view]);
     }
-    Ok(())
+    Ok(changed)
 }

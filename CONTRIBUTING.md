@@ -112,7 +112,8 @@ Run what your change touches, and say in the pull request what you tried.
   naming the session; the mic red with a model, crossed out (click downloads) without.
 - [ ] **Pins**: click pins, drag pins an area, a pin's number opens its card, `⏎` closes it then
   sends; in a card Space types, held it talks.
-- [ ] **Pill**: `Tab` switches the session; its list shows sessions (unreachable dimmed), New
+- [ ] **Pill**: `Tab` switches the session, the toast under the pill without a jump; pointing at the
+  name opens its list (it closes as the pointer leaves), showing sessions (unreachable dimmed), New
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves
   it and it stays; `M`, `D`, `S` switch tools.
 - [ ] **Mic**: click mutes and unmutes; muted, Space held talks; the setting off opens muted.
