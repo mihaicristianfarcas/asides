@@ -38,10 +38,18 @@ pub struct Attachment {
 }
 
 impl Attachment {
+    /// Its screenshot, and its text: where it was (`**In:** …`) before the screenshot, the rest
+    /// (`**Measured** in pt`) after it.
     pub fn markdown(&self) -> String {
         let image = (!self.rel_path.is_empty()).then(|| format!("![{}]({})", self.label, self.rel_path));
-        let text = self.text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
-        image.into_iter().chain(text).collect::<Vec<_>>().join("\n\n")
+        let text = self.text.as_deref().map(str::trim).unwrap_or_default();
+        let (place, rest): (Vec<&str>, Vec<&str>) =
+            text.lines().partition(|line| image.is_some() && line.trim().starts_with(crate::inspect::PLACE));
+        [place.join("\n"), image.unwrap_or_default(), rest.join("\n").trim().to_string()]
+            .into_iter()
+            .filter(|block| !block.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// What it is in the message: a pin (its number), a measurement, or a block of its own.
@@ -499,6 +507,15 @@ mod tests {
         assert_eq!(
             compose_message(&segments, &[img(9.0, 1), text(9.5, "### 1. a")]),
             "First.\n\n![Screenshot 1](images/1.png)\n\n[1] Second.\n\n### 1. a"
+        );
+    }
+
+    #[test]
+    fn says_where_before_the_screenshot_of_it() {
+        let shot = Attachment { text: Some("**In:** diri\n**Measured** in pt".into()), ..img(0.5, 1) };
+        assert_eq!(
+            compose_message(&[], &[shot, text(1.0, "### 1. standard window")]),
+            "**In:** diri\n\n![Screenshot 1](images/1.png)\n\n**Measured** in pt\n\n### 1. standard window"
         );
     }
 
