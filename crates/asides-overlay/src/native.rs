@@ -10,17 +10,17 @@ use gpui::Window;
 use objc2::MainThreadMarker;
 use objc2::msg_send;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSApplicationPresentationOptions,
-    NSEvent, NSEventType, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSPanel, NSRunningApplication, NSScreen,
-    NSScreenSaverWindowLevel, NSView, NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSWorkspace,
+    NSBezierPath, NSColor, NSEvent, NSEventType, NSImage, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSPanel,
+    NSRunningApplication, NSScreen, NSScreenSaverWindowLevel, NSView, NSVisualEffectView, NSWindow,
+    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-/// Asides is a menu-bar app; GPUI makes its apps regular ones (a Dock icon, a menu bar).
+/// asides is a menu-bar app; GPUI makes its apps regular ones (a Dock icon, a menu bar).
 pub fn accessory() {
     if let Some(mtm) = MainThreadMarker::new() {
         NSApplication::sharedApplication(mtm).setActivationPolicy(NSApplicationActivationPolicy::Accessory);
@@ -96,13 +96,15 @@ pub fn make_overlay(window: &Window, frame: PtRect) -> (isize, usize) {
     (ns.windowNumber(), view)
 }
 
-/// Makes `window` the toolbar over the live screen at `frame` (AppKit's coordinates): a panel
-/// above other apps' windows, on every space, that never takes the keyboard from the app the user
-/// is working in. Returns its window number and view (for development replays).
+/// Makes `window` the pill's at `frame` (AppKit's coordinates): a panel above other apps' windows
+/// and the frozen screens, on every space, that never takes the keyboard from the app the user is
+/// working in, or from the frozen screen. Returns its window number and view (for development
+/// replays).
 pub fn make_toolbar(window: &Window, frame: PtRect) -> (isize, usize) {
     let view = view_pointer(window);
     let Some(ns) = native_window(window) else { return (0, view) };
     ns.setStyleMask(NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel);
+    ns.setLevel(NSScreenSaverWindowLevel + 1);
     ns.setAnimationBehavior(NSWindowAnimationBehavior::None);
     ns.setHasShadow(false);
     ns.setMovable(false);
@@ -169,6 +171,36 @@ pub fn hide(pointer: usize) {
 pub fn frame(pointer: usize) -> Option<PtRect> {
     let f = view(pointer)?.window()?.frame();
     Some(PtRect::new(f.origin.x, f.origin.y, f.size.width, f.size.height))
+}
+
+/// The pill's glass: the blur GPUI puts under its window's content (an `NSVisualEffectView`,
+/// `WindowBackgroundAppearance::Blurred`) shows only inside these rounded rectangles (in the view's
+/// points, from its top left; their radius and how much shows), so the window stays clear around
+/// them.
+pub fn set_glass(pointer: usize, shapes: &[(PtRect, f64, f64)]) {
+    let Some(v) = view(pointer) else { return };
+    // GPUI's view and the blur are both in the window's content view.
+    let Some(content) = v.window().and_then(|w| w.contentView()) else { return };
+    let subviews = content.subviews();
+    let Some(effect) = subviews.iter().find_map(|s| s.downcast::<NSVisualEffectView>().ok()) else { return };
+    let shapes = shapes.to_vec();
+    let draw = RcBlock::new(move |_: NSRect| {
+        for (r, radius, alpha) in &shapes {
+            NSColor::blackColor().colorWithAlphaComponent(*alpha).set();
+            let rect = NSRect::new(NSPoint::new(r.x, r.y), NSSize::new(r.width, r.height));
+            NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, *radius, *radius).fill();
+        }
+        Bool::YES
+    });
+    let mask = NSImage::imageWithSize_flipped_drawingHandler(effect.bounds().size, true, &draw);
+    effect.setMaskImage(Some(&mask));
+}
+
+/// Moves the window, the same size: nothing to draw again.
+pub fn move_to(pointer: usize, (x, y): (f64, f64)) {
+    if let Some(window) = view(pointer).and_then(|v| v.window()) {
+        window.setFrameOrigin(NSPoint::new(x, y));
+    }
 }
 
 pub fn set_frame(pointer: usize, frame: PtRect) {
@@ -279,7 +311,7 @@ pub fn choose_folder(start: Option<&Path>, done: impl FnOnce(Option<PathBuf>) + 
     if let Some(start) = start {
         panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(&start.to_string_lossy()))));
     }
-    panel.setLevel(NSScreenSaverWindowLevel + 1);
+    panel.setLevel(NSScreenSaverWindowLevel + 2);
     activate();
     let done = Cell::new(Some(done));
     let chosen = panel.clone();

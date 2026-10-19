@@ -1,10 +1,10 @@
 //! What's said during a Measure & Annotate session comes in takes (each press of the talk key, the
-//! microphone or the Asides shortcut held). When the session is done they're joined into one recording,
+//! microphone or the asides shortcut held). When the session is done they're joined into one recording,
 //! so what was said and what was annotated make one aside: the takes in order with a pause between
 //! them (each its own paragraph), and each moment of the session placed on that recording, so a
 //! annotation sits among what was said when it was made.
 
-use crate::markdown::Segment;
+use crate::markdown::{Segment, Word};
 use crate::resample::resample;
 
 /// The silence between two takes, longer than a paragraph break in the transcript.
@@ -99,7 +99,8 @@ pub fn fit_segments(segments: Vec<Segment>, takes: &[(f32, f32)]) -> Option<Vec<
             .map(|s| match takes.iter().max_by(|a, b| overlap(&s, a).total_cmp(&overlap(&s, b))) {
                 Some(&(start, length)) => {
                     let end = start + length;
-                    Segment { start: s.start.clamp(start, end), end: s.end.clamp(start, end), ..s }
+                    let words = s.words.into_iter().map(|w| Word { start: w.start.clamp(start, end), ..w }).collect();
+                    Segment { start: s.start.clamp(start, end), end: s.end.clamp(start, end), words, ..s }
                 }
                 None => s,
             })
@@ -110,7 +111,7 @@ pub fn fit_segments(segments: Vec<Segment>, takes: &[(f32, f32)]) -> Option<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markdown::{Attachment, compose_entry};
+    use crate::markdown::{Attachment, compose_message};
 
     #[test]
     fn joins_takes_with_a_pause_and_places_moments() {
@@ -133,7 +134,7 @@ mod tests {
     }
 
     fn said(start: f32, end: f32, text: &str) -> Segment {
-        Segment { start, end, text: text.into() }
+        Segment { start, end, text: text.into(), words: Vec::new() }
     }
 
     #[test]
@@ -145,8 +146,7 @@ mod tests {
         assert_eq!(times, [(0.0, 4.0), (6.0, 9.0)]);
         // Where the user was when the second began goes before what they said in it.
         let place = Attachment { offset: 6.0, text: Some("**In:** Calculator".into()), ..Attachment::default() };
-        let entry = compose_entry(1, "10:21", None, &fitted, &[place]);
-        assert_eq!(entry, "## 1 · 10:21\n\nOne.\n\n**In:** Calculator\n\nTwo.");
+        assert_eq!(compose_message(&fitted, &[place]), "One.\n\n**In:** Calculator\n\nTwo.");
         // One segment across both: they have to be transcribed apart.
         assert_eq!(fit_segments(vec![said(1.0, 8.0, "x")], &takes), None);
         assert!(fit_segments(vec![said(0.0, 4.3, "x"), said(5.8, 9.0, "y")], &takes).is_some());

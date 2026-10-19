@@ -13,9 +13,13 @@
 //! answers the overlay's pending lookups as the app would (frames in global points), `answers`
 //! answers them one each, oldest first (an arrow's two ends), and
 //! `{"recording": 14}` says a recording is 14 s in (`"card": true`: for the open card's annotation),
+//! `{"level": 0.4}` how loud the microphone hears,
 //! `{"transcribing": true}` that what was said about it is being transcribed, and `{"said": "…"}`
-//! that it was, as the app would. `"toolbar": true` sends a step to the live toolbar's window, and
-//! `{"frozen": true}` answers a freeze with the spec's screens, as the app would.
+//! that it was, as the app would. `"toolbar": true` sends a step to the pill's window (in its points),
+//! `{"toggle": true}` is ⌃⌥P (live, or frozen again) and `{"frozen": true}` answers a freeze with
+//! the spec's screens, as the app would. A capture is
+//! of where a screen's window is, as it shows (the pill above it; live, what's on screen there), or
+//! of the pill's window alone (`"toolbar": true`, or opened live).
 
 use std::time::Duration;
 
@@ -53,12 +57,16 @@ struct Step {
     recording: Option<f32>,
     /// ...for the open card's annotation.
     card: bool,
+    /// How loud the microphone hears (0 to 1).
+    level: Option<f32>,
     /// What was said about the open card's annotation is being transcribed...
     transcribing: bool,
     /// ...and here it is.
     said: Option<String>,
-    /// To the live toolbar's window.
+    /// To the pill's window.
     toolbar: bool,
+    /// ⌃⌥P, as the app passes it on.
+    toggle: bool,
     /// The app froze the screens (the spec's).
     frozen: bool,
     capture: Option<String>,
@@ -125,6 +133,9 @@ fn send(view: usize, offset: (f64, f64), step: &Step) {
 }
 
 fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
+    if step.toggle {
+        overlay.update(cx, |o, cx| o.apply_command(Command::ToggleFreeze, cx));
+    }
     if step.frozen {
         let screens = overlay.read(cx).spec().screens.clone();
         overlay.update(cx, |o, cx| o.apply_command(Command::Frozen { screens }, cx));
@@ -138,6 +149,9 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
     if let Some(seconds) = step.recording {
         let annotation = step.card.then(|| overlay.read(cx).card_key()).flatten();
         overlay.update(cx, |o, cx| o.apply_command(Command::Recording { seconds: Some(seconds), annotation }, cx));
+    }
+    if let Some(level) = step.level {
+        overlay.update(cx, |o, cx| o.apply_command(Command::Level { level }, cx));
     }
     if (step.transcribing || step.said.is_some())
         && let Some(annotation) = overlay.read(cx).card_key()
@@ -155,13 +169,18 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
     }
     if let Some(path) = &step.capture {
         let o = overlay.read(cx);
-        let window = if o.live { o.toolbar_window.as_ref() } else { o.windows.get(step.screen) };
-        let number = window.map_or(0, |w| w.number);
-        let path = overlay.read(cx).dir().join(path);
-        let status = std::process::Command::new("screencapture")
-            .args(["-x", "-o", "-l", &number.to_string()])
-            .arg(&path)
-            .status();
+        let mut args = vec!["-x".to_string(), "-o".into()];
+        // Where the screen's window is, in global points from the main screen's top left.
+        let main = crate::native::screens().into_iter().find(|(_, f)| f.x == 0.0 && f.y == 0.0).map(|(_, f)| f.height);
+        let rect = o.windows.get(step.screen).and_then(|w| crate::native::frame(w.view)).zip(main);
+        match rect {
+            Some((f, main)) if !step.toolbar => {
+                args.extend(["-R".into(), format!("{},{},{},{}", f.x, main - f.y - f.height, f.width, f.height)]);
+            }
+            _ => args.extend(["-l".into(), o.toolbar_window.as_ref().map_or(0, |w| w.number).to_string()]),
+        }
+        let path = o.dir().join(path);
+        let status = std::process::Command::new("screencapture").args(&args).arg(&path).status();
         eprintln!("captured {} ({status:?})", path.display());
     }
 }

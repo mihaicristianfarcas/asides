@@ -20,4 +20,4 @@ labels: bug
 - Output of `asides status`:
 - Voice model (Settings):
 
-<!-- Asides and audio can contain private information: share only the relevant excerpt. -->
+<!-- asides and audio can contain private information: share only the relevant excerpt. -->

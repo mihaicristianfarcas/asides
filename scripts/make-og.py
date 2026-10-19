@@ -39,12 +39,11 @@ device = replace(device, '<p class="you aside">', '<p class="you aside" hidden>'
 device = replace(device, '<p class="reply">', '<p class="reply" hidden>')
 device = replace(device, '<div class="pill">', '<div class="pill on">')
 device = replace(device, '<span class="time">0:00</span>', '<span class="time">0:07</span>')
-device = replace(device, '<div class="outline o1">', '<div class="outline o1 on">')
 device = replace(device, '<div class="pin p1">', '<div class="pin p1 on">')
 device = replace(device, '<div class="pointer">', '<div class="pointer on">')
 device = replace(device, '<p class="say" aria-live="polite"></p>', f'<p class="say">{words}</p>')
 
-# The outline, the pin and the pointer go on the card, wherever the page's styles put it (on the
+# The pin and the pointer go on the card, wherever the page's styles put it (on the
 # desktop's 1024-unit grid, as the page's demo places them).
 place = """<script>
 const desk = document.querySelector('.desk');
@@ -53,7 +52,6 @@ const r = desk.querySelector('.card').getBoundingClientRect();
 const k = 1024 / d.width;
 const [x, y, w, h] = [(r.left - d.left) * k, (r.top - d.top) * k, r.width * k, r.height * k];
 const set = (sel, props) => Object.entries(props).forEach(([p, v]) => desk.querySelector(sel).style.setProperty(p, v));
-set('.o1', { '--x': x - 3, '--y': y - 3, '--w': w + 6, '--h': h + 6 });
 set('.p1', { '--x': x + 0.62 * w, '--y': y + 0.06 * h });
 set('.pointer', { '--x': x + 0.8 * w, '--y': y + 0.3 * h });
 </script>"""

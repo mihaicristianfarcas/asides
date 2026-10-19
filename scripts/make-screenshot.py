@@ -1,4 +1,4 @@
-"""Renders guide/overlay.png, the README's picture of Asides: the real overlay, over the website demo's
+"""Renders guide/overlay.png, the README's picture of asides: the real overlay, over the website demo's
 checkout page, with two pins, a measurement and the pill recording.
 
 The screen is the demo's desktop from docs/index.html (rendered with Firefox); the overlay is

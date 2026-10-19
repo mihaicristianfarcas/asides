@@ -3,15 +3,15 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Asides</string>
+	<string>asides</string>
 	<key>CFBundleDisplayName</key>
-	<string>Asides</string>
+	<string>asides</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.mihaicristianfarcas.asides</string>
 	<key>CFBundleExecutable</key>
-	<string>Asides</string>
+	<string>asides-app</string>
 	<key>CFBundleIconFile</key>
-	<string>Asides</string>
+	<string>asides</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleVersion</key>
@@ -25,9 +25,9 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Asides records you while you describe a bug and transcribes it locally, on this Mac.</string>
+	<string>asides records you while you describe a bug and transcribes it locally, on this Mac.</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Asides opens the coding agents you start from its menu in a new tab of your terminal, instead of a new window.</string>
+	<string>asides opens the coding agents you start from its menu in a new tab of your terminal, instead of a new window.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

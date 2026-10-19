@@ -1,11 +1,10 @@
 # Settings
 
-Most are in the Asides window. All of them are in
-`~/Library/Application Support/Asides/config.toml` (Settings → Edit shortcuts and more…), applied
-as soon as you save. The defaults:
+All of them are in the asides window, and in
+`~/Library/Application Support/asides/config.toml`, applied as soon as you save. The defaults:
 
 ```toml
-mic_on_open = true              # listen as soon as Asides opens
+mic_on_open = true              # listen as soon as asides opens
 sounds = true
 keep_audio = false              # keep an .m4a of what you said with each aside
 model = "small.en"              # or "medium.en", "large-v3-turbo", "large-v3", "small" (see below)

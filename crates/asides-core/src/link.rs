@@ -1,4 +1,4 @@
-//! `asides://` links: how the CLI and the Asides window talk to the running menu-bar app (via
+//! `asides://` links: how the CLI and the asides window talk to the running menu-bar app (via
 //! `open`).
 
 use std::path::PathBuf;
@@ -10,11 +10,11 @@ use crate::paths::URL_SCHEME;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Link {
-    /// Opens Asides frozen, as `⌃⌥Space` does; while it's open, sends the aside.
+    /// Opens asides frozen, as `⌃⌥Space` does; while it's open, sends the aside.
     Open {
         request: Option<String>,
     },
-    /// Opens the Asides window (History, Sessions, Settings).
+    /// Opens the asides window (History, Sessions, Settings).
     Window {
         request: Option<String>,
     },
@@ -37,18 +37,18 @@ pub enum Link {
         request: Option<String>,
     },
     Quit,
-    /// Development hook: process `wav` as if it had just been recorded (outside Asides, an aside of
+    /// Development hook: process `wav` as if it had just been recorded (outside asides, an aside of
     /// its own, sent to session `to`, or kept in the history only).
     Simulate {
         wav: PathBuf,
         image: Option<PathBuf>,
         image_at: f32,
-        /// Said about this annotation of the open Asides session (its key).
+        /// Said about this annotation of the open asides session (its key).
         annotation: Option<u32>,
         to: Option<String>,
         request: Option<String>,
     },
-    /// Development hook: runs an Asides session on `image` (instead of the screen), driven by
+    /// Development hook: runs an asides session on `image` (instead of the screen), driven by
     /// `script` (a JSON file of actions), and sends the result to session `to` (or keeps it in the
     /// history only), as the user would.
     SimulateMeasure {

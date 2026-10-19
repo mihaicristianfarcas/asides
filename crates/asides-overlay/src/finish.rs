@@ -7,12 +7,14 @@ use asides_core::helper::{Item, Outcome, RESULT, Spec, Target};
 use asides_core::overlay::{Saved, Session, markdown};
 
 use crate::export::{self, Exporter};
+use crate::style;
 
 /// What one freeze adds to the aside: each screen with something on it, as an image (with where
-/// and in what units it was measured) just before the first thing done on it, then each
-/// measurement and annotation at the moment it was made, and the screenshots taken when they were
-/// taken. With nothing on it and `alone`, the screen under the pointer, like a screenshot. Images
-/// are named after the freeze (`snapshot`), so a session's freezes don't overwrite each other's.
+/// and in what units it was measured) at the moment it froze, then each measurement and annotation
+/// at the moment it was made, and the screenshots taken when they were taken. With nothing on it
+/// and `alone`, the screen under the pointer, like a screenshot. Images are named after the freeze
+/// (`snapshot`: which, and when, in seconds into the session), so a session's freezes don't
+/// overwrite each other's.
 #[allow(clippy::too_many_arguments)]
 pub fn items(
     session: &Session,
@@ -22,7 +24,7 @@ pub fn items(
     whole: bool,
     shots: &[(f32, String)],
     cursor_screen: usize,
-    snapshot: usize,
+    (snapshot, frozen_at): (usize, f32),
     alone: bool,
 ) -> anyhow::Result<Vec<Item>> {
     let mut items = Vec::new();
@@ -38,15 +40,27 @@ pub fn items(
         Ok(())
     };
     if inspections.is_empty() && shots.is_empty() && alone {
-        image(cursor_screen.min(session.screens.len().saturating_sub(1)), None, session.clock, &mut items)?;
+        image(cursor_screen.min(session.screens.len().saturating_sub(1)), None, frozen_at, &mut items)?;
     }
+    let accent = style::rgb_hex(style::parse_color(&spec.color));
     for (screen, inspection) in &inspections {
         let (header, notes) = markdown(inspection, spec.detail);
-        let first = notes.iter().map(|n| n.time).reduce(f32::min).unwrap_or(session.clock);
+        let first = notes.iter().map(|n| n.time).fold(frozen_at, f32::min);
         image(*screen, header, first, &mut items)?;
         items.extend(notes.into_iter().map(|n| {
             let (annotation, said) = n.annotation.unzip();
-            Item { time: n.time, text: Some(n.text), annotation, said: said.unwrap_or_default(), ..Item::default() }
+            let color = inspection.annotations.iter().find(|a| Some(a.key) == annotation).map(|a| {
+                let (r, g, b, _) = style::annotation_color(a, a.intent, accent);
+                format!("#{:06X}", style::rgb_hex((r, g, b)))
+            });
+            Item {
+                time: n.time,
+                text: Some(n.text),
+                annotation,
+                said: said.unwrap_or_default(),
+                color,
+                ..Item::default()
+            }
         }));
     }
     items.extend(shots.iter().map(|(time, name)| Item { time: *time, image: Some(name.clone()), ..Item::default() }));

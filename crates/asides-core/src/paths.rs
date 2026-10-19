@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-pub const APP_NAME: &str = "Asides";
+pub const APP_NAME: &str = "asides";
 pub const BUNDLE_ID: &str = "io.github.mihaicristianfarcas.asides";
 pub const URL_SCHEME: &str = "asides";
 
-/// `~/Library/Application Support/Asides`
+/// `~/Library/Application Support/asides`
 pub fn support_dir() -> PathBuf {
     std::env::home_dir().expect("HOME is not set").join("Library/Application Support").join(APP_NAME)
 }

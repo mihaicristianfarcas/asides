@@ -1,5 +1,5 @@
 #!/bin/bash
-# End-to-end test: the installed Asides.app (built with dev hooks) driven through the `asides` CLI.
+# End-to-end test: the installed asides.app (built with dev hooks) driven through the `asides` CLI.
 # WAV fixtures stand in for the microphone (`asides simulate`), a scripted session on a drawn
 # screenshot for the screen (`asides simulate-measure`, played by the overlay's process without
 # windows), a database of our own for Wispr Flow's history, and a stand-in agent (e2e-agent.c, run
@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FIX="$ROOT/tests/fixtures"
 CLI="${ASIDES_CLI:-$HOME/.local/bin/asides}"
-SUPPORT="$HOME/Library/Application Support/Asides"
+SUPPORT="$HOME/Library/Application Support/asides"
 CONFIG="$SUPPORT/config.toml"
 STATE="$SUPPORT/state.json"
 # Dev-hooks builds read this instead of Wispr Flow's own history.
@@ -79,16 +79,16 @@ wait_aside() { # n, file
     "$CLI" history; fail "timed out waiting for aside $1"
 }
 
-# Wispr Flow's History table, as far as Asides reads it.
+# Wispr Flow's History table, as far as asides reads it.
 rm -f "$WISPR_DB" "$WISPR_DB-wal" "$WISPR_DB-shm"
 /usr/bin/sqlite3 "$WISPR_DB" "PRAGMA journal_mode=WAL; CREATE TABLE History (transcriptEntityId TEXT PRIMARY KEY,
   timestamp DATETIME, app TEXT, status TEXT, formattedText TEXT, asrText TEXT, isArchived TINYINT(1) DEFAULT 0);" >/dev/null
 
 # Use the build under test: another copy with the same bundle ID (say a release in /Applications)
 # could otherwise be the one Launch Services opens for the CLI's links.
-export ASIDES_APP="${ASIDES_APP:-$HOME/Applications/Asides.app}"
+export ASIDES_APP="${ASIDES_APP:-$HOME/Applications/asides.app}"
 "$CLI" quit >/dev/null 2>&1 || true
-pkill -x Asides 2>/dev/null || true
+pkill -x asides-app 2>/dev/null || true
 sleep 1
 # The app, started by Launch Services, keeps its history where the test says.
 launchctl setenv ASIDES_HOME "$ASIDES_HOME"
@@ -120,7 +120,7 @@ wait_aside 2 "$WORK/2.md"
 check "Romanian transcript with diacritics" contains "$WORK/2.md" "Butonul de salvare nu face nimic după ce schimb parola."
 check "the history lists it first" grep -q "Butonul de salvare" <<<"$("$CLI" history -n 1)"
 
-echo "Asides on the screen (a scripted session on a drawn screen)"
+echo "asides on the screen (a scripted session on a drawn screen)"
 # A 400 × 240 pt screen at 2×: a light card with a title, a line of text and a blue button.
 SHOT="$WORK/screen.png"
 /usr/bin/python3 -I -c 'import struct, sys, zlib
@@ -159,13 +159,14 @@ check "a held distance between edges" contains "$WORK/3.md" "- Distance from (10
 check "an area snapped to the button" contains "$WORK/3.md" "- Area 100 × 24 (25:6) at (60, 170), snapped to the object inside"
 check "a guide snapped to the text's edge" contains "$WORK/3.md" "**Guides:** x 60"
 check "an annotation on an element, with its location" contains "$WORK/3.md" "**Location:** form > button#save.btn"
-check "its feedback, intent and severity" contains "$WORK/3.md" "**Intent:** fix · **Severity:** important"
+check "its intent" contains "$WORK/3.md" "**Intent:** fix"
+check "its severity" contains "$WORK/3.md" "**Severity:** important"
 check "an area annotation" contains "$WORK/3.md" "### 2. Area 110 × 50 at (250, 40)"
 check "an arrow, from one element to another" contains "$WORK/3.md" "### 3. Arrow from button \"Save\" to heading \"Profile\""
 check "the screenshot and the Shot tool's, in order" test "$(grep -c '^!\[Screenshot\]' "$WORK/3.md")" = 2
 check "asides measure finds the button in the screenshot" grep -q "200 px wide × 48 px high" <<<"$("$CLI" measure "$SHOT" 100,320,240,100)"
 
-echo "Talking in Asides, frozen twice, with a Wispr Flow dictation"
+echo "Talking in asides, frozen twice, with a Wispr Flow dictation"
 set_config wispr_flow 'true'
 sleep 3
 dictate() { # id, text
@@ -197,11 +198,12 @@ wait_aside 4 "$WORK/4.md"
 line() { grep -nF -- "$1" "$WORK/4.md" | head -1 | cut -d: -f1; }
 check "a click in a measured section annotates the section" contains "$WORK/4.md" "### 1. Area 100 × 24 at (60, 170)"
 check "what was said about the annotation is in it" grep -q '^\*\*Said:\*\* .*padding on the summary card' "$WORK/4.md"
-check "in the order it happened: measured, annotated, talked, measured" test \
-    "$(line '- Area 100 × 24')" -lt "$(line '### 1. Area')" -a "$(line '### 1. Area')" -lt "$(line 'Butonul de salvare')" \
-    -a "$(line 'Butonul de salvare')" -lt "$(line '- Distance from (100, 140)')"
+check "the pin's number where it was made, before what was said" grep -q '^\[1\] Butonul de salvare' "$WORK/4.md"
+check "in the order it happened: talked, measured and annotated (after it), measured again" test \
+    "$(line 'Butonul de salvare')" -lt "$(line '- Area 100 × 24')" -a "$(line '- Area 100 × 24')" -lt "$(line '### 1. Area')" \
+    -a "$(line '### 1. Area')" -lt "$(line '- Distance from (100, 140)')"
 check "a screenshot for each freeze" test "$(grep -c '^!\[Screenshot\]' "$WORK/4.md")" = 2
-check "a dictation made before Asides opened isn't in it" test -z "$(grep -rl 'Dictated while nothing' "$ASIDES_HOME/history")"
+check "a dictation made before asides opened isn't in it" test -z "$(grep -rl 'Dictated while nothing' "$ASIDES_HOME/history")"
 cat > "$WORK/wait.json" <<'JSON'
 {"scale": 2, "actions": [{"annotate": {"area": {"x": 250, "y": 40, "width": 110, "height": 50}}}, {"wait": 5}]}
 JSON
@@ -222,7 +224,7 @@ clang -O0 -o "$WORK/bin/claude" "$ROOT/scripts/e2e-agent.c"
 AGENT_LOG="$WORK/agent.log"
 : > "$AGENT_LOG"
 # In Diri when it's installed (asides drives it with its command, no permission needed), else in
-# Terminal (the first time, macOS asks whether Asides may control Terminal: answer it).
+# Terminal (the first time, macOS asks whether asides may control Terminal: answer it).
 DIRIJOR="/Applications/Diri.app/Contents/Resources/bin/dirijor"
 if [ -x "$DIRIJOR" ]; then
     HOST=Diri
@@ -245,12 +247,12 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
         sleep 0.5
     done
     check "asides finds it, as Claude Code in $HOST" test -n "$SESSION"
-    check "listed with where it works" grep -q "Claude Code · shop .* in $HOST" <<<"$("$CLI" sessions)"
+    check "listed with where it works" grep -q "Claude Code (shop) .* in $HOST" <<<"$("$CLI" sessions)"
     "$CLI" send "$(aside_id Butonul)" --to "$SESSION" > "$WORK/sent.txt"
-    check "send says it got there" grep -q "Sent to Claude Code · shop" "$WORK/sent.txt"
+    check "send says it got there" grep -q "Sent to Claude Code (shop)" "$WORK/sent.txt"
     check "the text typed in" grep -q 'Butonul de salvare' "$AGENT_LOG"
     check "then Return, on its own, which sends it" grep -Eq '^<CR>$|<ESC>\[201~<CR>' "$AGENT_LOG"
-    check "the history says where it went" grep -q "→ Claude Code · shop" <<<"$("$CLI" history)"
+    check "the history says where it went" grep -q "→ Claude Code (shop)" <<<"$("$CLI" history)"
     : > "$AGENT_LOG"
     "$CLI" send "$(aside_id padding)" --to "$SESSION" >/dev/null
     if [ "$HOST" = Diri ]; then

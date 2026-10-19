@@ -140,6 +140,76 @@ impl Chord {
     }
 }
 
+impl Chord {
+    /// A key press (the key as the UI names it) as a chord.
+    pub fn pressed(key: &str, mods: Mods) -> Option<Chord> {
+        let key = normalize(key);
+        (!key.is_empty()).then_some(Chord { key, cmd: mods.cmd, shift: mods.shift, alt: mods.alt, ctrl: mods.ctrl })
+    }
+
+    /// As the settings write it: `cmd+shift+c` (`comma` and `plus`, which separate chords).
+    pub fn to_config(&self) -> String {
+        let mut text = String::new();
+        for (on, name) in [(self.ctrl, "ctrl+"), (self.alt, "alt+"), (self.shift, "shift+"), (self.cmd, "cmd+")] {
+            if on {
+                text.push_str(name);
+            }
+        }
+        text.push_str(match self.key.as_str() {
+            "," => "comma",
+            "+" => "plus",
+            key => key,
+        });
+        text
+    }
+
+    /// As a global shortcut (`ctrl+alt+KeyP`, `global-hotkey`'s names), when it can be one: with
+    /// ⌃ or ⌘ (macOS refuses ⌥ alone), on a letter, digit, symbol or named key.
+    pub fn to_global(&self) -> Option<String> {
+        if !self.ctrl && !self.cmd {
+            return None;
+        }
+        let key = match self.key.as_str() {
+            k if k.len() == 1 && k.chars().all(|c| c.is_ascii_lowercase()) => format!("Key{}", k.to_uppercase()),
+            k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) => format!("Digit{k}"),
+            k if k.starts_with('f') && k[1..].parse::<u8>().is_ok_and(|n| (1..=20).contains(&n)) => k.to_uppercase(),
+            "space" => "Space".into(),
+            "enter" => "Enter".into(),
+            "escape" => "Escape".into(),
+            "tab" => "Tab".into(),
+            "backspace" => "Backspace".into(),
+            "delete" => "Delete".into(),
+            "left" => "ArrowLeft".into(),
+            "right" => "ArrowRight".into(),
+            "up" => "ArrowUp".into(),
+            "down" => "ArrowDown".into(),
+            k => {
+                let named = [
+                    ("=", "Equal"),
+                    ("-", "Minus"),
+                    ("/", "Slash"),
+                    ("\\", "Backslash"),
+                    (",", "Comma"),
+                    (".", "Period"),
+                    (";", "Semicolon"),
+                    ("'", "Quote"),
+                    ("[", "BracketLeft"),
+                    ("]", "BracketRight"),
+                    ("`", "Backquote"),
+                ];
+                named.iter().find(|(symbol, _)| *symbol == k)?.1.to_string()
+            }
+        };
+        let mods = [(self.ctrl, "ctrl+"), (self.alt, "alt+"), (self.shift, "shift+"), (self.cmd, "cmd+")];
+        Some(mods.iter().filter(|(on, _)| *on).map(|(_, m)| *m).collect::<String>() + &key)
+    }
+}
+
+/// The chords as the settings write them.
+pub fn to_config(list: &[Chord]) -> String {
+    list.iter().map(Chord::to_config).collect::<Vec<_>>().join(", ")
+}
+
 /// Whether any chord of `list` matches the key press.
 pub fn matches(list: &[Chord], key: &str, mods: Mods) -> bool {
     list.iter().any(|c| c.matches(key, mods))
@@ -180,5 +250,21 @@ mod tests {
         assert_eq!(label(&parse("option+enter")), "⌥⏎");
         assert!(parse("").is_empty() && parse("hyper+x").is_empty());
         assert!(!matches(&parse("h"), "h", mods(false, true, false)));
+    }
+
+    #[test]
+    fn writes_pressed_chords_back() {
+        let chord = |key: &str, m: Mods| Chord::pressed(key, m).unwrap();
+        let ctrl_alt = Mods { ctrl: true, alt: true, ..Mods::default() };
+        assert_eq!(chord("Return", mods(true, true, false)).to_config(), "shift+cmd+enter");
+        assert_eq!(to_config(&parse("cmd+s, s, shift+/, comma")), "cmd+s, s, shift+/, comma");
+        assert_eq!(parse(&to_config(&[chord(",", Mods::default()), chord("+", Mods::default())])).len(), 2);
+        assert_eq!(chord("space", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+Space"));
+        assert_eq!(chord("p", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+KeyP"));
+        assert_eq!(chord("1", mods(true, true, false)).to_global().as_deref(), Some("shift+cmd+Digit1"));
+        assert_eq!(chord("f5", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+F5"));
+        assert_eq!(chord("/", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+Slash"));
+        // ⌥ alone: macOS refuses it.
+        assert_eq!(chord("p", mods(false, false, true)).to_global(), None);
     }
 }

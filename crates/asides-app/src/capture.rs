@@ -1,4 +1,4 @@
-//! Freezing the screen for Asides: one screenshot per display, taken with ScreenCaptureKit, in sRGB
+//! Freezing the screen for asides: one screenshot per display, taken with ScreenCaptureKit, in sRGB
 //! (so colors read like CSS colors). Needs the Screen Recording permission.
 
 use std::sync::{Arc, Mutex};
@@ -61,7 +61,7 @@ pub struct Capture {
     pub frame: Frame,
 }
 
-/// Whether Asides may capture the screen (without asking).
+/// Whether asides may capture the screen (without asking).
 pub fn permitted() -> bool {
     CGPreflightScreenCaptureAccess()
 }
@@ -90,7 +90,7 @@ pub fn capture(
         return done(Err("No screen to capture.".into()));
     }
     // When nothing is left out, macOS 26 captures a part of the screen without listing what's
-    // shareable first (30 to 50 ms of opening Asides). Its quickest way (20 ms quicker than with a
+    // shareable first (30 to 50 ms of opening asides). Its quickest way (20 ms quicker than with a
     // configuration) has windows' shadows and leaves the pointer out; a picture that isn't 8 bits
     // a channel at the screen's size (the screen showing HDR) is taken again the other way.
     if without.is_none() && AnyClass::get(c"SCScreenshotConfiguration").is_some() {

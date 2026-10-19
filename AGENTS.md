@@ -16,8 +16,8 @@ features are out of scope. Why it works this way: ARCHITECTURE.md's design decis
 A Rust workspace:
 - `crates/asides-core`: platform-independent logic.
 - `crates/asides-cli`: the `asides` binary.
-- `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `Asides.app`).
-- `crates/asides-overlay`: the overlay, the pill, the frozen screens and the Asides window (binary
+- `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `asides.app`).
+- `crates/asides-overlay`: the overlay, the pill, the frozen screens and the asides window (binary
   `asides-overlay`, GPUI), bundled beside the app's binary. Any new UI is GPUI.
 
 ## Commands
@@ -35,7 +35,7 @@ A Rust workspace:
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
-| App icon | `swift scripts/make-icon.swift` (writes `packaging/Asides.icns`) |
+| App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
 
@@ -51,7 +51,6 @@ changes.
   - an aside is typed in as the user would: nothing installed in the agents, nothing listening
   - never into a session the user didn't choose (tests send `--to` a session of their own)
   - transcripts are verbatim: no prompts, no post-processing
-  - new `config.toml` and `state.json` fields get serde defaults
 - **Never commit** `.asides/` (old notes and voice recordings), `tests/fixtures/`
   (generated with macOS voices, which may not be redistributed), `target/` or `dist/`. They're
   gitignored; keep them that way.
@@ -67,19 +66,19 @@ changes.
   reset every build), and add an entitlement for any new capability.
 - **Check `asides status` before `make install` or `make e2e`.** If it says open, recording,
   transcribing or sending, the user is in the middle of something: don't reinstall.
-- **Tell the user what `make install` and `make e2e` did.** Both quit the running Asides and
+- **Tell the user what `make install` and `make e2e` did.** Both quit the running asides and
   replace the installed app, and `make e2e` installs a test build with dev hooks. Afterwards run
   `make install` to restore a normal build, and tell the user to run `asides` again.
 - **Know what `make e2e` uses.** It sets the model to large-v3-turbo (the fixtures are English and
-  Romanian), which must be in `~/Library/Application Support/Asides/models/` (`asides download
+  Romanian), which must be in `~/Library/Application Support/asides/models/` (`asides download
   large-v3-turbo`). It keeps its asides in a temporary history, sends only to a stand-in agent of
   its own (in Diri, or Terminal without Diri), and puts back the user's settings and clipboard.
-- **Keep binary names unique ignoring case** (case-insensitive APFS). Don't name a binary
-  `Asides`.
+- **Keep binary names unique ignoring case** (case-insensitive APFS): the CLI is `asides`, the
+  app's `asides-app`. `pkill -x asides` would also stop the agents' `asides mcp` servers.
 - **Don't add permissions** without the maintainer's agreement. Freezing the screen uses Screen
   Recording (asked on first use) and Accessibility (with `identify_elements`, on by default; pins
   work without it); talking over the live screen must keep working without either. Sending uses
-  Automation for Terminal and Ghostty (asked the first time Asides types into or opens a session
+  Automation for Terminal and Ghostty (asked the first time asides types into or opens a session
   there); Diri needs none. Input Monitoring is not used.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
@@ -102,10 +101,10 @@ changes.
   (`replay`: AppKit events into GPUI's view), and capture them to PNGs to look at
   (`screencapture -l`, when your terminal has Screen Recording). Keep the window small and the run
   short: it's on the user's screen
-- open the Asides window on a history of your own and capture each part (CONTRIBUTING.md)
+- open the asides window on a history of your own and capture each part (CONTRIBUTING.md)
 - measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
-- read `~/Library/Application Support/Asides/state.json`
+- read `~/Library/Application Support/asides/state.json`
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md)
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
 
@@ -185,7 +184,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 
 - GPUI owns `NSApplication` and the event loop, like tao: hence a second process. It makes its app
   regular (a Dock icon): `native::accessory` undoes it, and `native::stay_accessory_at_launch` stops
-  its launch-time call (else a second Dock tile stayed until quit).
+  its launch-time call (else a second Dock tile stayed until quit). The asides window's process
+  stays regular (Dock, ⌘Tab): it quits with its window.
 - GPUI drops what AppKit tells it during an update: a window resized, shown or made key inside
   `handle.update` never told GPUI. Change windows outside updates, by their views (`native::show`,
   `set_frame`).
@@ -198,7 +198,7 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - A hidden window isn't drawn and shows its last frame when shown: `native::draw_now` draws first.
   Pop-ups fade showing old content: the overlay turns the animation off.
 - `RenderImage`s stay in the atlas until `Window::drop_image`: drop a freeze's once the next is drawn.
-- No `start_window_move` on macOS: the live pill follows the mouse from the clock
+- No `start_window_move` on macOS: the pill follows the mouse from the clock
   (`windows::follow_toolbar`), which replays can't drive. `Window::dispatch_event` returns a private
   type.
 - Changing a window's style mask (`native::make_overlay`) resets the first responder: keys arrive
@@ -214,11 +214,11 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 
 - Panels are non-activating, so the user's app keeps its look. Borderless panels need
   `canBecomeKeyWindow`; mouse moves need an `ActiveAlways` tracking area.
-- The live pill is its own panel: `becomesKeyOnlyIfNeeded` (clicks don't take the keyboard),
-  `hidesOnDeactivate` off, laid out at its own size (a flex parent). Freezes leave out the overlay's
+- The pill is one panel, frozen (above the screens) and live: `becomesKeyOnlyIfNeeded` (clicks
+  don't take the keyboard), `hidesOnDeactivate` off, laid out at its own size (a flex parent). Freezes leave out the overlay's
   windows (`capture::capture` `without`).
 - There's no global Esc: live, every key belongs to the user's app; only the global shortcuts reach
-  Asides.
+  asides.
 - Frozen, the kiosk options hide the Dock and menu bar and stop app switching (Mission Control,
   spaces, gestures, hot corners), hiding and the Apple menu, but not Force Quit. Hiding the menu bar
   or disabling switching needs the Dock hidden, or it throws. They apply only while the app is
@@ -241,6 +241,14 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - A shortcut's ⌃⌥ reached Measure as ⌥: with ⌃ down, Measure takes no modifiers.
 - `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
   accessibility. `native::choose_folder` puts it above the frozen screens.
+- GPUI updates hover only on pointer moves inside a window: leaving the pill's window, `on_hover`
+  never hears it. What hovering opens there closes from the clock too (`Overlay::pointer_on_pill`).
+- GPUI can't blur behind an element. The pill's window (and the asides window) is `Blurred`: GPUI
+  puts an `NSVisualEffectView` beside its view in the window's content view, blurring the whole
+  window; its `maskImage` keeps it to the pill's shapes (`native::set_glass`, again when the window
+  resizes). No GPUI shadows on glass: they fill under the element too, and turned it near black.
+  On a frozen screen, surfaces draw a blurred copy of the freeze (`glass.rs`). `screencapture -l`
+  of a blurred window shows gray behind it: capture its rect (`-R`).
 
 ### Capture and measuring
 
@@ -274,7 +282,7 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - To time it: timestamps from the overlay, `--standby` with a `windowed` session, then send
   `{"type":"open","dir":…}`. `sample` slows every library load.
 - On screen (ask first): post `⌃⌥Space` as a whole chord through a private `CGEventSource`, find the
-  windows by `proc_name` of `kCGWindowOwnerPID`, close with Esc. Never post it while Asides is open:
+  windows by `proc_name` of `kCGWindowOwnerPID`, close with Esc. Never post it while asides is open:
   it sends.
 
 ### Speech

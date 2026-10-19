@@ -1,6 +1,6 @@
 # Troubleshooting
 
-**The aside didn't reach my agent.** The menu (and History in the Asides window) says why. Asides
+**The aside didn't reach my agent.** The menu (and History in the asides window) says why. asides
 can type into Terminal, Ghostty and Diri; the first time, allow it to control Terminal or Ghostty
 (System Settings → Privacy & Security → Automation). Every aside stays in History: send it again
 from there, or with `asides send`.
@@ -8,16 +8,16 @@ from there, or with `asides send`.
 **It went to the wrong session.** It goes to the session you typed into last. Press `Tab` on the
 frozen screen, or click the session's name on the pill, to pick another before sending.
 
-**Two agents in one folder in Ghostty.** Ghostty only tells Asides each terminal's folder, so it
+**Two agents in one folder in Ghostty.** Ghostty only tells asides each terminal's folder, so it
 types into the first. Diri and Terminal tell them apart.
 
 **A new session waits at "Do you trust this folder?"** That's your agent asking, the first time
 it runs in a folder. Answer it and the aside follows.
 
-**Asides can't see the screen.** Allow it in System Settings → Privacy & Security → Screen &
-System Audio Recording, then quit and reopen Asides.
+**asides can't see the screen.** Allow it in System Settings → Privacy & Security → Screen &
+System Audio Recording, then quit and reopen asides.
 
-**Pins only name the app.** Turn on Settings → **Name what's under each pin** and allow Asides
+**Pins only name the app.** Turn on Settings → **Name what's under each pin** and allow asides
 under Accessibility. Chrome and Electron apps build their accessibility tree on the first query,
 so the first pin there may only name the window.
 
@@ -30,7 +30,7 @@ multilingual one ([Settings](settings.md)).
 **Distances stop at the wrong place.** Lower the tolerance (`-`) to see faint borders, raise it
 (`=`, or `T`) to look through borders and shadows.
 
-**A shortcut does nothing.** Another app may use it: pick another in `config.toml`. macOS refuses
+**A shortcut does nothing.** Another app may use it: pick another in Settings → General. macOS refuses
 shortcuts whose only modifiers are Option, or Option and Shift.
 
 **macOS asks for the microphone after every update.** Your build is signed ad hoc. Run `make cert`

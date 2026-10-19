@@ -1,6 +1,6 @@
 [package]
 name = "asides-overlay"
-description = "Asides' Measure & Annotate overlay: measure, annotate, draw and talk over a frozen screen (GPUI)"
+description = "asides' Measure & Annotate overlay: measure, annotate, draw and talk over a frozen screen (GPUI)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

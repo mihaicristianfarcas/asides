@@ -1,9 +1,9 @@
-//! The overlay's windows: one per screen while it's frozen, and the toolbar's over the live
-//! screen. They open hidden; the clock (`sync`) shows, hides and moves them, between GPUI's
-//! updates: a window can't change from inside an event GPUI is handling for it, and what AppKit
-//! tells GPUI about a change (a new size, the keyboard) is dropped while GPUI is updating. Each is
-//! drawn before it shows, so it never shows what it showed last (an earlier freeze, where the
-//! pointer was then), and the frozen screens and the live toolbar take each other's place at once.
+//! The overlay's windows: one per screen while it's frozen, and the pill's, above them and over the
+//! live screen, the same window both ways (it stays put, and looks the same). They open hidden; the
+//! clock (`sync`) shows, hides and moves them, between GPUI's updates: a window can't change from
+//! inside an event GPUI is handling for it, and what AppKit tells GPUI about a change (a new size,
+//! the keyboard) is dropped while GPUI is updating. Each is drawn before it shows, so it never shows
+//! what it showed last (an earlier freeze, where the pointer was then).
 
 use std::time::{Duration, Instant};
 
@@ -16,10 +16,19 @@ use gpui::{
 };
 
 use crate::native;
-use crate::ui::{Overlay, ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView};
+use crate::ui::{
+    KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, Overlay, PILL_TOP, ScreenView, ScreenWindow, TOOLBAR_MARGIN,
+    ToolbarView,
+};
 
-/// The live toolbar's window before it's drawn (it then fits the toolbar).
-const TOOLBAR_GUESS: (f64, f64) = (420.0, 56.0);
+/// Rounded rectangles in a window's points, their radii and how much of each shows: where the
+/// pill's glass is.
+pub type Shapes = Vec<(PtRect, f64, f64)>;
+
+/// The pill's window before it's first drawn, big enough to lay the pill out at its size (it then
+/// fits it), and about how big the pill is until then.
+const TOOLBAR_GUESS: (f64, f64) = (640.0, 120.0);
+const PILL_GUESS: (f64, f64) = (300.0, 40.0);
 /// Back in front, an app redraws as the active one (macOS draws one in the background
 /// differently): the frozen screens stay up this much longer...
 const HANDOFF_SETTLE: Duration = Duration::from_millis(50);
@@ -36,7 +45,7 @@ const TAKEOVER_TIMEOUT: Duration = Duration::from_millis(200);
 pub struct Handoff {
     since: Instant,
     back: Option<Instant>,
-    /// The live toolbar shows, over the frozen screens, which show just the screen now.
+    /// The frozen screens show just the screen now, under the pill.
     swapped: bool,
 }
 
@@ -73,7 +82,7 @@ struct WarmUp;
 
 impl Render for WarmUp {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let text = "Claude Code · Codex OpenCode Measure Annotate Draw Shot 0123456789:‘’“” px pt × · \
+        let text = "Claude Code () Codex OpenCode Measure Annotate Draw Shot 0123456789:‘’“” px pt × · \
                     abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ";
         let line = |size: f32, weight: FontWeight| div().text_size(px(size)).font_weight(weight).child(text);
         div()
@@ -82,6 +91,24 @@ impl Render for WarmUp {
             .child(line(13., FontWeight::NORMAL))
             .child(line(12., FontWeight::SEMIBOLD))
             .child(line(12., FontWeight::BOLD))
+    }
+}
+
+/// A spare window for the pill.
+pub fn open_spare_toolbar(cx: &mut App) -> Option<Spare> {
+    let frame = PtRect::new(0.0, 0.0, TOOLBAR_GUESS.0, TOOLBAR_GUESS.1);
+    let mut made = (0, 0);
+    let opened = cx.open_window(toolbar_options(None, frame), |window, cx| {
+        made = native::make_toolbar(window, frame);
+        native::set_glass(made.1, &[]);
+        cx.new(|_| WarmUp)
+    });
+    match opened {
+        Ok(handle) => Some(Spare { handle: handle.into(), display: 0, frame, number: made.0, view: made.1 }),
+        Err(err) => {
+            eprintln!("asides-overlay: no spare pill window: {err:#}");
+            None
+        }
     }
 }
 
@@ -206,44 +233,47 @@ fn take_spare(overlay: &Entity<Overlay>, i: usize, spare: Spare, cx: &mut App) -
     true
 }
 
-/// Where the live pill's window goes on `screen`, `w` × `h`: where the user put the pill, below the
-/// menu bar, or at the top in the middle, just below the menu bar (AppKit's coordinates).
-fn toolbar_frame(screen: &SpecScreen, at: Option<(f64, f64)>, (w, h): (f64, f64)) -> PtRect {
+/// Where the pill goes on `screen`, `w` × `h` (its frame, in points from the screen's top left):
+/// where the user put it, or at the top in the middle; always on the screen (in the development
+/// window, on its part), below the menu bar and the notch.
+fn pill_place(screen: &SpecScreen, windowed: Option<PtRect>, at: Option<(f64, f64)>, (w, h): (f64, f64)) -> PtRect {
     let f = screen.frame;
-    match at {
-        Some((fx, fy)) => {
-            let x = (f.x + fx * f.width - TOOLBAR_MARGIN).clamp(f.x, (f.x + f.width - w).max(f.x));
-            let top = f.y + f.height - fy * f.height + TOOLBAR_MARGIN;
-            let y = (top - h).clamp(f.y, (below_menu_bar(screen) - h).max(f.y));
-            PtRect::new(x, y, w, h)
-        }
-        None => PtRect::new(
-            f.x + (f.width - w) / 2.0,
-            below_menu_bar(screen) - crate::ui::PILL_TOP - h + 2.0 * TOOLBAR_MARGIN,
-            w,
-            h,
-        ),
-    }
-}
-
-/// The highest the top of the live toolbar's window goes on `screen`: its toolbar (inside its
-/// margin) stays below the menu bar and the notch (AppKit's coordinates).
-fn below_menu_bar(screen: &SpecScreen) -> f64 {
-    screen.frame.y + screen.frame.height - (screen.menu_bar - TOOLBAR_MARGIN).max(0.0)
-}
-
-/// The toolbar over the live screen, in a window of its own on the screen under the pointer
-/// (hidden until `sync` shows it).
-fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
-    let (spec, at) = {
-        let o = overlay.read(cx);
-        (o.spec().clone(), o.toolbar_at)
+    let area = windowed.unwrap_or(PtRect::new(0.0, 0.0, f.width, f.height));
+    let top = screen.menu_bar.max(area.y);
+    let (x, y) = match at {
+        Some((fx, fy)) => (fx * f.width, fy * f.height),
+        None => (area.x + (area.width - w) / 2.0, top + PILL_TOP),
     };
-    let Some(index) = pointer_screen(&spec.screens).or((!spec.screens.is_empty()).then_some(0)) else { return };
-    let screen = &spec.screens[index];
-    let frame = toolbar_frame(screen, at, TOOLBAR_GUESS);
-    let display_id = cx.displays().into_iter().find(|d| u32::from(d.id()) == screen.display).map(|d| d.id());
-    let options = WindowOptions {
+    let x = x.clamp(area.x, (area.x + area.width - w).max(area.x)).round();
+    let y = y.clamp(top, (area.y + area.height - h).max(top)).round();
+    PtRect::new(x, y, w, h)
+}
+
+/// The pill's window on `screen` (AppKit's coordinates): the pill at `pill`, and its list (`size`
+/// is both, as drawn) under it, or above it where there's more room there than below; to its right,
+/// or to its left near the right edge; the margin around them. And which ways the list goes.
+fn toolbar_frame(
+    screen: &SpecScreen,
+    windowed: Option<PtRect>,
+    pill: PtRect,
+    (w, h): (f64, f64),
+) -> (PtRect, bool, bool) {
+    let f = screen.frame;
+    let area = windowed.unwrap_or(PtRect::new(0.0, 0.0, f.width, f.height));
+    let list = LIST_GAP + LIST_ROWS_HEIGHT + 2.0;
+    let left = pill.x + LIST_WIDTH.max(KEYS_WIDTH) > area.x + area.width;
+    let (above, below) = (pill.y - screen.menu_bar.max(area.y), area.y + area.height - pill.y - pill.height);
+    let up = below < list && above > below;
+    let x = if left { pill.x + pill.width - w } else { pill.x } - TOOLBAR_MARGIN;
+    let y = if up { pill.y + pill.height - h } else { pill.y } - TOOLBAR_MARGIN;
+    let (width, height) = ((w + 2.0 * TOOLBAR_MARGIN).ceil(), (h + 2.0 * TOOLBAR_MARGIN).ceil());
+    (PtRect::new(f.x + x, f.y + f.height - y - height, width, height), left, up)
+}
+
+/// The pill's window: a panel that never takes the keyboard, `frame` big (hidden until `sync`
+/// shows it).
+fn toolbar_options(display_id: Option<DisplayId>, frame: PtRect) -> WindowOptions {
+    WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::new(
             point(px(0.), px(0.)),
             size(px(frame.width as f32), px(frame.height as f32)),
@@ -256,25 +286,47 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
         is_resizable: false,
         is_minimizable: false,
         display_id,
-        window_background: WindowBackgroundAppearance::Transparent,
+        // Glass, as Diri's sidebar: macOS blurs what's behind, only behind the pill's shapes.
+        window_background: WindowBackgroundAppearance::Blurred,
         ..Default::default()
+    }
+}
+
+/// The pill's window, on the screen under the pointer (the spare one, or a new one): hidden until
+/// `sync` puts it where it goes and shows it.
+fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
+    let (spec, spare) = overlay.update(cx, |o, _| (o.spec().clone(), o.spare_toolbar.take()));
+    let Some(index) = pointer_screen(&spec.screens).or((!spec.screens.is_empty()).then_some(0)) else { return };
+    let screen = &spec.screens[index];
+    let window = |number, view, frame: PtRect| ScreenWindow {
+        handle: None,
+        focus: None,
+        screen: screen.frame,
+        offset: (0.0, 0.0),
+        size: (frame.width, frame.height),
+        number,
+        view,
     };
-    let o = overlay.clone();
-    let screen_frame = screen.frame;
-    let opened = cx.open_window(options, move |window, cx| {
-        let (number, view) = native::make_toolbar(window, frame);
-        o.update(cx, |o, _| {
-            o.toolbar_screen = index;
-            o.toolbar_window = Some(ScreenWindow {
-                handle: None,
-                focus: None,
-                screen: screen_frame,
-                offset: (0.0, 0.0),
-                size: (frame.width, frame.height),
-                number,
-                view,
-            });
+    if let Some(spare) = spare {
+        let o = overlay.clone();
+        let taken = spare.handle.update(cx, |_, window, cx| {
+            window.replace_root(cx, |_, cx| ToolbarView::new(o, cx));
         });
+        if taken.is_ok() {
+            let mut toolbar = window(spare.number, spare.view, spare.frame);
+            toolbar.handle = Some(spare.handle);
+            overlay.update(cx, |o, _| (o.toolbar_screen, o.toolbar_window) = (index, Some(toolbar)));
+            return;
+        }
+    }
+    let frame = PtRect::new(screen.frame.x, screen.frame.y, TOOLBAR_GUESS.0, TOOLBAR_GUESS.1);
+    let display_id = cx.displays().into_iter().find(|d| u32::from(d.id()) == screen.display).map(|d| d.id());
+    let o = overlay.clone();
+    let opened = cx.open_window(toolbar_options(display_id, frame), move |w, cx| {
+        let (number, view) = native::make_toolbar(w, frame);
+        // Nothing blurred until the pill is drawn and its shapes are known (`follow_toolbar`).
+        native::set_glass(view, &[]);
+        o.update(cx, |o, _| (o.toolbar_screen, o.toolbar_window) = (index, Some(window(number, view, frame))));
         cx.new(|cx| ToolbarView::new(o.clone(), cx))
     });
     match opened {
@@ -283,12 +335,12 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
                 t.handle = Some(handle.into());
             }
         }),
-        Err(err) => eprintln!("asides-overlay: no toolbar window: {err:#}"),
+        Err(err) => eprintln!("asides-overlay: no pill window: {err:#}"),
     }
 }
 
 /// The windows the overlay needs and doesn't have yet: the screens' while frozen (again, when the
-/// screens changed since), the toolbar's over the live screen.
+/// screens changed since), and the pill's.
 fn open_missing(overlay: &Entity<Overlay>, cx: &mut App) {
     let o = overlay.read(cx);
     let screens = &o.spec().screens;
@@ -300,39 +352,93 @@ fn open_missing(overlay: &Entity<Overlay>, cx: &mut App) {
         }
         open_screens(overlay, cx);
     }
-    if overlay.read(cx).live && overlay.read(cx).toolbar_window.is_none() {
+    if overlay.read(cx).toolbar_window.is_none() {
         open_toolbar(overlay, cx);
     }
 }
 
-/// Puts the windows in line with the overlay: the screens' while frozen, the toolbar's over the
-/// live screen (following its handle and fitting the toolbar). From the clock, outside updates.
+/// Puts the windows in line with the overlay: the screens' while frozen, the pill's always (where
+/// it goes, fitting the pill and its list). From the clock, outside updates.
 pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let (live, shown, closing, handing, taking_over) = cx.update(|cx| {
+    let (live, shown, closing, handing, taking_over, toolbar) = cx.update(|cx| {
         let o = overlay.read(cx);
         if !o.closing {
             open_missing(overlay, cx);
         }
         let o = overlay.read(cx);
-        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over)
+        let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
+        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar)
     })?;
     if closing {
+        // The aside is on its way: the pill goes at once, the frozen screens once the system is back.
+        if let Some(toolbar) = toolbar {
+            native::hide(toolbar);
+        }
         if shown == Some(false) && !handed_back(overlay, cx)? {
             return Ok(());
         }
         return cx.update(|cx| cx.quit());
     }
+    if shown.is_some() {
+        hide_pill(overlay, cx)?;
+        follow_toolbar(overlay, cx)?;
+    }
     match (shown == Some(live), live) {
-        (true, true) => follow_toolbar(overlay, cx),
+        (true, true) => Ok(()),
         // Frozen again while still giving way: the system comes back to the overlay.
         (true, false) if handing => show_frozen(overlay, cx),
         (true, false) => match taking_over {
             Some(since) => take_over(overlay, since, cx),
-            None => Ok(()),
+            None => drop_stale(overlay, cx),
         },
         (false, true) => show_live(overlay, cx),
         (false, false) => show_frozen(overlay, cx),
     }
+}
+
+/// Frozen, the glass under surfaces that moved since, out of the screens' windows.
+fn drop_stale(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    cx.update(|cx| {
+        let (handles, stale) = overlay.update(cx, |o, _| {
+            let handles: Vec<_> = o.windows.iter().filter_map(|w| w.handle).collect();
+            (handles, std::mem::take(&mut o.stale_images))
+        });
+        if stale.is_empty() {
+            return;
+        }
+        for handle in handles {
+            let _ = handle.update(cx, |_, window, _| {
+                for image in &stale {
+                    let _ = window.drop_image(image.clone());
+                }
+            });
+        }
+    })
+}
+
+/// Frozen, the pill hides with everything on the screen (`Cmd::Hide`), and shows again with it.
+fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let (toolbar, hide, hidden) = cx.update(|cx| {
+        let o = overlay.read(cx);
+        (o.toolbar_window.as_ref().map(|t| t.view), !o.live && o.session.hidden, o.pill_hidden)
+    })?;
+    let Some(toolbar) = toolbar.filter(|_| hide != hidden) else { return Ok(()) };
+    match hide {
+        true => native::hide(toolbar),
+        false => {
+            native::draw_now(&[toolbar]);
+            native::show(toolbar, false);
+        }
+    }
+    cx.update(|cx| overlay.update(cx, |o, _| o.pill_hidden = hide))
+}
+
+/// The pill's window, drawn at its size where it goes, before it shows: drawn once, the pill knows
+/// its size, and the window fits it (`follow_toolbar` draws it again).
+fn prepare_toolbar(overlay: &Entity<Overlay>, toolbar: usize, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    native::pointer_moved(toolbar);
+    native::draw_now(&[toolbar]);
+    follow_toolbar(overlay, cx)
 }
 
 /// Choose Folder…: its panel, after the click that asked for it (`native::choose_folder`). Live,
@@ -365,14 +471,15 @@ pub fn ask_folder(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
     .detach();
 }
 
-/// The frozen screens, drawn, in place of the live toolbar; the one under the pointer takes the
-/// keyboard, and the overlay's app the system (`native::kiosk`).
+/// The frozen screens, drawn, under the pill; the one under the pointer takes the keyboard, and the
+/// overlay's app the system (`native::kiosk`).
 fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let (screens, key, toolbar, windowed) = cx.update(|cx| {
+    let (screens, key, toolbar, windowed, opening, hidden) = cx.update(|cx| {
         let o = overlay.read(cx);
         let views: Vec<usize> = o.windows.iter().map(|w| w.view).collect();
         let key = pointer_screen(&o.spec().screens).unwrap_or(0).min(views.len().saturating_sub(1));
-        (views, key, o.toolbar_window.as_ref().map(|t| t.view), o.spec().windowed.is_some())
+        let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
+        (views, key, toolbar, o.spec().windowed.is_some(), o.shown.is_none(), o.session.hidden)
     })?;
     // GPUI still has the pointer where it was when they last showed (development windows show only
     // part of the screen: the pointer stays out of them).
@@ -380,18 +487,25 @@ fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<(
         native::pointer_moved(view);
     }
     native::draw_now(&screens);
+    // Opening, the pill first: over the live screen for a moment, it looks just the same.
+    if opening && let Some(toolbar) = toolbar {
+        prepare_toolbar(overlay, toolbar, cx)?;
+        if !hidden {
+            native::show(toolbar, false);
+        }
+    }
     let previous = native::front_app();
     for (i, &view) in screens.iter().enumerate() {
         native::show(view, i == key);
-    }
-    if let Some(toolbar) = toolbar {
-        native::hide(toolbar);
     }
     cx.update(|cx| {
         let (focus, handles, stale) = overlay.update(cx, |o, _| {
             o.shown = Some(false);
             o.handoff = None;
             o.taking_over = Some(Instant::now());
+            if opening {
+                o.pill_hidden = hidden;
+            }
             // The app the user was in, for the keyboard to go back to.
             if previous.is_some() {
                 o.previous_app = previous;
@@ -425,63 +539,39 @@ fn take_over(overlay: &Entity<Overlay>, since: Instant, cx: &mut AsyncApp) -> an
     cx.update(|cx| overlay.update(cx, |o, _| o.taking_over = None))
 }
 
-/// The live toolbar, drawn at its size, in place of the frozen screens. From frozen, it shows at
-/// once, above them (they show just the screen now, as it was), and they give way once the system
-/// is back with the app the user was in (`handed_back`): with the Dock always shown, that's about
-/// half a second, which the user doesn't wait on to see ▶ worked.
+/// The live screen: the pill alone. From frozen, the frozen screens show just the screen at once
+/// (the pill stays where it is, above them), and give way once the system is back with the app the
+/// user was in (`handed_back`): with the Dock always shown, that's about half a second, which the
+/// user doesn't wait on to see ▶ worked.
 fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let (screens, toolbar, frozen, started) = cx.update(|cx| {
+    let (screens, toolbar, frozen, started, hidden) = cx.update(|cx| {
         let o = overlay.read(cx);
         let views: Vec<usize> = o.windows.iter().map(|w| w.view).collect();
-        (views, o.toolbar_window.as_ref().map(|t| t.view), o.shown == Some(false), o.handoff.is_some())
+        let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
+        (views, toolbar, o.shown == Some(false), o.handoff.is_some(), o.pill_hidden)
     })?;
-    // Drawn while hidden, the toolbar knows its size: the window fits it, and it's drawn again.
-    let prepare_toolbar = |cx: &mut AsyncApp| -> anyhow::Result<()> {
-        let Some(toolbar) = toolbar else { return Ok(()) };
-        native::pointer_moved(toolbar);
-        native::draw_now(&[toolbar]);
-        follow_toolbar(overlay, cx)?;
-        native::draw_now(&[toolbar]);
-        Ok(())
-    };
-    let show_toolbar = || {
-        if let Some(toolbar) = toolbar {
-            native::show(toolbar, false);
-        }
-    };
     if frozen {
         if !started {
             // At once, while the overlay's app is still the active one (drawn once it's in the
             // background, the frozen screens didn't show it): they show just the screen
-            // (`ScreenView`), under the live toolbar; then the system goes back to the user's app.
+            // (`ScreenView`); then the system goes back to the user's app.
             cx.update(|cx| {
                 overlay.update(cx, |o, cx| {
                     o.handoff = Some(Handoff { since: Instant::now(), back: None, swapped: true });
-                    cx.notify();
-                })
-            })?;
-            // In one redraw of the frozen screens, their toolbar goes and the live one shows, where
-            // its window is: shown under them meanwhile, it's there when they go. (Ordering a window
-            // in and drawing another don't reach the screen in the same frame.)
-            prepare_toolbar(cx)?;
-            let frame = toolbar.and_then(native::frame);
-            cx.update(|cx| {
-                overlay.update(cx, |o, cx| {
-                    o.handoff = Some(Handoff { since: Instant::now(), back: None, swapped: true });
-                    o.live_toolbar_frame = frame;
                     cx.notify();
                 })
             })?;
             native::draw_now(&screens);
-            show_toolbar();
             return begin_handoff(overlay, cx);
         }
         if !handed_back(overlay, cx)? {
             return Ok(());
         }
-    } else {
-        prepare_toolbar(cx)?;
-        show_toolbar();
+    }
+    // Opened live, or hidden with everything on the frozen screen.
+    if let Some(toolbar) = toolbar.filter(|_| !frozen || hidden) {
+        prepare_toolbar(overlay, toolbar, cx)?;
+        native::show(toolbar, false);
     }
     for view in screens {
         native::hide(view);
@@ -490,7 +580,7 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
         overlay.update(cx, |o, _| {
             o.shown = Some(true);
             o.handoff = None;
-            o.live_toolbar_frame = None;
+            o.pill_hidden = false;
         })
     })
 }
@@ -557,80 +647,105 @@ fn handed_back(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<b
     }
 }
 
-/// The live toolbar's window: as big as the toolbar, and under the pointer while it's moved.
+/// The pill's window: the pill where it goes (`pill_place`), under the pointer while it's moved,
+/// and the window as big as the pill and its list as drawn (`toolbar_frame`). macOS blurs what's
+/// behind them only (`native::set_glass`).
 fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
     let state = cx.update(|cx| {
         let o = overlay.read(cx);
-        let margin = TOOLBAR_MARGIN * 2.0;
-        let fits = o
-            .live_toolbar_bounds
-            .map(|b| (f32::from(b.size.width) as f64 + margin, f32::from(b.size.height) as f64 + margin));
-        let screens = o.spec().screens.clone();
-        o.toolbar_window.as_ref().map(|t| (t.view, fits, o.moving_toolbar, o.toolbar_at.is_some(), screens))
+        let p = |v: gpui::Pixels| f32::from(v) as f64;
+        let size = |b: Option<gpui::Bounds<gpui::Pixels>>| b.map(|b| (p(b.size.width), p(b.size.height)));
+        let (pill, whole) = (size(o.pill_bounds).unwrap_or(PILL_GUESS), size(o.toolbar_bounds));
+        // The pill and, open, its list (fading with it): where macOS blurs what's behind (in the
+        // window's points).
+        let rect = |b: gpui::Bounds<gpui::Pixels>| {
+            PtRect::new(p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height))
+        };
+        let (list, keys) = (o.list.shown(), o.keys_sheet.shown());
+        let shapes: Shapes = o
+            .pill_bounds
+            .map(|b| (rect(b), 12.0, 1.0))
+            .into_iter()
+            .chain(o.list_bounds.filter(|_| list > 0.0).map(|b| (rect(b), 12.0, list as f64)))
+            .chain(o.keys_bounds.filter(|_| keys > 0.0 && list == 0.0).map(|b| (rect(b), 12.0, keys as f64)))
+            .collect();
+        let (spec, sides) = (o.spec(), (o.list_left, o.list_up));
+        o.toolbar_window.as_ref().map(|t| {
+            let screens = spec.screens.clone();
+            let place = (o.toolbar_at, o.toolbar_screen, o.pill_rect);
+            (t.view, pill, whole.unwrap_or(pill), shapes, o.moving_toolbar, place, screens, spec.windowed, sides)
+        })
     })?;
-    let Some((view, fits, moving, placed, screens)) = state else { return Ok(()) };
+    let Some((view, pill, whole, shapes, moving, (mut at, mut index, last), screens, windowed, sides)) = state else {
+        return Ok(());
+    };
     let Some(frame) = native::frame(view) else { return Ok(()) };
-    let mut f = frame;
-    if let Some((w, h)) = fits
-        && ((w - f.width).abs() > 0.5 || (h - f.height).abs() > 0.5)
-    {
-        // Its top-left corner stays, or, where it was never moved, its top middle: it grows down.
-        f.y += f.height - h;
-        if !placed {
-            f.x += (f.width - w) / 2.0;
-        }
-        (f.width, f.height) = (w, h);
-    }
-    let (mut moved, mut let_go) = (None, false);
+    let (mut moved, mut let_go) = (false, false);
     if let Some((gx, gy)) = moving {
         if native::mouse_pressed() {
+            // Its top-left corner, on the screen under the pointer.
             let (mx, my) = native::mouse();
-            f.x = mx - gx - TOOLBAR_MARGIN;
-            f.y = my + gy + TOOLBAR_MARGIN - f.height;
-            // Never over the menu bar of the screen under the pointer.
-            if let Some(s) = screens.iter().find(|s| {
+            if let Some(i) = screens.iter().position(|s| {
                 let r = s.frame;
                 mx >= r.x && mx < r.x + r.width && my >= r.y && my <= r.y + r.height
             }) {
-                f.y = f.y.min(below_menu_bar(s) - f.height);
+                let r = screens[i].frame;
+                (at, index, moved) =
+                    (Some(((mx - gx - r.x) / r.width, (r.y + r.height - my - gy) / r.height)), i, true);
             }
-            moved = Some(f);
         } else {
             let_go = true;
         }
     }
-    if f != frame {
+    let Some(screen) = screens.get(index) else { return Ok(()) };
+    let place = pill_place(screen, windowed, at, pill);
+    let (f, left, up) = toolbar_frame(screen, windowed, place, whole);
+    // Where it shows is where it's kept: let go past an edge, it comes back there next time too.
+    if moved {
+        at = Some((place.x / screen.frame.width, place.y / screen.frame.height));
+    }
+    let same = |a: PtRect, b: PtRect| {
+        (a.x - b.x).abs() < 0.5
+            && (a.y - b.y).abs() < 0.5
+            && (a.width - b.width).abs() < 0.5
+            && (a.height - b.height).abs() < 0.5
+    };
+    let resized = (f.width - frame.width).abs() >= 0.5 || (f.height - frame.height).abs() >= 0.5;
+    if resized {
         native::set_frame(view, f);
+    } else if !same(f, frame) {
+        native::move_to(view, (f.x, f.y));
     }
-    if moved.is_none() && !let_go {
-        return Ok(());
+    // The mask is drawn at the window's size: again when it's resized.
+    let glass = cx.update(|cx| {
+        let last = overlay.read(cx).glass_shapes.as_ref();
+        (last.map(|(s, size)| (s, *size)) != Some((&shapes, (f.width, f.height)))).then_some(shapes)
+    })?;
+    if let Some(shapes) = &glass {
+        native::set_glass(view, shapes);
     }
+    // Moving, only the window moves; what goes with the pill catches up once it's let go.
+    let changed = (left, up) != sides || (last != Some((index, place)) && (moving.is_none() || let_go));
     cx.update(|cx| {
-        overlay.update(cx, |o, _| {
-            if let Some(f) = moved {
-                // The toolbar's top-left corner, as a fraction of the screen it's on.
-                let (left, top) = (f.x + TOOLBAR_MARGIN, f.y + f.height - TOOLBAR_MARGIN);
-                let screens = &o.spec().screens;
-                let index = screens
-                    .iter()
-                    .position(|s| {
-                        let r = s.frame;
-                        left >= r.x && left < r.x + r.width && top > r.y && top <= r.y + r.height
-                    })
-                    .unwrap_or(o.toolbar_screen);
-                if let Some(s) = screens.get(index) {
-                    let r = s.frame;
-                    o.toolbar_at = Some((
-                        ((left - r.x) / r.width).clamp(0.0, 1.0),
-                        ((r.y + r.height - top) / r.height).clamp(0.0, 1.0),
-                    ));
-                    o.toolbar_screen = index;
-                }
+        overlay.update(cx, |o, cx| {
+            if let Some(shapes) = glass {
+                o.glass_shapes = Some((shapes, (f.width, f.height)));
+            }
+            if moved {
+                (o.toolbar_at, o.toolbar_screen) = (at, index);
             }
             if let_go {
                 o.moving_toolbar = None;
                 o.placed_toolbar();
             }
+            if changed {
+                (o.list_left, o.list_up, o.pill_rect) = (left, up, Some((index, place)));
+                cx.notify();
+            }
         })
-    })
+    })?;
+    if resized || changed {
+        native::draw_now(&[view]);
+    }
+    Ok(())
 }

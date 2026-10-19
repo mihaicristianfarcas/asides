@@ -61,7 +61,7 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
         Host::Ghostty => Ok(vec![Step::Script(ghostty(&session.dir, &parts, submit))]),
         Host::Terminal => Ok(terminal(session.agent, &session.tty, &parts, submit)),
         Host::Other { name } => {
-            Err(format!("Asides can't type into {name}. Run the agent in Terminal, Ghostty or Diri."))
+            Err(format!("asides can't type into {name}. Run the agent in Terminal, Ghostty or Diri."))
         }
     }
 }
@@ -227,7 +227,7 @@ pub fn launch_script(
     }
     let command = words.iter().map(|w| sh_quote(w)).collect::<Vec<_>>().join(" ");
     format!(
-        "#!/bin/sh\n# Started by Asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-/bin/zsh}}\" -ilc 'printf %s \"$PATH\"' \
+        "#!/bin/sh\n# Started by asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-/bin/zsh}}\" -ilc 'printf %s \"$PATH\"' \
          2>/dev/null </dev/null) && [ -n \"$login_path\" ] && PATH=$login_path\nexport PATH\ncd {qdir} || exit 1\nexport {var}={launch}\nexec \
          {command}\n",
         name = agent.name(),

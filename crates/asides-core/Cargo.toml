@@ -1,6 +1,6 @@
 [package]
 name = "asides-core"
-description = "Notes, metadata and links shared by the asides CLI and the Asides menu-bar app"
+description = "Notes, metadata and links shared by the asides CLI and the asides menu-bar app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

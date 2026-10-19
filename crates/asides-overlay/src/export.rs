@@ -64,7 +64,7 @@ impl Exporter {
                 None,
             )
         };
-        Paint::new(self.accent).annotations(session, screen);
+        Paint::new(self.accent).annotations(session, screen, source);
         flipped.flushGraphics();
         NSGraphicsContext::restoreGraphicsState_class();
         let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?;
@@ -205,7 +205,7 @@ impl Paint {
         text_size(text, &self.font).width + 10.0
     }
 
-    fn annotations(&self, session: &Session, screen: usize) {
+    fn annotations(&self, session: &Session, screen: usize, source: &NSBitmapImageRep) {
         let state = &session.screens[screen];
         let (width, height) = (state.screen.width, state.screen.height);
         let (scale, units) = (state.screen.scale, session.units);
@@ -242,6 +242,9 @@ impl Paint {
 
         for m in &state.held {
             self.measurement(m, scale, units, width, height);
+        }
+        for a in &state.annotations {
+            self.moved(a, source, state.screen.scale);
         }
         for a in &state.annotations {
             self.annotation(a);
@@ -291,7 +294,7 @@ impl Paint {
     }
 
     fn annotation(&self, a: &Annotation) {
-        let (r, g, b, alpha) = style::annotation_color(a, self.accent_hex());
+        let (r, g, b, alpha) = style::annotation_color(a, a.intent, self.accent_hex());
         let ink = color((r, g, b), 1.0);
         match (&a.shape, a.area) {
             (Some(Shape::Sketch { points }), _) => {
@@ -352,6 +355,51 @@ impl Paint {
             &font,
             &NSColor::whiteColor(),
         );
+    }
+
+    /// A pin moved by its number: a copy of what it's on (from `source`, `scale` pixels a point)
+    /// where it goes, outlined, and an arrow there.
+    fn moved(&self, a: &Annotation, source: &NSBitmapImageRep, scale: f64) {
+        let Some(dest) = a.moved_region() else { return };
+        let (r, g, b, _) = style::annotation_color(a, a.intent, self.accent_hex());
+        let ink = color((r, g, b), 1.0);
+        let from = a.region().unwrap_or(PtRect::new(a.at.0, a.at.1, 0.0, 0.0));
+        if from.width >= 1.0 && from.height >= 1.0 {
+            // The bitmap's own coordinates: pixels, from its bottom.
+            let height = source.pixelsHigh() as f64;
+            let pixels = NSRect::new(
+                NSPoint::new(from.x * scale, height - (from.y + from.height) * scale),
+                NSSize::new(from.width * scale, from.height * scale),
+            );
+            unsafe {
+                source.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+                    ns(dest),
+                    pixels,
+                    NSCompositingOperation::SourceOver,
+                    0.92,
+                    true,
+                    None,
+                )
+            };
+            ink.setStroke();
+            stroke_rect(dest, 1.5, None);
+        }
+        let (start, end) = style::move_arrow(from, dest);
+        let [tip, left, right] = style::arrow_head(start, end);
+        let shaft = NSBezierPath::new();
+        shaft.moveToPoint(NSPoint::new(start.0, start.1));
+        shaft.lineToPoint(NSPoint::new((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0));
+        shaft.setLineWidth(style::DRAW_WIDTH as f64);
+        shaft.setLineCapStyle(NSLineCapStyle::Round);
+        ink.setStroke();
+        shaft.stroke();
+        let head = NSBezierPath::new();
+        head.moveToPoint(NSPoint::new(tip.0, tip.1));
+        head.lineToPoint(NSPoint::new(left.0, left.1));
+        head.lineToPoint(NSPoint::new(right.0, right.1));
+        head.closePath();
+        ink.setFill();
+        head.fill();
     }
 
     fn accent_hex(&self) -> u32 {
@@ -417,6 +465,13 @@ mod tests {
         ] {
             session.apply(&action);
         }
+        // The button's pin, dragged by its number to the right: a copy of the button there.
+        session.set_tool(asides_core::overlay::Tool::Annotate);
+        let (x, y) = session.screens[0].annotations[0].at;
+        session.mouse_down(0, x, y, false);
+        session.move_to(0, x + 140.0, y - 20.0);
+        session.mouse_up(0, x + 140.0, y - 20.0, 1.0);
+        assert_eq!(session.screens[0].annotations[0].moved, Some((140.0, -20.0)));
         let exporter = Exporter::new(&[&frame], (1.0, 0.176, 0.333));
         let around = crop(&session, 0, 24.0, false);
         let png = exporter.render(&session, 0, around).expect("a PNG");

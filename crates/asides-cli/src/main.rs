@@ -15,12 +15,12 @@ use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
 use clap::{Parser, Subcommand};
 
-/// Asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.
+/// asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.
 ///
-/// `⌃⌥Space` opens Asides over any app: click to pin an element, drag an area, talk, and press
+/// `⌃⌥Space` opens asides over any app: click to pin an element, drag an area, talk, and press
 /// `⌃⌥Space` again. The aside is typed into the agent session you last typed into (Claude Code,
 /// Codex, OpenCode… in Terminal, Ghostty or Diri), as your own message, and kept in
-/// ~/.asides/history. Run `asides` to open the Asides window.
+/// ~/.asides/history. Run `asides` to open the asides window.
 #[derive(Parser)]
 #[command(name = "asides", version)]
 struct Cli {
@@ -30,10 +30,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open Asides on the screen, as ⌃⌥Space does (open, it sends the aside).
-    #[command(alias = "annotate")]
+    /// Open asides on the screen, as ⌃⌥Space does (open, it sends the aside).
     Open,
-    /// List the agent sessions Asides can send asides to (the default first).
+    /// List the agent sessions asides can send asides to (the default first).
     Sessions {
         #[arg(long)]
         json: bool,
@@ -63,7 +62,7 @@ enum Command {
     /// Download the voice model (the one in the settings, or MODEL: small.en, medium.en,
     /// large-v3-turbo…).
     Download { model: Option<String> },
-    /// Show whether Asides is running and what it's doing.
+    /// Show whether asides is running and what it's doing.
     Status,
     /// Quit the menu-bar app.
     Quit,
@@ -90,14 +89,14 @@ enum Command {
         image: Option<PathBuf>,
         #[arg(long, default_value_t = 0.0)]
         at: f32,
-        /// Said about this annotation of the open Asides session.
+        /// Said about this annotation of the open asides session.
         #[arg(long)]
         annotation: Option<u32>,
-        /// The session it goes to (outside Asides): its id; the history only otherwise.
+        /// The session it goes to (outside asides): its id; the history only otherwise.
         #[arg(long)]
         to: Option<String>,
     },
-    /// Development: run an Asides session on an image, driven by a JSON script.
+    /// Development: run an asides session on an image, driven by a JSON script.
     #[command(hide = true)]
     SimulateMeasure {
         image: PathBuf,
@@ -145,7 +144,7 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Status) => status(),
         Some(Command::Quit) => {
             if running_state().is_none() {
-                println!("Asides is not running.");
+                println!("asides is not running.");
                 return Ok(());
             }
             send(&Link::Quit)
@@ -202,7 +201,7 @@ fn list_sessions(json: bool) -> Result<()> {
     let labels = sessions::labels(&found);
     for (session, label) in found.iter().zip(labels) {
         let mark = if Some(session.id()) == default { "●" } else { " " };
-        let reach = if session.host.reachable() { String::new() } else { " (Asides can't type there)".into() };
+        let reach = if session.host.reachable() { String::new() } else { " (asides can't type there)".into() };
         let ago = session.last_input.map(ago).unwrap_or_default();
         println!(
             "{mark} {:<8} {label}  {}  in {}{reach}  {ago}",
@@ -244,7 +243,7 @@ fn list_history(count: usize, json: bool) -> Result<()> {
         return Ok(());
     }
     if asides.is_empty() {
-        println!("No asides yet. ⌃⌥Space opens Asides.");
+        println!("No asides yet. ⌃⌥Space opens asides.");
     }
     for aside in asides {
         let sent = match aside.last_delivery() {
@@ -279,7 +278,7 @@ fn absolute_message(aside: &Aside) -> String {
 /// Sends an aside again and waits for it to get there (or not).
 fn send_again(id: &str, to: Option<String>) -> Result<()> {
     if running_state().is_none() {
-        bail!("Asides is not running. Open it from Applications (or run `asides`).");
+        bail!("asides is not running. Open it from Applications (or run `asides`).");
     }
     let aside = find(id)?;
     let before = aside.record.deliveries.len();
@@ -302,25 +301,25 @@ fn send_again(id: &str, to: Option<String>) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    bail!("Asides didn't say whether it got there; `asides status` may say why")
+    bail!("asides didn't say whether it got there; `asides status` may say why")
 }
 
 fn status() -> Result<()> {
     let config = Config::load(&paths::config_path()).unwrap_or_default();
     match running_state() {
-        None => println!("Asides is not running."),
+        None => println!("asides is not running."),
         Some(state) => {
-            println!("Asides is running (pid {}) · {}", state.pid, state.status);
+            println!("asides is running (pid {}): {}", state.pid, state.status);
             if let Some(detail) = &state.detail {
                 println!("  {detail}");
             }
             println!(
-                "  {} opens it · {} switches frozen and live",
+                "  {} opens it, {} switches frozen and live",
                 pretty_shortcut(&config.shortcuts.asides),
                 pretty_shortcut(&config.shortcuts.freeze)
             );
             if !state.model_ready {
-                println!("  no voice model yet: `asides download` (or click the microphone in Asides)");
+                println!("  no voice model yet: `asides download` (or click the microphone in asides)");
             }
             if state.microphone != "granted" && !state.microphone.is_empty() {
                 println!("  microphone: {}", state.microphone);
@@ -360,14 +359,14 @@ pub(crate) fn send(link: &Link) -> Result<()> {
     let out = open.arg(link.to_url()).output()?;
     if !out.status.success() {
         bail!(
-            "could not reach Asides.app ({}). Is it installed? Run `make install` in the asides repo.",
+            "could not reach asides.app ({}). Is it installed? Run `make install` in the asides repo.",
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
     Ok(())
 }
 
-/// The app this command ships in (`Asides.app/Contents/Helpers/asides`), when it runs from one.
+/// The app this command ships in (`asides.app/Contents/Helpers/asides`), when it runs from one.
 fn own_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let helpers = exe.parent()?;
@@ -387,7 +386,7 @@ pub(crate) fn wait_for_ack(request: &str) -> Result<AppState> {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    bail!("Asides did not respond within 15 s")
+    bail!("asides did not respond within 15 s")
 }
 
 /// The published state, if the app that wrote it is still alive.
@@ -409,9 +408,8 @@ mod tests {
     fn parses_the_commands() {
         let parse = |line: &[&str]| Cli::try_parse_from(std::iter::once("asides").chain(line.iter().copied()));
         assert!(parse(&[]).unwrap().command.is_none());
-        assert!(matches!(parse(&["annotate"]).unwrap().command, Some(Command::Open)));
+        assert!(matches!(parse(&["open"]).unwrap().command, Some(Command::Open)));
         let Some(Command::Send { id, to }) = parse(&["send", "--to", "4242"]).unwrap().command else { panic!() };
         assert_eq!((id.as_str(), to.as_deref()), ("last", Some("4242")));
-        assert!(parse(&["claude"]).is_err(), "agents start in their own terminals now");
     }
 }

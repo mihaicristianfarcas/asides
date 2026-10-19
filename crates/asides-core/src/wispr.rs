@@ -106,7 +106,7 @@ impl History {
         let col = |name: &str| if has(name) { format!("\"{name}\"") } else { "NULL".into() };
         if !has("timestamp") || !(has("formattedText") || has("asrText")) {
             self.columns = None;
-            return Err("Wispr Flow's history has a format Asides doesn't know. Please report it.".into());
+            return Err("Wispr Flow's history has a format asides doesn't know. Please report it.".into());
         }
         let id = if has("transcriptEntityId") { col("transcriptEntityId") } else { "rowid".into() };
         let sql = format!(

@@ -178,6 +178,11 @@ pub enum Placed {
         screen: usize,
         index: usize,
     },
+    /// A pin dragged by its number: identify what's where it goes.
+    Moved {
+        screen: usize,
+        index: usize,
+    },
     /// A screenshot to take (the last of `shots`).
     Shot {
         screen: usize,
@@ -208,12 +213,30 @@ pub fn lookups(annotation: &Annotation) -> Vec<(Part, f64, f64)> {
     }
 }
 
+/// Where to look up what's where a moved annotation goes (its moved region's middle).
+pub fn move_lookup(annotation: &Annotation) -> Option<(f64, f64)> {
+    let r = annotation.moved_region()?;
+    Some((r.x + r.width / 2.0, r.y + r.height / 2.0))
+}
+
 /// Something added, for undo (Delete removes the last one).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Added {
     Held(usize),
     Guide(usize),
     Annotation(usize),
+    /// An annotation moved, and what it was before: its move and its kind of request.
+    Moved(usize, Option<(f64, f64)>, Option<Intent>),
+}
+
+impl Added {
+    /// The annotation it's about.
+    fn annotation(&mut self) -> Option<&mut usize> {
+        match self {
+            Added::Annotation(i) | Added::Moved(i, ..) => Some(i),
+            _ => None,
+        }
+    }
 }
 
 /// Guides and held measurements, kept from one session to restore in the next (R).
@@ -253,9 +276,6 @@ pub struct Session {
     pub moving: bool,
     /// Tab: everything hidden, to see the frozen screen as it was.
     pub hidden: bool,
-    /// Annotate: the element found under the pointer (Identify UI Elements), in its screen's
-    /// points, so a click annotates it rather than a larger section around it.
-    pub element: Option<(usize, PtRect)>,
     pub shots: Vec<Shot>,
     /// Seconds into the session as of what the user last did: what's added is stamped with it.
     pub clock: f32,
@@ -281,7 +301,6 @@ impl Session {
             drag: None,
             moving: false,
             hidden: false,
-            element: None,
             shots: Vec::new(),
             clock: 0.0,
             added: Vec::new(),
@@ -382,7 +401,7 @@ impl Session {
     pub fn drag_area(&self) -> Option<(usize, PtRect, bool)> {
         let drag = self.drag.as_ref()?;
         let rect = drag.rect();
-        if drag.is_click() || self.tool == Tool::Draw {
+        if drag.is_click() || self.tool == Tool::Draw || self.moving_pin().is_some() {
             return None;
         }
         if !(drag.snap && self.snapping) || self.tool != Tool::Measure || self.alternate {
@@ -392,6 +411,21 @@ impl Session {
             Some(snapped) => (drag.screen, snapped, true),
             None => (drag.screen, rect, false),
         })
+    }
+
+    /// A pin being dragged by its number (Annotate or Draw; not an arrow, which says where it goes
+    /// already): its screen and index, and how far it's been dragged.
+    pub fn moving_pin(&self) -> Option<(usize, usize, (f64, f64))> {
+        let drag = self.drag.as_ref().filter(|d| d.snap && !d.is_click())?;
+        if !matches!(self.tool, Tool::Annotate | Tool::Draw) {
+            return None;
+        }
+        let index = self.marker_at(drag.screen, drag.start.0, drag.start.1)?;
+        let a = &self.screens[drag.screen].annotations[index];
+        if matches!(a.shape, Some(Shape::Arrow { .. })) {
+            return None;
+        }
+        Some((drag.screen, index, (drag.current.0 - drag.start.0, drag.current.1 - drag.start.1)))
     }
 
     /// ⌥-drag with the Measure tool: the objects inside the area being dragged.
@@ -487,7 +521,12 @@ impl Session {
         self.move_to(screen, x, y);
         let area = self.drag_area();
         let objects = self.drag_objects();
+        let moving = self.moving_pin();
         let Some(drag) = self.drag.take() else { return Placed::Nothing };
+        if let Some((screen, index, offset)) = moving {
+            self.moving = false;
+            return self.move_pin(screen, index, offset);
+        }
         self.moving = false;
         let screen = drag.screen;
         // A sketch can end where it started (a circle): it's a click only if it stayed put.
@@ -619,12 +658,10 @@ impl Session {
     }
 
     /// The measured section (a held area, snapped to an object or drawn) that Annotate annotates at
-    /// `(x, y)`: the smallest one there, unless the element under the pointer (`element`) is
-    /// clearly smaller. What's outlined under the pointer, and annotated, is the most specific.
+    /// `(x, y)`: the smallest one there.
     pub fn section_at(&self, screen: usize, x: f64, y: f64) -> Option<PtRect> {
         let size = |r: &PtRect| r.width * r.height;
-        let section = self
-            .screens
+        self.screens
             .get(screen)?
             .held
             .iter()
@@ -632,13 +669,7 @@ impl Session {
                 Measurement::Area { rect, .. } if rect.contains(x, y) => Some(*rect),
                 _ => None,
             })
-            .min_by(|a, b| size(a).total_cmp(&size(b)))?;
-        match self.element {
-            Some((s, frame)) if s == screen && frame.contains(x, y) && size(&frame) < size(&section) => {
-                fits(frame, section).then_some(section)
-            }
-            _ => Some(section),
-        }
+            .min_by(|a, b| size(a).total_cmp(&size(b)))
     }
 
     fn annotate(
@@ -665,6 +696,19 @@ impl Session {
             self.describe(screen, index);
         }
         Placed::Annotation { screen, index }
+    }
+
+    /// Moves what annotation `index` is on by `offset` (its number dragged there): a change, unless
+    /// it says what else it is. Undo puts it back.
+    fn move_pin(&mut self, screen: usize, index: usize, offset: (f64, f64)) -> Placed {
+        let Some(a) = self.screens.get_mut(screen).and_then(|s| s.annotations.get_mut(index)) else {
+            return Placed::Nothing;
+        };
+        self.added.push((screen, Added::Moved(index, a.moved, a.intent)));
+        a.moved = Some(offset);
+        a.intent = a.intent.or(Some(Intent::Change));
+        a.target = None;
+        Placed::Moved { screen, index }
     }
 
     /// The marker under `(x, y)`, if any.
@@ -695,7 +739,8 @@ impl Session {
             (_, Some(area)) => Some(area),
             _ => None,
         };
-        let element = match (region, element.frame) {
+        // What's where it points or goes is named whatever its size.
+        let element = match (region.filter(|_| part == Part::Element), element.frame) {
             (Some(region), Some(frame)) if !fits(frame, region) => {
                 Element { app: element.app, window: element.window, url: element.url, ..Element::default() }
             }
@@ -750,6 +795,14 @@ impl Session {
             a.intent = intent;
             a.severity = severity;
         }
+    }
+
+    /// What the last annotation put down asks for (⌘1–⌘4 with no card open; the same again clears
+    /// it): its number, and what it asks for now.
+    pub fn set_last_intent(&mut self, intent: Intent) -> Option<(u32, Option<Intent>)> {
+        let a = self.screens.iter_mut().flat_map(|s| s.annotations.iter_mut()).max_by_key(|a| a.key)?;
+        a.intent = if a.intent == Some(intent) { None } else { Some(intent) };
+        Some((a.number, a.intent))
     }
 
     /// Adds a guide through the cursor, snapped to a held object's edges or middle, else to the
@@ -871,6 +924,10 @@ impl Session {
                 state.annotations.remove(i);
                 self.renumber();
             }
+            Added::Moved(i, moved, intent) if i < state.annotations.len() => {
+                let a = &mut state.annotations[i];
+                (a.moved, a.intent, a.target) = (moved, intent, None);
+            }
             _ => {}
         }
         true
@@ -879,9 +936,9 @@ impl Session {
     pub fn remove_annotation(&mut self, screen: usize, index: usize) {
         if self.screens.get(screen).is_some_and(|s| index < s.annotations.len()) {
             self.screens[screen].annotations.remove(index);
-            self.added.retain(|&(s, a)| !(s == screen && a == Added::Annotation(index)));
+            self.added.retain_mut(|(s, a)| !(*s == screen && a.annotation().is_some_and(|i| *i == index)));
             for (s, a) in &mut self.added {
-                if let Added::Annotation(i) = a
+                if let Some(i) = a.annotation()
                     && *s == screen
                     && *i > index
                 {
@@ -1413,7 +1470,28 @@ mod tests {
         s.snapping = false;
         s.add_guide_at(0, Axis::Y, 3.0, 33.3);
         assert_eq!(s.screens[0].guides[1].position, 33.5);
-        assert_eq!(s.markdown(Detail::Compact), "**Measured** in pt\n**Guides:** x 10 · y 33.5");
+        assert_eq!(s.markdown(Detail::Compact), "**Measured** in pt\n**Guides:** x 10, y 33.5");
+    }
+
+    #[test]
+    fn the_last_annotation_takes_an_intent() {
+        let mut s = session();
+        assert_eq!(s.set_last_intent(Intent::Fix), None);
+        for at in [(25.0, 20.0), (70.0, 30.0)] {
+            s.apply(&Action::Annotate {
+                screen: 0,
+                at,
+                area: None,
+                element: None,
+                comment: String::new(),
+                intent: None,
+                severity: None,
+            });
+        }
+        assert_eq!(s.set_last_intent(Intent::Question), Some((2, Some(Intent::Question))));
+        assert_eq!(s.screens[0].annotations[0].intent, None);
+        // The same again clears it, as the card's dots do.
+        assert_eq!(s.set_last_intent(Intent::Question), Some((2, None)));
     }
 
     #[test]
@@ -1516,24 +1594,52 @@ mod tests {
         assert_eq!(s.apply(&Action::Click { screen: 0, at: (60.0, 30.0) }), Placed::Annotation { screen: 0, index: 0 });
         assert_eq!(s.screens[0].annotations[0].area, Some(section));
         assert_eq!(s.apply(&Action::Click { screen: 0, at: (65.0, 35.0) }), Placed::Edit { screen: 0, index: 0 });
-        // The element under the pointer, much smaller than the section, is annotated instead.
-        s.element = Some((0, PtRect::new(20.0, 15.0, 30.0, 10.0)));
-        assert_eq!(s.section_at(0, 25.0, 20.0), None);
-        assert_eq!(s.apply(&Action::Click { screen: 0, at: (25.0, 20.0) }), Placed::Annotation { screen: 0, index: 1 });
-        assert_eq!((s.screens[0].annotations[1].at, s.screens[0].annotations[1].area), ((25.0, 20.0), None));
-        // A section snapped to the button (detected): the smallest section there, and about the
-        // element's size, so it's the section. The context menu annotates a held one.
+        // A section snapped to the button (detected): the smallest section there. The context menu
+        // annotates a held one.
         s.set_tool(Tool::Measure);
         s.apply(&Action::Drag { screen: 0, from: (15.0, 12.0), to: (55.0, 30.0), snap: true });
         let button = PtRect::new(20.0, 15.0, 30.0, 10.0);
         assert_eq!(s.screens[0].held[1], Measurement::Area { rect: button, snapped: true });
         assert_eq!(s.section_at(0, 25.0, 20.0), Some(button));
-        assert_eq!(s.annotate_held(0, 1, 2.0), Placed::Annotation { screen: 0, index: 2 });
-        assert_eq!(s.screens[0].annotations[2].area, Some(button));
-        assert_eq!(s.annotate_held(0, 1, 3.0), Placed::Edit { screen: 0, index: 2 });
+        assert_eq!(s.annotate_held(0, 1, 2.0), Placed::Annotation { screen: 0, index: 1 });
+        assert_eq!(s.screens[0].annotations[1].area, Some(button));
+        assert_eq!(s.annotate_held(0, 1, 3.0), Placed::Edit { screen: 0, index: 1 });
         // Elsewhere, Annotate Here annotates the element under it.
-        assert_eq!(s.annotate_at(0, 90.0, 45.0, 4.0), Placed::Annotation { screen: 0, index: 3 });
-        assert_eq!(s.screens[0].annotations[3].area, None);
+        assert_eq!(s.annotate_at(0, 90.0, 45.0, 4.0), Placed::Annotation { screen: 0, index: 2 });
+        assert_eq!(s.screens[0].annotations[2].area, None);
+    }
+
+    #[test]
+    fn moves_a_pin_by_its_number() {
+        let mut s = session();
+        s.set_tool(Tool::Annotate);
+        // An area around the button, its number at its corner.
+        s.mouse_down(0, 20.0, 15.0, false);
+        s.move_to(0, 50.0, 25.0);
+        assert_eq!(s.mouse_up(0, 50.0, 25.0, 1.0), Placed::Annotation { screen: 0, index: 0 });
+        // Its number dragged 30 right and 10 down: no new area, the area goes there.
+        s.mouse_down(0, 20.0, 15.0, false);
+        s.move_to(0, 50.0, 25.0);
+        assert_eq!((s.moving_pin(), s.drag_area()), (Some((0, 0, (30.0, 10.0))), None));
+        assert_eq!(s.mouse_up(0, 50.0, 25.0, 2.0), Placed::Moved { screen: 0, index: 0 });
+        let a = &s.screens[0].annotations[0];
+        assert_eq!((a.moved, a.intent), (Some((30.0, 10.0)), Some(Intent::Change)));
+        assert_eq!(a.moved_region(), Some(PtRect::new(50.0, 25.0, 30.0, 10.0)));
+        assert_eq!(move_lookup(a), Some((65.0, 30.0)));
+        let named =
+            Annotation { target: Some(Element { name: Some("footer".into()), ..Element::default() }), ..a.clone() };
+        let inspection = &s.inspections()[0].1;
+        assert!(
+            inspection
+                .annotation_markdown(&named, Detail::Standard)
+                .contains("**Move to:** (50, 25), 30 pt right and 10 pt down, over footer"),
+            "{}",
+            inspection.annotation_markdown(&named, Detail::Standard)
+        );
+        // Undo puts it back.
+        assert!(s.undo());
+        let a = &s.screens[0].annotations[0];
+        assert_eq!((a.moved, a.intent), (None, None));
     }
 
     #[test]

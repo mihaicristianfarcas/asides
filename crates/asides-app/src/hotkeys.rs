@@ -1,5 +1,5 @@
 //! Global shortcuts (Carbon hot keys via `global-hotkey`; no Accessibility permission needed).
-//! They work while Asides is open too, over the live screen as well as frozen.
+//! They work while asides is open too, over the live screen as well as frozen.
 
 use std::str::FromStr;
 
@@ -9,9 +9,9 @@ use global_hotkey::hotkey::HotKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
-    /// Opens Asides frozen; while it's open, sends the aside.
+    /// Opens asides frozen; while it's open, sends the aside.
     Asides,
-    /// Freezes the screen, or goes back to live; closed, opens Asides live.
+    /// Freezes the screen, or goes back to live; closed, opens asides live.
     Freeze,
 }
 
@@ -51,5 +51,20 @@ impl Hotkeys {
 
     pub fn action(&self, id: u32) -> Option<Action> {
         self.bindings.iter().find(|(hotkey, _)| hotkey.id() == id).map(|(_, action)| *action)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use asides_core::keys::{Chord, Mods};
+
+    #[test]
+    fn takes_shortcuts_the_window_records() {
+        let mods = Mods { ctrl: true, alt: true, ..Mods::default() };
+        for key in ["space", "p", "1", "f5", "/", "=", "enter", "left", "escape", "`"] {
+            let text = Chord::pressed(key, mods).and_then(|c| c.to_global()).unwrap();
+            assert!(HotKey::from_str(&text).is_ok(), "{text}");
+        }
     }
 }

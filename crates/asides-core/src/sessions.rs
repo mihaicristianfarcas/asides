@@ -41,7 +41,7 @@ impl Host {
         }
     }
 
-    /// Asides can type into sessions there.
+    /// asides can type into sessions there.
     pub fn reachable(&self) -> bool {
         !matches!(self, Host::Other { .. })
     }
@@ -80,7 +80,7 @@ pub struct AgentSession {
     /// What the agent calls the session, when it says (Claude Code's `asides-6b`).
     #[serde(default)]
     pub name: Option<String>,
-    /// Asides started it (with [`LAUNCH_VAR`]): the id of that launch.
+    /// asides started it (with [`LAUNCH_VAR`]): the id of that launch.
     #[serde(default)]
     pub launch: Option<String>,
 }
@@ -96,10 +96,14 @@ impl AgentSession {
         repo_name(&self.dir)
     }
 
-    /// "Claude Code · asides-6b", "Codex · asides".
+    /// "Claude Code (asides-6b)", "Codex (asides)".
     pub fn label(&self) -> String {
-        let place = self.name.clone().unwrap_or_else(|| self.place());
-        format!("{} · {place}", self.agent.name())
+        format!("{} ({})", self.agent.name(), self.where_())
+    }
+
+    /// Its name, when the agent says it, or the repository it works in.
+    fn where_(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.place())
     }
 }
 
@@ -112,26 +116,25 @@ pub fn repo_name(dir: &Path) -> String {
 /// Labels for `sessions`, told apart where two would read the same (by their app, then a number).
 pub fn labels(sessions: &[AgentSession]) -> Vec<String> {
     let plain: Vec<String> = sessions.iter().map(AgentSession::label).collect();
-    let with_host: Vec<String> =
-        sessions.iter().zip(&plain).map(|(s, label)| format!("{label} · {}", s.host.name())).collect();
-    let mut labels: Vec<String> = plain
+    let mut details: Vec<String> = sessions
         .iter()
-        .enumerate()
-        .map(
-            |(i, label)| {
-                if plain.iter().filter(|l| *l == label).count() > 1 { with_host[i].clone() } else { label.clone() }
-            },
-        )
+        .zip(&plain)
+        .map(|(s, label)| match plain.iter().filter(|l| *l == label).count() {
+            1 => s.where_(),
+            _ => format!("{} in {}", s.where_(), s.host.name()),
+        })
         .collect();
-    for i in 0..labels.len() {
-        let same: Vec<usize> = (0..labels.len()).filter(|&j| labels[j] == labels[i]).collect();
+    let agents: Vec<&str> = sessions.iter().map(|s| s.agent.name()).collect();
+    for i in 0..details.len() {
+        let same: Vec<usize> =
+            (0..details.len()).filter(|&j| details[j] == details[i] && agents[j] == agents[i]).collect();
         if same.len() > 1 {
             for (n, &j) in same.iter().enumerate() {
-                labels[j] = format!("{} ({})", labels[j], n + 1);
+                details[j] = format!("{}, {}", details[j], n + 1);
             }
         }
     }
-    labels
+    agents.iter().zip(details).map(|(agent, detail)| format!("{agent} ({detail})")).collect()
 }
 
 /// The session an aside goes to by default: the reachable one whose terminal got input last.
@@ -414,10 +417,11 @@ mod tests {
         assert_eq!(latest(&sessions).map(|s| s.pid), Some(3), "Warp can't be typed into");
         assert_eq!(
             labels(&sessions),
-            ["Claude Code · app · Terminal", "Claude Code · app · Warp", "Claude Code · app · Ghostty"]
+            ["Claude Code (app in Terminal)", "Claude Code (app in Warp)", "Claude Code (app in Ghostty)"]
         );
         let same = [session(1, Host::Terminal, None), session(4, Host::Terminal, None)];
-        assert_eq!(labels(&same), ["Claude Code · app · Terminal (1)", "Claude Code · app · Terminal (2)"]);
+        assert_eq!(labels(&same), ["Claude Code (app in Terminal, 1)", "Claude Code (app in Terminal, 2)"]);
+        assert_eq!(labels(&sessions[..1]), ["Claude Code (app)"]);
     }
 
     #[test]

@@ -1,16 +1,17 @@
 //! A text field for an annotation's typed feedback, after GPUI's input example: typing (with the
 //! input methods macOS offers), selection, copy and paste. Long text wraps, and the field grows a
 //! line at a time to show it, up to `MAX_LINES`; past that it scrolls, keeping the caret in view.
-//! One paragraph: Return saves the card.
+//! One paragraph: Return saves the card (or, in the asides window, the setting). Its colors are a
+//! [`Look`].
 
 use std::ops::Range;
 
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent, SharedString, Style, TextAlign, TextRun,
-    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, hsla, point, prelude::*, px, relative,
-    rgba, size,
+    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, KeyBinding, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollWheelEvent, SharedString, Style,
+    TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, hsla, point,
+    prelude::*, px, relative, rgba, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -43,8 +44,34 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// A field's colors.
+#[derive(Clone, Copy)]
+pub struct Look {
+    pub text: Hsla,
+    pub placeholder: Hsla,
+    pub border: Hsla,
+    pub background: Hsla,
+    pub caret: Hsla,
+    pub selection: Hsla,
+}
+
+impl Default for Look {
+    /// On a card's glass: white, with only a hairline.
+    fn default() -> Look {
+        Look {
+            text: gpui::white(),
+            placeholder: hsla(0., 0., 1., 0.4),
+            border: rgba(0xffffff1f).into(),
+            background: hsla(0., 0., 0., 0.),
+            caret: rgba(0xc2d6f6ff).into(),
+            selection: rgba(0xc2d6f659).into(),
+        }
+    }
+}
+
 pub struct TextInput {
     focus_handle: FocusHandle,
+    pub look: Look,
     pub content: SharedString,
     placeholder: SharedString,
     selected_range: Range<usize>,
@@ -64,6 +91,7 @@ impl TextInput {
     pub fn new(content: &str, placeholder: &str, cx: &mut Context<Self>) -> TextInput {
         TextInput {
             focus_handle: cx.focus_handle(),
+            look: Look::default(),
             content: content.to_string().into(),
             placeholder: placeholder.to_string().into(),
             selected_range: content.len()..content.len(),
@@ -80,6 +108,14 @@ impl TextInput {
 
     pub fn text(&self) -> String {
         self.content.to_string()
+    }
+
+    /// Replaces the text, the caret at its end.
+    pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.content = text.to_string().into();
+        self.selected_range = text.len()..text.len();
+        self.marked_range = None;
+        cx.notify();
     }
 
     /// Types `text` where the caret is (over the selection).
@@ -404,7 +440,7 @@ impl TextElement {
         let input = self.input.read(cx);
         let style = window.text_style();
         let (text, color) = if input.content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 1., 0.4))
+            (input.placeholder.clone(), input.look.placeholder)
         } else {
             (input.content.clone(), style.color)
         };
@@ -527,10 +563,10 @@ impl Element for TextElement {
         let (start, end) = (at(selected.start), at(selected.end));
         let (selection, cursor) = if selected.is_empty() {
             let caret = Bounds::new(at(input.cursor_offset()), size(px(2.), line_height));
-            (Vec::new(), Some(fill(caret, rgba(0xc2d6f6ff))))
+            (Vec::new(), Some(fill(caret, input.look.caret)))
         } else {
             // The selected part of each line it spans.
-            let tint = rgba(0xc2d6f659);
+            let tint = input.look.selection;
             let row = |from: Pixels, to: Pixels, y: Pixels| {
                 fill(Bounds::from_corners(point(from, y), point(to, y + line_height)), tint)
             };
@@ -621,12 +657,12 @@ impl Render for TextInput {
             .px_2()
             .py_1p5()
             .rounded_md()
-            .bg(rgba(0xffffff14))
+            .bg(self.look.background)
             .border_1()
-            .border_color(rgba(0xffffff26))
+            .border_color(self.look.border)
             .text_size(px(13.))
             .line_height(px(18.))
-            .text_color(gpui::white())
+            .text_color(self.look.text)
             .child(TextElement { input: cx.entity() })
     }
 }

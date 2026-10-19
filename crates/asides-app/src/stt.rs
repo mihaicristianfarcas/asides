@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use asides_core::markdown::Segment;
+use asides_core::markdown::{Segment, Word};
 use asides_core::models::ModelSpec;
 use sha2::{Digest, Sha256};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -84,7 +84,7 @@ impl ModelManager {
                 Some(ModelState::Downloading { .. }) => states = self.changed.wait(states).unwrap(),
                 Some(ModelState::Failed(msg)) => bail!("{msg}"),
                 _ => bail!(
-                    "There's no voice model yet: click the microphone in Asides, or download one in the Asides window \
+                    "There's no voice model yet: click the microphone in asides, or download one in the asides window \
                      (Settings)"
                 ),
             }
@@ -193,20 +193,53 @@ impl Transcriber {
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        // Each word's time: a pin goes after the word said as it was placed.
+        params.set_token_timestamps(true);
         state.full(params, pcm)?;
 
+        let eot = self.context.token_eot();
         let segments = state
             .as_iter()
             .map(|s| -> Result<Segment> {
-                Ok(Segment {
-                    start: s.start_timestamp() as f32 / 100.0,
-                    end: s.end_timestamp() as f32 / 100.0,
-                    text: s.to_str_lossy()?.into_owned(),
-                })
+                let (start, end) = (s.start_timestamp() as f32 / 100.0, s.end_timestamp() as f32 / 100.0);
+                let text = s.to_str_lossy()?.into_owned();
+                let tokens = (0..s.n_tokens()).filter_map(|i| s.get_token(i)).filter(|t| t.token_id() < eot);
+                let tokens: Vec<(f32, Vec<u8>)> = tokens
+                    .filter_map(|t| Some((t.token_data().t0 as f32 / 100.0, t.to_bytes().ok()?.to_vec())))
+                    .collect();
+                let words = words(&tokens, start, end).filter(|w| same_text(w, &text)).unwrap_or_default();
+                Ok(Segment { start, end, text, words })
             })
             .collect::<Result<_>>()?;
         Ok(segments)
     }
+}
+
+/// A segment's tokens (their start and bytes: a letter can span two) as words, each starting at
+/// its first token (a token starting with a space starts a word), in order and within the segment.
+fn words(tokens: &[(f32, Vec<u8>)], start: f32, end: f32) -> Option<Vec<Word>> {
+    let mut words: Vec<(f32, Vec<u8>)> = Vec::new();
+    for (t0, bytes) in tokens {
+        match words.last_mut() {
+            Some((_, word)) if !bytes.starts_with(b" ") => word.extend_from_slice(bytes),
+            _ => {
+                let after = words.last().map_or(start, |w| w.0);
+                words.push((t0.clamp(after, end.max(after)), bytes.clone()));
+            }
+        }
+    }
+    (!words.is_empty()).then(|| {
+        words
+            .into_iter()
+            .map(|(start, bytes)| Word { start, text: String::from_utf8_lossy(&bytes).into_owned() })
+            .collect()
+    })
+}
+
+/// The words make the segment's text (else they're left out: it's said as one).
+fn same_text(words: &[Word], text: &str) -> bool {
+    let joined: String = words.iter().map(|w| w.text.as_str()).collect();
+    joined.split_whitespace().eq(text.split_whitespace())
 }
 
 /// The most likely language among `allowed` (any language Whisper knows when empty), and whether
@@ -388,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs the large-v3-turbo model in ~/Library/Application Support/Asides/models"]
+    #[ignore = "needs the large-v3-turbo model in ~/Library/Application Support/asides/models"]
     fn transcribes_romanian_and_english_verbatim() {
         let spec = ModelSpec::find("large-v3-turbo");
         let mut transcriber = Transcriber::load(spec.id, &spec.path()).unwrap();
@@ -405,6 +438,13 @@ mod tests {
         assert!(plain_text(&en).contains("padding on the summary card"));
         assert!(en.windows(2).all(|w| w[0].start <= w[1].start), "segments are in order");
         assert!(en.last().unwrap().end > 9.0, "timestamps cover the clip");
+        // Each word timed, in order and within its segment, diacritics whole.
+        for s in ro.iter().chain(&en) {
+            println!("{:?}", s.words.iter().map(|w| format!("{:.2} {}", w.start, w.text.trim())).collect::<Vec<_>>());
+            assert!(!s.words.is_empty() && same_text(&s.words, &s.text), "{s:?}");
+            assert!(s.words.windows(2).all(|w| w[0].start <= w[1].start), "{s:?}");
+            assert!(s.words.iter().all(|w| (s.start..=s.end).contains(&w.start)), "{s:?}");
+        }
     }
 
     #[test]

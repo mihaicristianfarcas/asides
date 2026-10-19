@@ -1,6 +1,6 @@
 [package]
 name = "asides-cli"
-description = "The asides command: binds a repo to the Asides menu-bar app"
+description = "The asides command: binds a repo to the asides menu-bar app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

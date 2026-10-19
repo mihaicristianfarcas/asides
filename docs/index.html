@@ -175,8 +175,8 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .status[data-state="busy"] .i-busy,
 .status[data-state="done"] .i-done { display: block; }
 
-/* Asides, frozen: the pill under the menu bar (the microphone, where the aside goes, send and
-   close), the element under the pointer outlined, and numbered pins. */
+/* asides, frozen: the pill under the menu bar (the microphone, where the aside goes, send and
+   close), and numbered pins. */
 .pill {
   position: absolute;
   top: calc(38 * var(--u));
@@ -207,20 +207,6 @@ h1 { font-weight: 600; letter-spacing: -0.01em; }
 .pill .div { width: calc(1 * var(--u)); height: calc(20 * var(--u)); margin-right: calc(2 * var(--u)); background: rgba(255, 255, 255, 0.2); }
 .pill .send, .pill .stop { display: grid; place-items: center; width: calc(30 * var(--u)); height: calc(28 * var(--u)); border-radius: calc(8 * var(--u)); }
 .pill .send { background: #c2d6f6; color: #16213a; }
-.outline {
-  position: absolute;
-  top: calc(var(--y, 0) * var(--u));
-  left: calc(var(--x, 0) * var(--u));
-  z-index: 6;
-  width: calc(var(--w, 0) * var(--u));
-  height: calc(var(--h, 0) * var(--u));
-  border: calc(2 * var(--u)) solid #3b82f6;
-  border-radius: calc(5 * var(--u));
-  background: rgba(59, 130, 246, 0.08);
-  opacity: 0;
-  transition: opacity 120ms ease-out;
-}
-.outline.on { opacity: 1; }
 .pin {
   position: absolute;
   top: calc(var(--y, 0) * var(--u));
@@ -563,7 +549,7 @@ h2 { font-weight: 600; }
     <h1>Talk through bugs while you test.</h1>
     <p class="lede">Press <kbd>⌃⌥Space</kbd>, click what's wrong and say why. Press it again, and it's in your coding agent's chat, typed there as your own message, with the screenshot and the element you clicked. Transcribed on your Mac.</p>
     <div class="cta">
-      <a class="button" href="https://download.asides.mihaicristian.dev/Asides.dmg">
+      <a class="button" href="https://download.asides.mihaicristian.dev/asides.dmg">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
         Download for Mac
       </a>
@@ -688,8 +674,6 @@ h2 { font-weight: 600; }
             </div>
           </div>
 
-          <div class="outline o1"></div>
-          <div class="outline o2"></div>
           <div class="pin p1">1</div>
           <div class="pin p2">2</div>
           <div class="pointer">
@@ -737,7 +721,7 @@ h2 { font-weight: 600; }
         <div class="code"><pre><code>brew tap mihaicristianfarcas/asides \
   https://github.com/mihaicristianfarcas/asides
 brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class="copy" type="button" hidden>Copy</button></div>
-        <p>Or <a href="https://download.asides.mihaicristian.dev/Asides.dmg">download the disk image</a>, drag Asides to Applications, and open it. It adds the <code>asides</code> command for you; macOS may ask for your password.</p>
+        <p>Or <a href="https://download.asides.mihaicristian.dev/asides.dmg">download the disk image</a>, drag asides to Applications, and open it. It adds the <code>asides</code> command for you; macOS may ask for your password.</p>
         <p>Or <a href="https://github.com/mihaicristianfarcas/asides#from-source">build it from source</a> with <code>make install</code>.</p>
       </li>
       <li>
@@ -745,7 +729,7 @@ brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class=
         <div class="code"><pre><code>cd ~/code/shop &amp;&amp; claude</code></pre><button class="copy" type="button" hidden>Copy</button></div>
       </li>
       <li>
-        <p>Press <kbd>⌃⌥Space</kbd> over the app you're testing. The first time, macOS asks for Screen Recording, and whether Asides may control your terminal when it first types into it. Click the microphone to download a voice model (190 MB for English, 574 MB for any language).</p>
+        <p>Press <kbd>⌃⌥Space</kbd> over the app you're testing. The first time, macOS asks for Screen Recording, and whether asides may control your terminal when it first types into it. Click the microphone to download a voice model (190 MB for English, 574 MB for any language).</p>
       </li>
       <li>
         <p>Optionally, let your agent look up past asides and measure screenshots with the MCP server.</p>
@@ -845,7 +829,6 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   const thinking = $('.thinking');
   const reply = $('.reply');
   const typed = $('.typed');
-  const outlines = [$('.o1'), $('.o2')];
   const pins = [$('.p1'), $('.p2')];
   const hud = device.querySelector('.hud');
   const pointer = $('.pointer');
@@ -883,17 +866,6 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   function moveTo(at, ms) {
     pointer.style.setProperty('--move', `${ms}ms`);
     place(pointer, at);
-  }
-
-  // Outlines an element, a little outside its bounds, as hovering it on the frozen screen does.
-  function outline(i, el) {
-    const [x0, y0] = spot(el, 0, 0, -3, -3);
-    const [x1, y1] = spot(el, 1, 1, 3, 3);
-    const box = outlines[i];
-    place(box, [x0, y0]);
-    box.style.setProperty('--w', (x1 - x0).toFixed(1));
-    box.style.setProperty('--h', (y1 - y0).toFixed(1));
-    box.classList.add('on');
   }
 
   async function click(id) {
@@ -947,7 +919,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     desk.classList.add('instant');
     front('safari');
     pill.classList.remove('on');
-    for (const el of [...outlines, ...pins]) el.classList.remove('on');
+    for (const el of pins) el.classList.remove('on');
     aside.hidden = true;
     thinking.hidden = true;
     reply.hidden = true;
@@ -988,8 +960,6 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       const first = spot(card, 0.62, 0.06);
       moveTo(first, 800);
       await wait(600, id);
-      outline(0, card);
-      await wait(450, id);
       await click(id);
       place(pins[0], first);
       pins[0].classList.add('on');
@@ -1000,19 +970,17 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       const second = spot(pay, 0.82, 0.3);
       moveTo(second, 800);
       await wait(600, id);
-      outline(1, pay);
-      await wait(400, id);
       await click(id);
       place(pins[1], second);
       pins[1].classList.add('on');
       await wait(200, id);
       await speak(sentences[1], id);
 
-      // Sent: Asides closes at once, and transcribes.
+      // Sent: asides closes at once, and transcribes.
       await press('⌃⌥Space', id, () => {
         clearInterval(timer);
         pill.classList.remove('on');
-        for (const el of [...outlines, ...pins]) el.classList.remove('on');
+        for (const el of pins) el.classList.remove('on');
         show('busy', '');
       });
       moveTo(spot(term, 0.82, 0.12), 900);

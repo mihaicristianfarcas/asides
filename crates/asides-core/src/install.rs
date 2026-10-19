@@ -48,7 +48,7 @@ mod tests {
     fn links_only_from_an_applications_folder() {
         let home = tempfile::tempdir().unwrap();
         let bundle = |parent: &Path| {
-            let app = parent.join("Asides.app");
+            let app = parent.join("asides.app");
             fs::create_dir_all(app.join("Contents/Helpers")).unwrap();
             fs::write(app.join("Contents/Helpers/asides"), "").unwrap();
             app

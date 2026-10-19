@@ -46,8 +46,18 @@ pub struct Record {
     pub audio: Option<String>,
     /// Each time it was sent somewhere, oldest first.
     pub deliveries: Vec<Delivery>,
+    /// Its pins' colors, as on its screenshots.
+    pub pins: Vec<Pin>,
     /// The version of asides that made it.
     pub version: String,
+}
+
+/// A pin of an aside: its number, and its color (`#3B82F6`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pin {
+    pub number: u32,
+    pub color: String,
 }
 
 /// One sending of an aside to a session.
@@ -55,7 +65,7 @@ pub struct Record {
 #[serde(default)]
 pub struct Delivery {
     pub at_ms: u64,
-    /// The session's label when it was sent ("Claude Code · asides").
+    /// The session's label when it was sent ("Claude Code (asides)").
     pub to: String,
     pub agent: Option<AgentKind>,
     pub dir: Option<PathBuf>,
@@ -95,6 +105,18 @@ impl Aside {
             .collect()
     }
 
+    /// The message as Markdown with its screenshots' absolute paths, for the clipboard.
+    pub fn markdown(&self) -> String {
+        self.parts()
+            .into_iter()
+            .map(|part| match part {
+                Part::Text(text) => text,
+                Part::Image(path) => format!("![Screenshot]({path})"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
     /// Where it was last sent, and whether that worked.
     pub fn last_delivery(&self) -> Option<&Delivery> {
         self.record.deliveries.last()
@@ -121,12 +143,13 @@ pub fn now_ms() -> u64 {
 }
 
 /// Keeps a new aside in `history`: its message (Markdown whose images are `images[i]`, written as
-/// `images/<i+1>.<ext>`, referenced by `{image:i}`), and its recording.
+/// `images/<i+1>.<ext>`, referenced by `{image:i}`), its pins' colors and its recording.
 pub fn create(
     history: &Path,
     created: DateTime<Local>,
     message: &str,
     images: &[Image],
+    pins: Vec<Pin>,
     audio: Option<(&[u8], &str)>,
 ) -> io::Result<Aside> {
     fs::create_dir_all(history)?;
@@ -166,6 +189,7 @@ pub fn create(
         images: names,
         audio,
         deliveries: Vec::new(),
+        pins,
         version: env!("CARGO_PKG_VERSION").into(),
     };
     write_record(&dir, &record)?;
@@ -189,7 +213,21 @@ pub fn title_of(message: &str) -> String {
         .unwrap_or("Screenshot")
         .trim_start_matches(['#', '-', ' ']);
     let line = line.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.').trim();
-    let words: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Without the pins' numbers (`this [1],` reads `this,`).
+    let mut words: Vec<String> = Vec::new();
+    for word in line.split_whitespace() {
+        let pin = word
+            .strip_prefix('[')
+            .and_then(|w| w.split_once(']'))
+            .filter(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        match (pin, words.last_mut()) {
+            (Some((_, tail)), Some(last)) => last.push_str(tail),
+            (Some((_, tail)), None) if !tail.is_empty() => words.push(tail.to_string()),
+            (Some(_), None) => {}
+            (None, _) => words.push(word.to_string()),
+        }
+    }
+    let words = words.join(" ");
     if words.chars().count() <= 80 { words } else { format!("{}…", words.chars().take(79).collect::<String>()) }
 }
 
@@ -246,7 +284,8 @@ mod tests {
         let at = Local.with_ymd_and_hms(2026, 10, 18, 22, 15, 30).unwrap();
         let message = "The save button is too low.\n\n![Screenshot 1]({image:0})\n\n### 1. button \"Save\"";
         let png = [0x89, b'P', b'N', b'G'];
-        let mut aside = create(tmp.path(), at, message, &[Image { bytes: &png, extension: "png" }], None).unwrap();
+        let mut aside =
+            create(tmp.path(), at, message, &[Image { bytes: &png, extension: "png" }], Vec::new(), None).unwrap();
         assert_eq!(aside.id, "2026-10-18-221530");
         assert_eq!(aside.record.images, ["images/1.png"]);
         assert_eq!(aside.record.title, "The save button is too low.");
@@ -258,13 +297,13 @@ mod tests {
         assert_eq!(parts[1], Part::Image(aside.dir.join("images/1.png").to_string_lossy().into_owned()));
 
         let delivery =
-            Delivery { at_ms: 1, to: "Claude Code · shop".into(), app: "Terminal".into(), ..Default::default() };
+            Delivery { at_ms: 1, to: "Claude Code (shop)".into(), app: "Terminal".into(), ..Default::default() };
         aside.record_delivery(delivery.clone()).unwrap();
         let again = find(tmp.path(), "last").unwrap();
         assert_eq!(again.record.deliveries, [delivery]);
 
         // Two in the same second get their own folders.
-        let second = create(tmp.path(), at, "Another.", &[], None).unwrap();
+        let second = create(tmp.path(), at, "Another.", &[], Vec::new(), None).unwrap();
         assert_eq!(second.id, "2026-10-18-221530-2");
         assert_eq!(list(tmp.path()).len(), 2);
         assert_eq!(
@@ -277,8 +316,8 @@ mod tests {
     fn prunes_old_asides() {
         let tmp = tempfile::tempdir().unwrap();
         let old = Local::now() - chrono::TimeDelta::days(40);
-        create(tmp.path(), old, "Old.", &[], None).unwrap();
-        create(tmp.path(), Local::now(), "New.", &[], None).unwrap();
+        create(tmp.path(), old, "Old.", &[], Vec::new(), None).unwrap();
+        create(tmp.path(), Local::now(), "New.", &[], Vec::new(), None).unwrap();
         assert_eq!(prune(tmp.path(), 0, SystemTime::now()), 0, "0 keeps everything");
         assert_eq!(prune(tmp.path(), 30, SystemTime::now()), 1);
         let left: Vec<String> = list(tmp.path()).into_iter().map(|a| a.record.title).collect();
@@ -294,5 +333,6 @@ mod tests {
         assert_eq!(title_of("![Screenshot 1](images/1.png)\n\n### 1. button \"Pay\""), "button \"Pay\"");
         assert_eq!(title_of(""), "Screenshot");
         assert_eq!(title_of(&"word ".repeat(40)).chars().count(), 80);
+        assert_eq!(title_of("[1] This [2] and this [3]."), "This and this.");
     }
 }

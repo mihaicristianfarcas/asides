@@ -4,8 +4,8 @@ cask "asides" do
   version "0.7.4"
   sha256 "2e106c04130ff63f4a3b0b137c6e651a20814a0aa2625a17fb8bf202ac98ba65"
 
-  url "https://github.com/mihaicristianfarcas/asides/releases/download/v#{version}/Asides-#{version}.zip"
-  name "Asides"
+  url "https://github.com/mihaicristianfarcas/asides/releases/download/v#{version}/asides-#{version}.zip"
+  name "asides"
   desc "Records spoken bug reports and transcribes them locally into Markdown notes"
   homepage "https://asides.mihaicristian.dev/"
 
@@ -17,10 +17,10 @@ cask "asides" do
   depends_on arch: :arm64
   depends_on macos: :sonoma
 
-  app "Asides.app"
-  binary "#{appdir}/Asides.app/Contents/Helpers/asides"
+  app "asides.app"
+  binary "#{appdir}/asides.app/Contents/Helpers/asides"
 
   uninstall quit: "io.github.mihaicristianfarcas.asides"
 
-  zap trash: "~/Library/Application Support/Asides"
+  zap trash: "~/Library/Application Support/asides"
 end

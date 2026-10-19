@@ -1,5 +1,5 @@
 //! `state.json`: what the running app publishes for the CLI (`asides status`, `asides sessions`) and
-//! the Asides window, and what it keeps between launches.
+//! the asides window, and what it keeps between launches.
 
 use std::fs;
 use std::io;
@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agents::AgentKind;
 use crate::sessions::AgentSession;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppState {
     pub pid: u32,
-    /// `idle`, `open` (Asides is on screen), `recording`, `transcribing`, `sending`,
+    /// `idle`, `open` (asides is on screen), `recording`, `transcribing`, `sending`,
     /// `downloading`, `error`.
     pub status: String,
     /// Human-readable detail, e.g. the download progress or the last error.
@@ -28,6 +29,8 @@ pub struct AppState {
     pub target: Option<String>,
     /// Folders where the user sent asides or started sessions, most recent first (New session in…).
     pub recent_dirs: Vec<PathBuf>,
+    /// The agents installed, for a new session (the first is the default).
+    pub agents: Vec<AgentKind>,
     /// The id of the last aside, and whether it got to its session.
     pub last_aside: Option<String>,
     /// The speech model is on disk (asides can listen).
@@ -36,9 +39,9 @@ pub struct AppState {
     pub input_devices: Vec<String>,
     /// The user declined to put the `asides` command in /usr/local/bin; don't ask again.
     pub command_link_declined: bool,
-    /// Asides showed its keys once, the first time a screen was frozen.
+    /// asides showed its keys once, the first time a screen was frozen.
     pub overlay_tips_seen: bool,
-    /// Where the user put Asides' pill: its center, as a fraction of the screen's width and height
+    /// Where the user put asides' pill: its center, as a fraction of the screen's width and height
     /// (`None`: at the top, in the middle).
     pub pill_at: Option<(f64, f64)>,
     pub updated_ms: u64,

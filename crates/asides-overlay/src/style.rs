@@ -1,7 +1,7 @@
 //! How the overlay looks, shared by the windows (GPUI) and the images it exports (AppKit), after
 //! PixelSnap: thin lines in the accent color, sizes in dark pills, blue guides, tinted areas.
 
-use asides_core::inspect::{Annotation, PtRect};
+use asides_core::inspect::{Annotation, Intent, PtRect};
 
 /// Pills behind sizes and labels.
 pub const LABEL: u32 = 0x1c1c1e;
@@ -15,25 +15,30 @@ pub const ANNOTATION_GREEN: u32 = 0x22c55e;
 pub const AREA_TINT: f32 = 0.14;
 /// Arrows and sketches.
 pub const DRAW_WIDTH: f32 = 3.0;
-/// The UI's own color ("soft blue cloud"): the selected tool, the main buttons, chosen chips, the
-/// menu's highlight, the caret. Measuring and annotations keep their own, high-contrast colors.
+/// The UI's own color ("soft blue cloud"): the main action (Send) and the caret; what's selected is a
+/// glass pill instead. Measuring and annotations keep their own, high-contrast colors.
 pub const UI: u32 = 0xc2d6f6;
 pub const UI_LIGHT: u32 = 0xd1dff6;
 pub const UI_DEEP: u32 = 0x92b6f0;
 /// Text and icons on the UI color.
 pub const UI_INK: u32 = 0x16213a;
-/// What an annotation asks for, as the card's dots show it.
-pub const INTENT_FIX: u32 = 0xff6b6b;
-pub const INTENT_CHANGE: u32 = 0xf5b14c;
-pub const INTENT_QUESTION: u32 = UI_DEEP;
-pub const INTENT_APPROVE: u32 = 0x4cd28b;
-/// The toolbar, cards and menus.
-pub const PANEL: u32 = 0x1c1c1e;
-pub const PANEL_ALPHA: f32 = 0.98;
+/// What an annotation asks for: its card's dots, and its marker once chosen (apart from the
+/// kinds' blue and green).
+pub const INTENT_FIX: u32 = 0xef4444;
+pub const INTENT_CHANGE: u32 = 0xf59e0b;
+pub const INTENT_QUESTION: u32 = 0x8b5cf6;
+pub const INTENT_APPROVE: u32 = 0x14b8a6;
+/// The overlay's surfaces (the pill and its list, tips, cards, menus) are glass, after Diri's
+/// menus: what's behind them, blurred, under this much of a dark surface (text on it stays legible
+/// over a white page), with a hairline of white around it.
+pub const GLASS: u32 = 0x1c1b1a;
+pub const GLASS_ALPHA: f32 = 0.66;
+pub const PANEL_STROKE: f32 = 0.10;
 pub const RECORDING: u32 = 0xff3b30;
+/// The pill's microphone while it listens: a softer red.
+pub const RECORDING_SOFT: u32 = 0xec6a5e;
 
-pub fn intent_color(intent: asides_core::inspect::Intent) -> u32 {
-    use asides_core::inspect::Intent;
+pub fn intent_color(intent: Intent) -> u32 {
     match intent {
         Intent::Fix => INTENT_FIX,
         Intent::Change => INTENT_CHANGE,
@@ -62,13 +67,14 @@ fn channels(value: u32) -> (f64, f64, f64) {
     (c(16), c(8), c(0))
 }
 
-/// An annotation's color and the alpha of its fill: drawings in the accent color, areas green, elements
-/// and points blue.
-pub fn annotation_color(a: &Annotation, accent: u32) -> (f64, f64, f64, f32) {
-    let value = match (&a.shape, a.area) {
-        (Some(_), _) => accent,
-        (None, Some(_)) => ANNOTATION_GREEN,
-        (None, None) => ANNOTATION_BLUE,
+/// An annotation's color and the alpha of its fill: its `intent`'s, else drawings in the accent
+/// color, areas green, elements and points blue.
+pub fn annotation_color(a: &Annotation, intent: Option<Intent>, accent: u32) -> (f64, f64, f64, f32) {
+    let value = match (intent, &a.shape, a.area) {
+        (Some(intent), ..) => intent_color(intent),
+        (None, Some(_), _) => accent,
+        (None, None, Some(_)) => ANNOTATION_GREEN,
+        (None, None, None) => ANNOTATION_BLUE,
     };
     let (r, g, b) = channels(value);
     (r, g, b, 0.1)
@@ -95,6 +101,27 @@ pub fn arrow_head(from: (f64, f64), to: (f64, f64)) -> [(f64, f64); 3] {
     [to, (base.0 - uy * half, base.1 + ux * half), (base.0 + uy * half, base.1 - ux * half)]
 }
 
+/// A move's arrow: from where `from`'s edge faces `to` to where `to`'s edge faces back (middle to
+/// middle when they overlap).
+pub fn move_arrow(from: PtRect, to: PtRect) -> ((f64, f64), (f64, f64)) {
+    let middle = |r: PtRect| (r.x + r.width / 2.0, r.y + r.height / 2.0);
+    let (a, b) = (middle(from), middle(to));
+    // Where the line from `r`'s middle toward `p` leaves `r`.
+    let edge = |r: PtRect, (cx, cy): (f64, f64), (px, py): (f64, f64)| {
+        let (dx, dy) = (px - cx, py - cy);
+        let t = [(r.width / 2.0, dx), (r.height / 2.0, dy)]
+            .into_iter()
+            .filter(|(_, d)| d.abs() > f64::EPSILON)
+            .map(|(half, d)| half / d.abs())
+            .fold(f64::INFINITY, f64::min)
+            .min(1.0);
+        (cx + dx * t, cy + dy * t)
+    };
+    let (start, end) = (edge(from, a, b), edge(to, b, a));
+    let ahead = (end.0 - start.0) * (b.0 - a.0) + (end.1 - start.1) * (b.1 - a.1) > 0.0;
+    if ahead { (start, end) } else { (a, b) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +136,10 @@ mod tests {
         assert_eq!(area_label(small, 50.0, 40.0), (20.0, -4.0));
         let big = PtRect::new(0.0, 0.0, 200.0, 100.0);
         assert_eq!(area_label(big, 50.0, 500.0), (100.0, 50.0));
+        // A move's arrow, edge to edge; middle to middle when they overlap.
+        let (from, to) = (PtRect::new(0.0, 0.0, 20.0, 10.0), PtRect::new(100.0, 0.0, 20.0, 10.0));
+        assert_eq!(move_arrow(from, to), ((20.0, 5.0), (100.0, 5.0)));
+        assert_eq!(move_arrow(from, PtRect::new(5.0, 2.0, 20.0, 10.0)), ((10.0, 5.0), (15.0, 7.0)));
         let [tip, left, right] = arrow_head((0.0, 0.0), (100.0, 0.0));
         assert_eq!(tip, (100.0, 0.0));
         assert!((left.0 - 86.0).abs() < 1e-9 && left.1 > 0.0 && right.1 < 0.0);

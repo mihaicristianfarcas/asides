@@ -2,7 +2,7 @@
 //! clipboard), and starting new sessions: a script that runs the agent with the aside as its first
 //! message, in a new window of Terminal (the default) or Ghostty, typed into the user's own shell, or
 //! as a session of Diri. Always off the main thread: an AppleScript waits for the user to say whether
-//! Asides may control that app (the first time), up to two minutes.
+//! asides may control that app (the first time), up to two minutes.
 //!
 //! The app is launched by Launch Services with a bare PATH, so the agents (installed with npm,
 //! Homebrew, their own installers) are found through the user's login shell, which has the PATH
@@ -24,7 +24,7 @@ use crate::clipboard;
 
 /// How long the login shell may take to say which agents are installed.
 const SHELL_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long an AppleScript may run: the first, the user answers whether Asides may control the app.
+/// How long an AppleScript may run: the first, the user answers whether asides may control the app.
 const SCRIPT_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// The app sessions open in: the configured one, or Terminal.
@@ -107,7 +107,7 @@ fn applescript(script: &str) -> Result<()> {
         if started.elapsed() > SCRIPT_TIMEOUT {
             let _ = child.kill();
             bail!(
-                "macOS didn't let Asides control the app in time (System Settings → Privacy & Security → Automation)"
+                "macOS didn't let asides control the app in time (System Settings → Privacy & Security → Automation)"
             );
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -116,7 +116,7 @@ fn applescript(script: &str) -> Result<()> {
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("-1743") || err.contains("Not authorized") {
-            bail!("Asides may not control that app: allow it in System Settings → Privacy & Security → Automation");
+            bail!("asides may not control that app: allow it in System Settings → Privacy & Security → Automation");
         }
         // `… execution error: Couldn't find its tab in Terminal. (-2700)`
         let line = last_line(&out.stderr, "the AppleScript failed");
@@ -153,7 +153,7 @@ pub fn start_session(
     match app(terminal).as_str() {
         "Diri" => {
             let out = Command::new(dirijor())
-                .args(["session", "run", "--title", &format!("{} · {name}", agent.name()), "--cwd"])
+                .args(["session", "run", "--title", &format!("{} ({name})", agent.name()), "--cwd"])
                 .arg(dir)
                 .args(["--", "/bin/sh"])
                 .arg(&script)
@@ -225,7 +225,7 @@ mod tests {
     fn names_the_terminal_apps() {
         assert_eq!(app(" ghostty "), "Ghostty");
         assert_eq!(app(""), "Terminal");
-        assert_eq!(app("Warp"), "Terminal", "only apps Asides can type into");
+        assert_eq!(app("Warp"), "Terminal", "only apps asides can type into");
         assert!(deliver::installed_terminals().contains(&"Terminal"));
     }
 
@@ -243,6 +243,25 @@ mod tests {
             stdin: None,
         };
         assert_eq!(run_steps(&[fail]).unwrap_err().to_string(), "nope");
+    }
+
+    /// Types an aside into a Diri session of your own, as the app does: `ASIDES_DELIVER=<aside folder>
+    /// ASIDES_DELIVER_TO=<Diri session id> cargo test -p asides-app types_into_diri -- --ignored`.
+    #[test]
+    #[ignore]
+    fn types_into_diri() {
+        let aside = asides_core::history::read(Path::new(&std::env::var("ASIDES_DELIVER").unwrap())).unwrap();
+        let session = asides_core::sessions::AgentSession {
+            pid: 0,
+            agent: AgentKind::Claude,
+            dir: "/".into(),
+            tty: String::new(),
+            host: Host::Diri { session: std::env::var("ASIDES_DELIVER_TO").unwrap() },
+            last_input: None,
+            name: None,
+            launch: None,
+        };
+        run_steps(&deliver::plan(&session, &aside.parts(), &dirijor()).unwrap()).unwrap();
     }
 
     #[test]

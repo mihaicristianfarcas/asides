@@ -46,6 +46,8 @@ pub struct AsideJob {
     pub takes: Vec<(f32, f32)>,
     /// Where it goes, once kept.
     pub target: Option<Target>,
+    /// Its pins' colors.
+    pub pins: Vec<history::Pin>,
 }
 
 /// What the user said about one annotation (its card's microphone): transcribed straight away,
@@ -152,6 +154,8 @@ fn keep(
                         segments.extend(said.into_iter().map(|s| markdown::Segment {
                             start: s.start + start,
                             end: s.end + start,
+                            words:
+                                s.words.into_iter().map(|w| markdown::Word { start: w.start + start, ..w }).collect(),
                             ..s
                         }));
                     }
@@ -182,7 +186,8 @@ fn keep(
     let message = markdown::compose_message(&segments, &attachments);
     let images: Vec<Image> = job.images.iter().map(|i| Image { bytes: &i.bytes, extension: &i.extension }).collect();
     let audio = if job.keep_audio && !pcm.is_empty() { encode_audio(&pcm).ok() } else { None };
-    let aside = history::create(history, job.started, &message, &images, audio.as_ref().map(|(b, e)| (&b[..], *e)))
+    let audio = audio.as_ref().map(|(b, e)| (&b[..], *e));
+    let aside = history::create(history, job.started, &message, &images, job.pins, audio)
         .context("could not keep the aside")?;
     Ok(Outcome::Kept { aside: Box::new(aside), target: job.target })
 }
@@ -277,6 +282,7 @@ mod tests {
             languages: Vec::new(),
             takes: Vec::new(),
             target: Some(Target::History),
+            pins: Vec::new(),
         };
         let models = ModelManager::new(|_, _| {});
         let Outcome::Kept { aside, target } = keep(job, &models, &mut None, tmp.path()).unwrap() else {

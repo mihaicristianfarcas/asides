@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds Asides.app (with the CLI inside), signs it with a Developer ID certificate and a secure
+# Builds asides.app (with the CLI inside), signs it with a Developer ID certificate and a secure
 # timestamp, has Apple notarize it, staples the ticket, and zips it for a GitHub release and packs it
 # into a disk image for the website.
 #
@@ -25,8 +25,8 @@ fi
 
 make bundle TIMESTAMP=--timestamp SIGN_ID="$IDENTITY"
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-APP=dist/Asides.app
-ZIP="dist/Asides-$VERSION.zip"
+APP=dist/asides.app
+ZIP="dist/asides-$VERSION.zip"
 
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
@@ -49,7 +49,7 @@ SHA=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)
 # The Homebrew cask installs this exact zip from the GitHub release.
 sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/asides.rb
 # The website's download button serves a disk image of the same stapled app.
-scripts/make-dmg.sh "$APP" "dist/Asides-$VERSION.dmg"
+scripts/make-dmg.sh "$APP" "dist/asides-$VERSION.dmg"
 echo "SHA-256: $SHA"
 echo "Ready: $ZIP"
 echo "Updated Casks/asides.rb; commit it after publishing the GitHub release."

@@ -1,4 +1,6 @@
-APP_NAME   := Asides
+APP_NAME   := asides
+# The app's binary in the bundle: not `asides`, the CLI's name (and the agents' MCP servers').
+APP_EXE    := asides-app
 BUNDLE_ID  := io.github.mihaicristianfarcas.asides
 VERSION    := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 APP        := dist/$(APP_NAME).app
@@ -37,19 +39,19 @@ bundle: build
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Helpers $(APP)/Contents/Resources
 	sed 's/__VERSION__/$(VERSION)/g' packaging/Info.plist > $(APP)/Contents/Info.plist
-	cp target/release/asides-app $(APP)/Contents/MacOS/$(APP_NAME)
+	cp target/release/asides-app $(APP)/Contents/MacOS/$(APP_EXE)
 	cp target/release/asides $(APP)/$(CLI_IN_APP)
 	cp target/release/asides-overlay $(APP)/$(OVERLAY_IN_APP)
-	cp packaging/Asides.icns $(APP)/Contents/Resources/
+	cp packaging/asides.icns $(APP)/Contents/Resources/
 	# Sign inside-out: the nested CLI and overlay first, then the app.
 	$(CODESIGN) --identifier $(BUNDLE_ID).cli $(APP)/$(CLI_IN_APP)
 	$(CODESIGN) --identifier $(BUNDLE_ID).overlay $(APP)/$(OVERLAY_IN_APP)
-	$(CODESIGN) --entitlements packaging/Asides.entitlements $(APP)
+	$(CODESIGN) --entitlements packaging/asides.entitlements $(APP)
 	@echo "Bundled $(APP) (signed: $(SIGN_ID))"
 
 install: bundle
 	-@test -x $(BIN_DIR)/asides && $(BIN_DIR)/asides quit >/dev/null 2>&1; sleep 1
-	-@pkill -x $(APP_NAME) 2>/dev/null; true
+	-@pkill -x $(APP_EXE) 2>/dev/null; true
 	mkdir -p $(APPS_DIR) $(BIN_DIR)
 	rm -rf $(APPS_DIR)/$(APP_NAME).app
 	ditto $(APP) $(APPS_DIR)/$(APP_NAME).app
@@ -60,18 +62,18 @@ install: bundle
 
 uninstall:
 	-@test -x $(BIN_DIR)/asides && $(BIN_DIR)/asides quit >/dev/null 2>&1; sleep 1
-	-@pkill -x $(APP_NAME) 2>/dev/null; true
+	-@pkill -x $(APP_EXE) 2>/dev/null; true
 	-$(LSREGISTER) -u $(APPS_DIR)/$(APP_NAME).app
 	rm -rf $(APPS_DIR)/$(APP_NAME).app
 	rm -f $(BIN_DIR)/asides
 	@echo "Removed. Settings and models remain in ~/Library/Application Support/$(APP_NAME)."
 
 # Developer ID signature with secure timestamp → Apple notarization → stapled
-# dist/Asides-<version>.zip. Needs a notarytool profile (NOTARY_PROFILE, default asides-notary).
+# dist/asides-<version>.zip. Needs a notarytool profile (NOTARY_PROFILE, default asides-notary).
 release:
 	scripts/release.sh
 
-# Deploys dist/Asides-<version>.dmg (from `make release`) behind the website's download button,
+# Deploys dist/asides-<version>.dmg (from `make release`) behind the website's download button,
 # on Cloudflare. Needs Wrangler, logged in.
 publish-dmg:
 	scripts/publish-dmg.sh

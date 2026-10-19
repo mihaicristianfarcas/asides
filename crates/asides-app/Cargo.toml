@@ -1,6 +1,6 @@
 [package]
 name = "asides-app"
-description = "Asides: a macOS menu-bar app that turns spoken bug reports into Markdown notes, transcribed locally"
+description = "asides: a macOS menu-bar app that turns spoken bug reports into Markdown notes, transcribed locally"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

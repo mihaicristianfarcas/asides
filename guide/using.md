@@ -1,34 +1,36 @@
-# Using Asides
+# Using asides
 
 ## Freeze, pin, talk, send
 
 | | |
 |---|---|
-| `⌃⌥Space` | Freeze every screen. The pill at the top shows the microphone, where the aside goes, send (✓) and close (×). |
-| Click | Pin the element under the pointer (outlined before you click). Drag to pin an area. |
-| Talk | What you say lands between the pins, in the order it happened. |
+| `⌃⌥Space` | Freeze every screen. The pill at the top shows the keys (?), the microphone, where the aside goes, send (✓) and close (×). |
+| Click | Pin the element under the pointer. Drag to pin an area. |
+| Drag a pin's number | Move what it's on: a copy goes where you drop it, with an arrow, and the pin says where to. |
+| Talk | Each pin's number lands after the word you said as you placed it (`this [1] a different color`). |
 | `⌃⌥Space`, `⏎` or ✓ | Send. A moment later it's in your agent's chat, with each freeze's screenshot. |
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
-| `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With Asides closed, it opens live. |
+| `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still
-works). Drag the pill anywhere; it stays there. Press `?` for every key.
+works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) for every key.
 
 ## Talking
 
-The microphone starts as Asides opens (a setting). Click it to mute; while muted, hold `Space` to
+The microphone starts as asides opens (a setting). Click it to mute; while muted, hold `Space` to
 talk.
 
 To talk about one pin, click its number to open its card and hold `Space` there (or press its
 microphone): that goes into the pin. The card also takes typed feedback and a kind (fix, change,
-question, approve: `⌘1`–`⌘4`). `⏎` or `Esc` closes it.
+question, approve: `⌘1`–`⌘4`; with no card open, they set the last pin's), shown in the pin's
+color. `⏎` or `Esc` closes it.
 
 ## Where it goes
 
 The pill names the agent session you typed into last. Press `Tab` for the next one, or click the
 name for the list:
 
-- **Sessions**: every agent running in a terminal. Those in apps Asides can't type into (Warp,
+- **Sessions**: every agent running in a terminal. Those in apps asides can't type into (Warp,
   iTerm, VS Code…) are dimmed.
 - **New session in…**: an agent and a folder (a recent project, or **Choose Folder…**). Sending
   starts the agent there, in Terminal, Ghostty or Diri (Settings), with the aside as its first
@@ -63,49 +65,60 @@ clears everything, `⇧Tab` hides it all, `⌥⏎` sends with the whole screen.
 ## What the agent gets
 
 ```markdown
+**In:** Safari ("Settings — Shop", http://localhost:3000/settings)
+
 ![Screenshot 1](…/images/1.png)
 
-**In:** Safari · "Settings — Shop" · http://localhost:3000/settings
-
-The gap under the title is bigger than the one above the fields.
+The gap under the title is bigger than the one above the fields, and this [1] should go there [2].
 
 ### 1. button "Save"
 **Location:** form.settings > div.actions > button#save.btn.btn-primary
 **Said:** And make it the same width as the fields.
+
+### 2. Area 320 × 48 at (380, 200)
+**Move to:** (380, 120), 80 pt up, over form "Settings"
+**Intent:** change
 ```
+
+Each screenshot goes where its freeze began; a pin's details follow the paragraph it was said in.
 
 How much each pin says is a setting: **Compact**, **Standard**, **Detailed** (position, size) or
 **Forensic** (colors, padding, accessibility role).
 
-## The Asides window
+## The asides window
 
-Open it from the menu bar or with `asides`:
+Open it from the menu bar or with `asides`. While it's open it's in the Dock and `⌘Tab`; `⌘W`
+closes it, `⌘Q` quits asides.
 
-- **History**: every aside and where it went. Send it again, copy it, show it in Finder, delete it.
-  Asides are kept in `~/.asides/history` for 30 days by default.
-- **Sessions**: the agent sessions Asides can send to.
-- **Settings**: the voice model, the microphone, sounds, where new sessions open, and the rest of
-  [the settings](settings.md).
+- **History**: every aside, and whether it was sent (to which session) or only saved. What was
+  said with its pins' numbers, the screenshots and each pin. Send it again, copy it, show it in
+  Finder, delete it. asides are kept in `~/.asides/history` for 30 days by default.
+- **Sessions**: the agent sessions asides can send to, and where new ones open.
+- **General**, **Keys**, **Voice**, **Pins**: every [setting](settings.md). Click a shortcut or a
+  key, then press the new one.
+
+The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds and
+naming pins on or off, and opens History or Settings.
 
 ## The command
 
 | Command | |
 |---|---|
-| `asides` | Open the Asides window. |
-| `asides open` | Open Asides on the screen, like `⌃⌥Space`. |
-| `asides sessions` | The sessions Asides can send to (`--json`). |
+| `asides` | Open the asides window. |
+| `asides open` | Open asides on the screen, like `⌃⌥Space`. |
+| `asides sessions` | The sessions asides can send to (`--json`). |
 | `asides history` | Past asides, newest first (`-n 50`, `--json`). |
 | `asides show [ID]` | An aside as Markdown (the newest by default). |
 | `asides send [ID] [--to SESSION]` | Send an aside again, to a session from `asides sessions` or `--to history`. |
 | `asides download [MODEL]` | Download a voice model. |
 | `asides measure IMAGE X,Y` | Measure a PNG from a point, or `X,Y,W,H` for the object in an area. |
-| `asides status` | What Asides is doing, and where asides go. |
+| `asides status` | What asides is doing, and where asides go. |
 | `asides mcp` | The MCP server (below). |
 | `asides quit` | Quit the app. |
 
 ## For your agents (optional)
 
-Asides needs nothing from your agents. If you want them to read past asides or measure
+asides needs nothing from your agents. If you want them to read past asides or measure
 screenshots, add its MCP server (`get_aside`, `list_asides`, `measure_image`, all read-only):
 
 ```bash

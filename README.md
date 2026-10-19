@@ -4,7 +4,7 @@
 own message, with the screenshot, the elements you clicked and what you measured. Transcribed
 locally, on your Mac.
 
-![Asides over a checkout page: the pill (recording, the session it goes to, send, close), two numbered pins and a measured field](guide/overlay.png)
+![asides over a checkout page: the pill (recording, the session it goes to, send, close), two numbered pins and a measured field](guide/overlay.png)
 
 ```
 ⌃⌥Space   freeze the screen (and start listening)
@@ -28,8 +28,8 @@ brew tap mihaicristianfarcas/asides https://github.com/mihaicristianfarcas/aside
 brew install --cask mihaicristianfarcas/asides/asides
 ```
 
-Or download the [disk image](https://download.asides.mihaicristian.dev/Asides.dmg) and drag
-Asides to Applications. On first launch it offers to link the `asides` command into
+Or download the [disk image](https://download.asides.mihaicristian.dev/asides.dmg) and drag
+asides to Applications. On first launch it offers to link the `asides` command into
 `/usr/local/bin` (macOS may ask for your password).
 
 ### From source
@@ -38,12 +38,12 @@ Needs Rust, the Xcode Command Line Tools and CMake (`brew install cmake`).
 
 ```bash
 git clone https://github.com/mihaicristianfarcas/asides && cd asides
-make install   # ~/Applications/Asides.app, and the command in ~/.local/bin
+make install   # ~/Applications/asides.app, and the command in ~/.local/bin
 ```
 
 ## Get started
 
-1. Open Asides. It lives in the menu bar as `[a]`.
+1. Open asides. It lives in the menu bar as `[a]`.
 2. Start your agent (`claude`, `codex`…) in Terminal, Ghostty or Diri, as usual.
 3. In the app you're testing, press `⌃⌥Space`, click, talk, and press `⌃⌥Space` again.
 
@@ -52,7 +52,7 @@ and screenshots work without one.
 
 ## Documentation
 
-- [Using Asides](guide/using.md): the tools, keys, where asides go, the window and the command
+- [Using asides](guide/using.md): the tools, keys, where asides go, the window and the command
 - [Settings](guide/settings.md): `config.toml`
 - [Privacy and permissions](guide/privacy.md)
 - [Troubleshooting](guide/troubleshooting.md)

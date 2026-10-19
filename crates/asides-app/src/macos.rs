@@ -69,7 +69,7 @@ pub fn link_command(cli: &Path) -> CommandLink {
     let script = format!(
         "on run argv\n\
          do shell script \"/bin/mkdir -p /usr/local/bin && /bin/ln -sfn \" & quoted form of (item 1 of argv) & \" {}\" \
-         with prompt \"Asides wants to add the asides command to /usr/local/bin, so you can run it in any terminal.\" \
+         with prompt \"asides wants to add the asides command to /usr/local/bin, so you can run it in any terminal.\" \
          with administrator privileges\n\
          end run",
         link.display()

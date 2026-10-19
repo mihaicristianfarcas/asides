@@ -43,6 +43,13 @@ pub fn restore(snapshot: &Snapshot) {
     }
 }
 
+/// Puts text on the pasteboard.
+pub fn put_text(text: &str) {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+    pasteboard.setString_forType(&NSString::from_str(text), unsafe { objc2_app_kit::NSPasteboardTypeString });
+}
+
 /// Puts a PNG on the pasteboard, as a screenshot is copied.
 pub fn put_png(bytes: &[u8]) {
     let pasteboard = NSPasteboard::generalPasteboard();

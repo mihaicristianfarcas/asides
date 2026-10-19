@@ -37,7 +37,7 @@ pub trait Notify: Fn(u32, Message) + Send + 'static {}
 impl<F: Fn(u32, Message) + Send + 'static> Notify for F {}
 
 /// An overlay started ahead of time, waiting for a session: its GPUI started and a window open for
-/// each screen. Opening Asides doesn't wait for them, about 120 ms. Dropped, it quits (its standard
+/// each screen. Opening asides doesn't wait for them, about 120 ms. Dropped, it quits (its standard
 /// input ends).
 pub struct Standby {
     child: Child,

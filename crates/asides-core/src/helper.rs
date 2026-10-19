@@ -1,4 +1,4 @@
-//! How the app and the Asides overlay talk. The overlay is a separate process
+//! How the app and the asides overlay talk. The overlay is a separate process
 //! (`asides-overlay`, drawn with GPUI, which runs its own event loop). The app freezes the screens,
 //! writes each one's pixels and a `session.json` (`Spec`) into a session directory, and starts
 //! the overlay with that directory. Then they exchange JSON lines: `Event`s on the overlay's
@@ -22,7 +22,7 @@ pub const SPEC: &str = "session.json";
 pub const RESULT: &str = "result.json";
 /// The overlay's argument to start ahead of time, without a session.
 pub const STANDBY: &str = "--standby";
-/// The overlay's argument to open the Asides window (History, Sessions, Settings) instead.
+/// The overlay's argument to open the asides window (History, Sessions, Settings) instead.
 pub const WINDOW: &str = "--window";
 
 /// What the overlay shows and how (`session.json`).
@@ -40,7 +40,7 @@ pub struct Spec {
     /// Ask the app to name the element under each annotation.
     pub identify: bool,
     pub keys: OverlayKeys,
-    /// The Asides shortcut, as shown (`⌃⌥Space`), for the pill's hints.
+    /// The asides shortcut, as shown (`⌃⌥Space`), for the pill's hints.
     pub record_shortcut: String,
     /// The freeze shortcut, as shown (`⌃⌥P`), for the pill's hints.
     pub freeze_shortcut: String,
@@ -104,11 +104,11 @@ pub struct Targets {
 #[serde(default)]
 pub struct TargetSession {
     pub id: String,
-    /// "Claude Code · asides-6b".
+    /// "Claude Code (asides-6b)".
     pub label: String,
     /// The app it runs in ("Terminal").
     pub app: String,
-    /// Why Asides can't type into it, if it can't.
+    /// Why asides can't type into it, if it can't.
     pub unreachable: Option<String>,
 }
 
@@ -144,7 +144,7 @@ impl Targets {
                 .unwrap_or_else(|| "A session".into()),
             Some(Target::New { agent, dir }) => {
                 let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                format!("New {} · {name}", agent.name())
+                format!("New {} ({name})", agent.name())
             }
             Some(Target::History) | None => "History only".into(),
         }
@@ -250,6 +250,10 @@ pub enum Command {
         #[serde(default)]
         annotation: Option<u32>,
     },
+    /// How loud what the microphone hears is, 0 to 1, while it listens.
+    Level {
+        level: f32,
+    },
     /// What was said about an annotation (recording `take`) is being transcribed...
     Transcribing {
         annotation: u32,
@@ -261,7 +265,7 @@ pub enum Command {
         take: u64,
         text: String,
     },
-    /// The Asides shortcut tapped again: send the aside.
+    /// The asides shortcut tapped again: send the aside.
     Finish,
     /// Where the aside can go, updated (sessions found, ended).
     Targets {
@@ -308,6 +312,8 @@ pub struct Item {
     /// other than `said`, still being transcribed).
     pub annotation: Option<u32>,
     pub said: Vec<u64>,
+    /// A pin's color on its screenshot (`#3B82F6`), for History.
+    pub color: Option<String>,
 }
 
 /// One JSON line.
@@ -351,7 +357,7 @@ mod tests {
     fn tab_goes_through_the_sessions_asides_can_reach() {
         let session = |id: &str, unreachable: Option<&str>| TargetSession {
             id: id.into(),
-            label: format!("Claude Code · {id}"),
+            label: format!("Claude Code ({id})"),
             app: "Terminal".into(),
             unreachable: unreachable.map(String::from),
         };
@@ -366,8 +372,8 @@ mod tests {
         assert_eq!(targets.next(Some(&Target::History)), s("1"));
         let new = Target::New { agent: AgentKind::Claude, dir: "/r/shop".into() };
         assert_eq!(targets.next(Some(&new)), Target::History);
-        assert_eq!(targets.label(Some(&new)), "New Claude Code · shop");
-        assert_eq!(targets.label(Some(&s("3"))), "Claude Code · 3");
+        assert_eq!(targets.label(Some(&new)), "New Claude Code (shop)");
+        assert_eq!(targets.label(Some(&s("3"))), "Claude Code (3)");
         assert_eq!(targets.label(None), "History only");
     }
 }

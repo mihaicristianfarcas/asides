@@ -76,6 +76,24 @@ const ICONS: &[(&str, &str)] = &[
         ),
     ),
     ("trash", icon(r#"<path d="M4.5 7h15M9.5 7V5h5v2M6.5 7l1 12.5h9l1-12.5"/><path d="M10.5 10.5v6M13.5 10.5v6"/>"#)),
+    ("plus", icon(r#"<path d="M12 5.5v13M5.5 12h13"/>"#)),
+    ("chevron-up-down", icon(r#"<path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"/>"#)),
+    ("clock", icon(r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>"#)),
+    (
+        "terminal",
+        icon(r#"<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"/>"#),
+    ),
+    (
+        "sliders",
+        icon(r#"<path d="M4 7h7M15 7h5M4 17h3M11 17h9"/><circle cx="13" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>"#),
+    ),
+    (
+        "keyboard",
+        icon(r#"<rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10h1M11.5 10h1M16 10h1M8 14h8"/>"#),
+    ),
+    ("minus", icon(r#"<path d="M5.5 12h13"/>"#)),
+    // asides' mark: brackets around a point.
+    ("mark", icon(r#"<path d="M8.5 4.5h-3v15h3M15.5 4.5h3v15h-3"/><circle cx="12" cy="12" r="1.6"/>"#)),
 ];
 
 pub struct Assets;

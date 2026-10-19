@@ -1,6 +1,6 @@
 // Draws the app icon, the asides mark: the letter a in brackets, white on a black rounded square, on
 // Apple's macOS icon grid (an 824-point body on a 1024-point canvas, with its drop shadow). Writes
-// packaging/Asides.icns, which `make bundle` copies into the app.
+// packaging/asides.icns, which `make bundle` copies into the app.
 //
 // Usage: swift scripts/make-icon.swift  (needs only the Command Line Tools)
 //
@@ -67,14 +67,14 @@ func png(size: Int) -> Data {
     return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!
 }
 
-let iconset = FileManager.default.temporaryDirectory.appendingPathComponent("Asides.iconset")
+let iconset = FileManager.default.temporaryDirectory.appendingPathComponent("asides.iconset")
 try? FileManager.default.removeItem(at: iconset)
 try! FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 for points in [16, 32, 128, 256, 512] {
     try! png(size: points).write(to: iconset.appendingPathComponent("icon_\(points)x\(points).png"))
     try! png(size: points * 2).write(to: iconset.appendingPathComponent("icon_\(points)x\(points)@2x.png"))
 }
-let out = root.appendingPathComponent("packaging/Asides.icns")
+let out = root.appendingPathComponent("packaging/asides.icns")
 let iconutil = Process()
 iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 iconutil.arguments = ["-c", "icns", iconset.path, "-o", out.path]

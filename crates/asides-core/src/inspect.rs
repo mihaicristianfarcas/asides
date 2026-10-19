@@ -325,7 +325,7 @@ impl Element {
             chain.push(describe(hit));
             chain.join(" › ")
         });
-        let nearby = (!labelled.is_empty() && web_depth.is_some()).then(|| labelled.join(" · "));
+        let nearby = (!labelled.is_empty() && web_depth.is_some()).then(|| labelled.join(", "));
         Element {
             app,
             window,
@@ -451,8 +451,10 @@ pub struct Annotation {
     pub time: f32,
     /// Drawn with the Draw tool; `element` is what it starts on (an arrow) or circles (a sketch).
     pub shape: Option<Shape>,
-    /// What an arrow points to.
+    /// What an arrow points to, or what's where it's moved.
     pub target: Option<Element>,
+    /// Dragged by its number: where what it's on should go, as an offset from where it is.
+    pub moved: Option<(f64, f64)>,
 }
 
 /// A recording of what the user said about one annotation (`take`, the app's id for it), and its
@@ -509,6 +511,13 @@ impl Annotation {
     pub fn region(&self) -> Option<PtRect> {
         self.area.or(self.shape.as_ref().map(Shape::bounds)).or(self.element.as_ref().and_then(|e| e.frame))
     }
+
+    /// Where what it's on should go (moved by its number): its region, or its marker, moved.
+    pub fn moved_region(&self) -> Option<PtRect> {
+        let (dx, dy) = self.moved?;
+        let r = self.region().unwrap_or(PtRect::new(self.at.0, self.at.1, 0.0, 0.0));
+        Some(PtRect::new(r.x + dx, r.y + dy, r.width, r.height))
+    }
 }
 
 /// Everything from one screen in one session.
@@ -543,8 +552,13 @@ impl Inspection {
         let mut parts = self.measurements.iter().map(Measurement::bounds).chain(self.annotations.iter().map(|a| {
             let marker = PtRect::new(a.at.0 - 12.0, a.at.1 - 12.0, 24.0, 24.0);
             let mut around = a.region().map_or(marker, |r| r.union(&marker));
-            if let Some(frame) = a.target.as_ref().and_then(|e| e.frame) {
-                around = around.union(&frame);
+            match a.moved_region() {
+                Some(moved) => around = around.union(&moved),
+                None => {
+                    if let Some(frame) = a.target.as_ref().and_then(|e| e.frame) {
+                        around = around.union(&frame);
+                    }
+                }
             }
             around
         }));
@@ -634,7 +648,7 @@ impl Inspection {
         places.all(|p| p.as_ref() == Some(&first)).then_some(first)
     }
 
-    /// `**In:** Safari · "Settings" · http://localhost:3000/settings`, when all annotations share it,
+    /// `**In:** Safari ("Settings", http://localhost:3000/settings)`, when all annotations share it,
     /// or where the user was on the screen when it froze, when no annotation says otherwise.
     pub fn context_markdown(&self) -> Option<String> {
         match self.shared_context() {
@@ -661,6 +675,9 @@ impl Inspection {
             if let Some(app) = element.app.as_ref().filter(|_| !shared) {
                 line.push_str(&format!(" ({app})"));
             }
+            if let Some(moved) = annotation.moved {
+                line.push_str(&format!(" (move it {})", moved_by(moved, scale, units)));
+            }
             if !comment.is_empty() {
                 line.push_str(&format!(": {comment}"));
             }
@@ -670,16 +687,19 @@ impl Inspection {
         let mut field = |label: &str, value: String| lines.push(format!("**{label}:** {value}"));
         match (&element.app, &element.window) {
             _ if shared => {}
-            (Some(app), Some(window)) if !window.is_empty() => field("App", format!("{app} · {}", quote(window))),
+            (Some(app), Some(window)) if !window.is_empty() => field("App", format!("{app} ({})", quote(window))),
             (Some(app), _) => field("App", app.clone()),
             _ => {}
         }
         if let Some(url) = element.url.as_ref().filter(|_| !shared) {
             field("Page", url.clone());
         }
-        if let Some(location) = element.selector.clone().or(element.path.clone()) {
+        // Its title, when that's what it's on; else where it is.
+        if let Some(location) = element.selector.clone().or(element.path.clone()).filter(|l| *l != title) {
             field("Location", location);
         }
+        // The title gives the area (or the point) when it's on nothing named.
+        let titled = element.name.is_none() && !matches!(annotation.shape, Some(Shape::Arrow { .. }));
         // The title names both ends; this says where they are (and the target's app, if another).
         if let Some(Shape::Arrow { from, to }) = &annotation.shape {
             let other_app = annotation
@@ -691,11 +711,19 @@ impl Inspection {
                 .unwrap_or_default();
             field("From → to", format!("({}, {}) → ({}, {}){other_app}", n(from.0), n(from.1), n(to.0), n(to.1)));
         }
+        // Moved by its number: where to, how far, and what's there.
+        if let (Some(moved), Some(to)) = (annotation.moved, annotation.moved_region()) {
+            let mut value = format!("({}, {}), {}", n(to.x), n(to.y), moved_by(moved, scale, units));
+            if let Some(name) = annotation.target.as_ref().and_then(|t| t.name.as_ref()) {
+                value.push_str(&format!(", over {name}"));
+            }
+            field("Move to", value);
+        }
         if let Some(selected) = &element.selected_text {
             field("Selected text", quote(selected.trim()));
         }
         if matches!(detail, Detail::Detailed | Detail::Forensic) {
-            if let Some(r) = annotation.region() {
+            if let Some(r) = annotation.region().filter(|_| !titled) {
                 field(
                     "Position",
                     format!("{}, {} ({} × {} {})", n(r.x), n(r.y), n(r.width), n(r.height), units.label()),
@@ -731,17 +759,17 @@ impl Inspection {
             if !ax.is_empty() {
                 field("Accessibility", ax.join(", "));
             }
-            field("Marker at", format!("({}, {})", n(annotation.at.0), n(annotation.at.1)));
+            // Where its number is, when that isn't the point or the corner of what it's on.
+            let corner = annotation.region().map(|r| (r.x, r.y));
+            if corner.is_some_and(|c| c != annotation.at) {
+                field("Marker at", format!("({}, {})", n(annotation.at.0), n(annotation.at.1)));
+            }
         }
-        let mut tags = Vec::new();
         if let Some(intent) = annotation.intent {
-            tags.push(format!("**Intent:** {}", intent.as_str()));
+            field("Intent", intent.as_str().into());
         }
         if let Some(severity) = annotation.severity {
-            tags.push(format!("**Severity:** {}", severity.as_str()));
-        }
-        if !tags.is_empty() {
-            lines.push(tags.join(" · "));
+            field("Severity", severity.as_str().into());
         }
         if !comment.is_empty() {
             lines.push(format!("**Feedback:** {comment}"));
@@ -767,7 +795,7 @@ pub fn with_said(block: &str, said: &str, detail: Detail) -> String {
     }
 }
 
-/// `x 380 · x 700 (320 apart) · y 120`: guides by axis, with the distance between neighbours.
+/// `x 380, x 700 (320 apart), y 120`: guides by axis, with the distance between neighbours.
 fn guides_text(guides: &[Guide], scale: f64, units: Units) -> String {
     let mut parts = Vec::new();
     for axis in [Axis::X, Axis::Y] {
@@ -782,7 +810,17 @@ fn guides_text(guides: &[Guide], scale: f64, units: Units) -> String {
             parts.push(part);
         }
     }
-    parts.join(" · ")
+    parts.join(", ")
+}
+
+/// How far something moved: `340 pt right and 120 pt down`.
+fn moved_by((dx, dy): (f64, f64), scale: f64, units: Units) -> String {
+    let step = |v: f64, plus: &str, minus: &str| {
+        (num(v.abs(), scale, units) != "0")
+            .then(|| format!("{} {} {}", num(v.abs(), scale, units), units.label(), if v > 0.0 { plus } else { minus }))
+    };
+    let steps: Vec<String> = [step(dx, "right", "left"), step(dy, "down", "up")].into_iter().flatten().collect();
+    if steps.is_empty() { "in place".into() } else { steps.join(" and ") }
 }
 
 /// A length in the chosen units, rounded to a tenth (whole numbers without the decimal).
@@ -803,12 +841,15 @@ fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "'"))
 }
 
-/// Where something was, in an app: `**In:** Safari · "Settings — Shop" · http://localhost:3000/settings`.
+/// Where something was, in an app: `**In:** Safari ("Settings — Shop", http://localhost:3000/settings)`.
 pub fn place_markdown(app: &str, window: Option<&str>, url: Option<&str>) -> String {
-    let mut parts = vec![app.to_string()];
+    let mut parts = Vec::new();
     parts.extend(window.filter(|w| !w.trim().is_empty()).map(quote));
     parts.extend(url.filter(|u| !u.is_empty()).map(String::from));
-    format!("{PLACE}{}", parts.join(" · "))
+    match parts.is_empty() {
+        true => format!("{PLACE}{app}"),
+        false => format!("{PLACE}{app} ({})", parts.join(", ")),
+    }
 }
 
 /// How a place begins (see [`place_markdown`]).
@@ -946,7 +987,7 @@ mod tests {
         assert_eq!(
             i.measurements_markdown(Detail::Standard).unwrap(),
             "**Measured** in pt (screen: Built-in Retina Display, 1512 × 982 pt, @2x)\n\
-             **Guides:** x 380 · x 700 (320 apart) · y 120"
+             **Guides:** x 380, x 700 (320 apart), y 120"
         );
         assert_eq!(
             i.measurement_lines(),
@@ -958,7 +999,7 @@ mod tests {
         let px = Inspection { units: Units::Px, ..inspection() };
         assert_eq!(
             px.measurements_markdown(Detail::Compact).unwrap(),
-            "**Measured** in px\n**Guides:** x 760 · x 1400 (640 apart) · y 240"
+            "**Measured** in px\n**Guides:** x 760, x 1400 (640 apart), y 240"
         );
         assert_eq!(px.measurement_lines()[1], "- Area 640 × 96 (20:3) at (760, 400), snapped to the object inside");
         let nothing = Inspection { measurements: vec![], guides: vec![], ..inspection() };
@@ -973,7 +1014,7 @@ mod tests {
         // Every annotation is in the same app, window and page: that's said once, not under each.
         assert_eq!(
             i.context_markdown().as_deref(),
-            Some("**In:** Safari · \"Settings — Shop\" · http://localhost:3000/settings")
+            Some("**In:** Safari (\"Settings — Shop\", http://localhost:3000/settings)")
         );
         assert_eq!(
             i.annotation_markdown(a, Detail::Compact),
@@ -983,7 +1024,8 @@ mod tests {
             i.annotation_markdown(a, Detail::Standard),
             "### 1. button \"Save changes\"\n\
              **Location:** form.settings > div.actions > button#save.btn.btn-primary\n\
-             **Intent:** fix · **Severity:** important\n\
+             **Intent:** fix\n\
+             **Severity:** important\n\
              **Feedback:** Line it up with the fields."
         );
         // Annotations in different apps each say where they are.
@@ -995,13 +1037,13 @@ mod tests {
         // Where the user was, when no annotation says where it is.
         let placed = |annotations| Inspection {
             annotations,
-            place: Some("**In:** Simulator · \"iPhone 17\"".into()),
+            place: Some("**In:** Simulator (\"iPhone 17\")".into()),
             ..inspection()
         };
-        assert_eq!(placed(vec![]).context_markdown().as_deref(), Some("**In:** Simulator · \"iPhone 17\""));
+        assert_eq!(placed(vec![]).context_markdown().as_deref(), Some("**In:** Simulator (\"iPhone 17\")"));
         assert_eq!(placed(vec![a.clone(), finder.clone()]).context_markdown(), None, "annotations in different apps");
         assert!(
-            mixed.annotation_markdown(a, Detail::Standard).contains("**App:** Safari · \"Settings — Shop\"\n**Page:**")
+            mixed.annotation_markdown(a, Detail::Standard).contains("**App:** Safari (\"Settings — Shop\")\n**Page:**")
         );
         assert_eq!(
             mixed.annotation_markdown(&finder, Detail::Compact),
@@ -1023,10 +1065,14 @@ mod tests {
             area: Some(PtRect::new(5.0, 5.0, 100.5, 40.0)),
             ..Annotation::default()
         };
+        // Its title says where it is; its marker isn't at its corner.
+        assert_eq!(i.annotation_markdown(&spoken, Detail::Detailed), "### 2. Area 100.5 × 40 at (5, 5)");
         assert_eq!(
-            i.annotation_markdown(&spoken, Detail::Detailed),
-            "### 2. Area 100.5 × 40 at (5, 5)\n**Position:** 5, 5 (100.5 × 40 pt)"
+            i.annotation_markdown(&spoken, Detail::Forensic),
+            "### 2. Area 100.5 × 40 at (5, 5)\n**Marker at:** (10, 20)"
         );
+        let cornered = Annotation { at: (5.0, 5.0), ..spoken.clone() };
+        assert_eq!(i.annotation_markdown(&cornered, Detail::Forensic), "### 2. Area 100.5 × 40 at (5, 5)");
         assert_eq!(Annotation { at: (1.0, 2.0), ..Annotation::default() }.title(2.0, Units::Px), "Point (2, 4)");
         // What was said about it, after what was typed; a later recording continues it.
         let said = Annotation {

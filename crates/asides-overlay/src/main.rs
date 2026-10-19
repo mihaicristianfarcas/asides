@@ -1,19 +1,21 @@
-//! `asides-overlay`: Asides' Measure & Annotate overlay. The app starts it with a session
+//! `asides-overlay`: asides' Measure & Annotate overlay. The app starts it with a session
 //! directory (see `asides_core::helper`); it shows the frozen screens, lets the user measure,
 //! annotate, draw and take screenshots while they talk, and writes what to add to the aside.
 //!
 //! Started with `--standby`, it starts GPUI and opens the screens' windows, then waits for the app
-//! to open a session: the app keeps one waiting, so opening Asides doesn't wait for them.
+//! to open a session: the app keeps one waiting, so opening asides doesn't wait for them.
 //!
 //! With a script in the session (`asides simulate-measure`), it plays it without any window and
 //! writes the result.
 //!
-//! Started with `--window`, it's the Asides window instead (`window.rs`): History, Sessions and
+//! Started with `--window`, it's the asides window instead (`window.rs`): History, Sessions and
 //! Settings.
 
 mod assets;
+mod controls;
 mod export;
 mod finish;
+mod glass;
 mod input;
 mod io;
 mod native;
@@ -74,17 +76,19 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
     let refs: Vec<&Frame> = frames.iter().collect();
     let exporter = export::Exporter::new(&refs, style::parse_color(&spec.color));
     let (mut shots, mut items, mut live, mut freezes) = (Vec::new(), Vec::new(), false, 0);
+    let mut frozen_at = session.clock;
     for action in &script.actions {
         match action {
             Action::Wait(seconds) => std::thread::sleep(std::time::Duration::from_secs_f64(seconds.clamp(0.0, 60.0))),
             Action::Live if !live => {
-                items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freezes, false)?);
+                let freeze = (freezes, frozen_at);
+                items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze, false)?);
                 (live, freezes) = (true, freezes + 1);
                 shots.clear();
             }
             Action::Freeze if live => {
                 session = session.refrozen(screens());
-                live = false;
+                (live, frozen_at) = (false, session.clock);
             }
             _ => {}
         }
@@ -98,7 +102,8 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
     }
     if !live {
         let alone = items.is_empty();
-        items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freezes, alone)?);
+        let freeze = (freezes, frozen_at);
+        items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze, alone)?);
     }
     finish::write(dir, &finish::outcome(items, session.saved(), spec.targets.chosen.clone()))?;
     io::emit(&Event::Finished);
@@ -112,18 +117,18 @@ fn gui(dir: PathBuf, spec: Spec, frames: Vec<Frame>) {
     Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
         launched(cx);
         let commands = io::commands(spec.replay.is_none());
-        open(dir, spec, frames, commands, Vec::new(), cx);
+        open(dir, spec, frames, commands, (Vec::new(), None), cx);
     });
 }
 
 /// Started ahead of time: GPUI starts, and a window opens for each screen (`windows::Spare`),
-/// then it waits for the app to open a session. Opening Asides then doesn't wait for a process,
+/// then it waits for the app to open a session. Opening asides then doesn't wait for a process,
 /// GPUI and its windows, about 120 ms.
 fn standby() {
     native::stay_accessory_at_launch();
     Application::new().with_assets(assets::Assets).run(move |cx: &mut App| {
         launched(cx);
-        let spares = windows::open_spares(cx);
+        let spares = (windows::open_spares(cx), windows::open_spare_toolbar(cx));
         let (opened, commands) = io::standby();
         cx.spawn(async move |cx| {
             let session = opened.await;
@@ -161,7 +166,7 @@ fn open(
     spec: Spec,
     frames: Vec<Frame>,
     commands: Receiver<Command>,
-    spares: Vec<windows::Spare>,
+    (spares, spare_toolbar): (Vec<windows::Spare>, Option<windows::Spare>),
     cx: &mut App,
 ) {
     // The app the user is in, before the overlay's takes over.
@@ -170,7 +175,7 @@ fn open(
     let overlay = cx.new(|_| Overlay::new(spec, frames, dir, commands));
     overlay.update(cx, |o, _| {
         o.previous_app = previous;
-        o.spares = spares;
+        (o.spares, o.spare_toolbar) = (spares, spare_toolbar);
         o.start();
     });
     native::debug("ready");

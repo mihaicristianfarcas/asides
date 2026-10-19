@@ -36,6 +36,18 @@ impl Recorder {
         Ok(Recorder { stream, samples, sample_rate })
     }
 
+    /// How loud the last 50 ms were, from 0 (−50 dB or quieter) to 1 (−10 dB or louder): the pill's
+    /// microphone fills with it.
+    pub fn level(&self) -> f32 {
+        let Ok(samples) = self.samples.lock() else { return 0.0 };
+        let recent = &samples[samples.len().saturating_sub(self.sample_rate as usize / 20)..];
+        if recent.is_empty() {
+            return 0.0;
+        }
+        let rms = (recent.iter().map(|s| s * s).sum::<f32>() / recent.len() as f32).sqrt();
+        ((20.0 * rms.max(1e-6).log10() + 50.0) / 40.0).clamp(0.0, 1.0)
+    }
+
     /// Stops capturing and returns the mono samples and their rate.
     pub fn finish(self) -> (Vec<f32>, u32) {
         drop(self.stream);

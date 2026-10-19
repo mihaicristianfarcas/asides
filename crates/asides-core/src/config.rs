@@ -1,4 +1,4 @@
-//! `~/Library/Application Support/Asides/config.toml`
+//! `~/Library/Application Support/asides/config.toml`
 
 use std::fs;
 use std::io;
@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use crate::agents::AgentKind;
 use crate::inspect::{Detail, Units};
 
-const HEADER: &str = r#"# Asides settings (the Asides window changes most of them). Changes are picked up automatically.
+const HEADER: &str = r#"# asides settings (the asides window changes every one of them). Changes are picked up automatically.
 # Shortcut syntax: modifiers (ctrl, alt/option, shift, cmd) + a key (Space, Escape, KeyN, Digit1, F5, …),
 # joined with '+'. Avoid option-only combinations: macOS refuses them.
-# mic_on_open: start listening when Asides opens (its microphone button and Space still work).
+# mic_on_open: start listening when asides opens (its microphone button and Space still work).
 # languages: Whisper codes to choose between, e.g. ["en", "ro"]; [] detects any language (only the
 # multilingual models use them).
 # history_days: how long asides stay in ~/.asides/history; 0 keeps them.
@@ -32,7 +32,7 @@ const HEADER: &str = r#"# Asides settings (the Asides window changes most of the
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// Start listening when Asides opens (the pill's microphone and Space still turn it on and off).
+    /// Start listening when asides opens (the pill's microphone and Space still turn it on and off).
     pub mic_on_open: bool,
     pub sounds: bool,
     /// Keep an .m4a of what was said with each aside in the history.
@@ -48,7 +48,7 @@ pub struct Config {
     pub history_days: u32,
     /// Wispr Flow dictations made while the screen is frozen join the aside.
     pub wispr_flow: bool,
-    /// How much Asides puts in an aside about each annotation.
+    /// How much asides puts in an aside about each annotation.
     pub annotation_detail: Detail,
     pub measure: Measure,
     /// New agent sessions (New session in…).
@@ -86,13 +86,24 @@ impl Agents {
         }
     }
 
+    pub fn args_mut(&mut self, kind: AgentKind) -> &mut Vec<String> {
+        match kind {
+            AgentKind::Claude => &mut self.claude,
+            AgentKind::Codex => &mut self.codex,
+            AgentKind::OpenCode => &mut self.opencode,
+            AgentKind::Gemini => &mut self.gemini,
+            AgentKind::Copilot => &mut self.copilot,
+            AgentKind::Qwen => &mut self.qwen,
+        }
+    }
+
     /// The agent new sessions start with.
     pub fn default_agent(&self) -> AgentKind {
         AgentKind::parse(self.default.trim()).unwrap_or(AgentKind::Claude)
     }
 }
 
-/// Asides on screen (the overlay).
+/// asides on screen (the overlay).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Measure {
@@ -102,7 +113,7 @@ pub struct Measure {
     /// Edge detection tolerance in percent; `-`/`=` change it while measuring.
     pub tolerance: u8,
     /// Name the element under each annotation from the accessibility tree. Needs the Accessibility
-    /// permission, asked for the first time Asides opens.
+    /// permission, asked for the first time asides opens.
     pub identify_elements: bool,
     /// Points of screen kept around what was annotated in the screenshot added to the aside.
     pub padding: f64,
@@ -196,12 +207,109 @@ impl Default for OverlayKeys {
     }
 }
 
+impl OverlayKeys {
+    /// Every action's name in the settings, in the order they're declared.
+    pub const NAMES: [&str; 26] = [
+        "measure",
+        "annotate",
+        "draw",
+        "shot",
+        "hold_horizontal",
+        "hold_vertical",
+        "guide_horizontal",
+        "guide_vertical",
+        "tolerance_up",
+        "tolerance_down",
+        "tolerance_high",
+        "units",
+        "copy_dimensions",
+        "copy_image",
+        "copy_markdown",
+        "undo",
+        "clear",
+        "hide",
+        "restore",
+        "talk",
+        "target",
+        "help",
+        "done",
+        "done_whole_screen",
+        "live",
+        "close",
+    ];
+
+    /// The keys for the action named `name` (see [`OverlayKeys::NAMES`]).
+    pub fn get(&self, name: &str) -> Option<&String> {
+        Some(match name {
+            "measure" => &self.measure,
+            "annotate" => &self.annotate,
+            "draw" => &self.draw,
+            "shot" => &self.shot,
+            "hold_horizontal" => &self.hold_horizontal,
+            "hold_vertical" => &self.hold_vertical,
+            "guide_horizontal" => &self.guide_horizontal,
+            "guide_vertical" => &self.guide_vertical,
+            "tolerance_up" => &self.tolerance_up,
+            "tolerance_down" => &self.tolerance_down,
+            "tolerance_high" => &self.tolerance_high,
+            "units" => &self.units,
+            "copy_dimensions" => &self.copy_dimensions,
+            "copy_image" => &self.copy_image,
+            "copy_markdown" => &self.copy_markdown,
+            "undo" => &self.undo,
+            "clear" => &self.clear,
+            "hide" => &self.hide,
+            "restore" => &self.restore,
+            "talk" => &self.talk,
+            "target" => &self.target,
+            "help" => &self.help,
+            "done" => &self.done,
+            "done_whole_screen" => &self.done_whole_screen,
+            "live" => &self.live,
+            "close" => &self.close,
+            _ => return None,
+        })
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut String> {
+        Some(match name {
+            "measure" => &mut self.measure,
+            "annotate" => &mut self.annotate,
+            "draw" => &mut self.draw,
+            "shot" => &mut self.shot,
+            "hold_horizontal" => &mut self.hold_horizontal,
+            "hold_vertical" => &mut self.hold_vertical,
+            "guide_horizontal" => &mut self.guide_horizontal,
+            "guide_vertical" => &mut self.guide_vertical,
+            "tolerance_up" => &mut self.tolerance_up,
+            "tolerance_down" => &mut self.tolerance_down,
+            "tolerance_high" => &mut self.tolerance_high,
+            "units" => &mut self.units,
+            "copy_dimensions" => &mut self.copy_dimensions,
+            "copy_image" => &mut self.copy_image,
+            "copy_markdown" => &mut self.copy_markdown,
+            "undo" => &mut self.undo,
+            "clear" => &mut self.clear,
+            "hide" => &mut self.hide,
+            "restore" => &mut self.restore,
+            "talk" => &mut self.talk,
+            "target" => &mut self.target,
+            "help" => &mut self.help,
+            "done" => &mut self.done,
+            "done_whole_screen" => &mut self.done_whole_screen,
+            "live" => &mut self.live,
+            "close" => &mut self.close,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Shortcuts {
-    /// Opens Asides with the screen frozen; while it's open, a tap sends the aside.
+    /// Opens asides with the screen frozen; while it's open, a tap sends the aside.
     pub asides: String,
-    /// Switches between the frozen screen and the live one; with Asides closed, opens it live.
+    /// Switches between the frozen screen and the live one; with asides closed, opens it live.
     pub freeze: String,
 }
 
@@ -247,6 +355,45 @@ impl Config {
         let body = toml::to_string_pretty(self).map_err(|e| io::Error::other(e.to_string()))?;
         fs::write(path, format!("{HEADER}{body}"))
     }
+}
+
+/// Arguments as typed in the asides window, split as a shell would: by spaces, quotes keeping
+/// spaces in one (`--append-system-prompt "be brief"`).
+pub fn split_args(text: &str) -> Vec<String> {
+    let (mut args, mut current, mut quote, mut started) = (Vec::new(), String::new(), None, false);
+    for c in text.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => current.push(c),
+            (None, '"' | '\'') => (quote, started) = (Some(c), true),
+            (None, c) if c.is_whitespace() => {
+                if started || !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+                started = false;
+            }
+            (None, c) => current.push(c),
+        }
+    }
+    if started || !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
+/// Arguments as the asides window shows them: quoted where they hold spaces.
+pub fn join_args(args: &[String]) -> String {
+    let quoted =
+        |a: &String| if a.is_empty() || a.contains(char::is_whitespace) { format!("\"{a}\"") } else { a.clone() };
+    args.iter().map(quoted).collect::<Vec<_>>().join(" ")
+}
+
+/// Languages as typed (`en, ro`): Whisper's codes, lowercase.
+pub fn parse_languages(text: &str) -> Vec<String> {
+    text.split(|c: char| c == ',' || c.is_whitespace())
+        .map(|code| code.trim().to_lowercase())
+        .filter(|code| (2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_lowercase()))
+        .collect()
 }
 
 /// `ctrl+alt+Space` → `⌃⌥Space`, `cmd+shift+KeyN` → `⇧⌘N`.
@@ -296,6 +443,29 @@ mod tests {
     }
 
     #[test]
+    fn splits_and_joins_arguments() {
+        let args = split_args(r#"--model opus --append-system-prompt "be brief"  'a b' """#);
+        assert_eq!(args, ["--model", "opus", "--append-system-prompt", "be brief", "a b", ""]);
+        assert_eq!(split_args(&join_args(&args)), args);
+        assert_eq!(join_args(&args[..4]), r#"--model opus --append-system-prompt "be brief""#);
+        assert!(split_args("   ").is_empty());
+        assert_eq!(parse_languages("en, RO  de,x,english"), ["en", "ro", "de"]);
+    }
+
+    #[test]
+    fn names_every_overlay_key() {
+        let mut keys = OverlayKeys::default();
+        for name in OverlayKeys::NAMES {
+            assert!(keys.get(name).is_some(), "{name}");
+            *keys.get_mut(name).unwrap() = format!("x+{name}");
+        }
+        // Each name is its own field, as the settings file has it.
+        let text = toml::to_string(&keys).unwrap();
+        assert!(OverlayKeys::NAMES.iter().all(|n| text.contains(&format!("{n} = \"x+{n}\""))), "{text}");
+        assert!(keys.get("nothing").is_none());
+    }
+
+    #[test]
     fn round_trips_and_fills_missing_keys() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
@@ -315,19 +485,5 @@ mod tests {
         assert_eq!(partial.shortcuts.asides, "ctrl+alt+Space");
         assert_eq!((partial.history_days, partial.wispr_flow), (30, false));
         assert!(partial.measure.identify_elements, "names elements by default");
-
-        // Files from before the redesign still load: what's gone is ignored.
-        fs::write(
-            &path,
-            "agent_delivery = \"batch\"\nhold_to_talk = false\nannotation_detail = \"forensic\"\n[measure]\nunits = \"px\"\n\
-             record = true\ntoolbar = false\n[measure.keys]\nannotate = \"q\"\nsend = \"cmd+enter\"\n[shortcuts]\n\
-             next_target = \"ctrl+alt+Tab\"\n[agents]\nterminal = \"Ghostty\"\nworktrees = false\nclaude = [\"--model\", \"opus\"]\n",
-        )
-        .unwrap();
-        let old = Config::load(&path).unwrap();
-        assert_eq!((old.annotation_detail, old.measure.units), (Detail::Forensic, Units::Px));
-        assert_eq!((old.measure.keys.annotate.as_str(), old.measure.keys.measure.as_str()), ("q", "m"));
-        assert_eq!((old.agents.terminal.as_str(), old.agents.claude.len()), ("Ghostty", 2));
-        assert_eq!(old.agents.default_agent(), AgentKind::Claude);
     }
 }

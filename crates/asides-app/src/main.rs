@@ -1,4 +1,4 @@
-//! Asides: a menu-bar app. `⌃⌥Space` freezes the screen under a small pill: click what's wrong (a
+//! asides: a menu-bar app. `⌃⌥Space` freezes the screen under a small pill: click what's wrong (a
 //! numbered pin), drag an area, measure, draw, and say why; `⌃⌥Space` again sends it all, as one
 //! aside, transcribed on this Mac, into the coding agent's session the user last typed into, typed
 //! there as their own message (`asides_core::deliver`). Every aside is kept in the history
@@ -66,13 +66,15 @@ use crate::worker::{AsideJob, CapturedImage, Job, Outcome, TranscribeJob};
 /// A press shorter than this on an annotation's microphone toggles it; longer, it talks until let go.
 const TAP_MAX: Duration = Duration::from_millis(350);
 const TICK: Duration = Duration::from_millis(250);
+/// How often the pill's microphone hears how loud it is, while asides is open and listening.
+const LEVEL_TICK: Duration = Duration::from_millis(50);
 const FLASH: Duration = Duration::from_secs(2);
 const ERROR_ICON: Duration = Duration::from_secs(6);
 /// Recordings shorter than this (without images) are treated as accidental and dropped.
 const MIN_RECORDING_SECS: f32 = 0.3;
 /// How long the outcome of a send stays in the menu bar.
 const SENT_FLASH: Duration = Duration::from_secs(4);
-/// How long Asides waits for the screenshots before it may ask again.
+/// How long asides waits for the screenshots before it may ask again.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How many folders New session in… offers.
 const FOLDERS: usize = 8;
@@ -119,7 +121,7 @@ struct Recording {
     place: Place,
 }
 
-/// A recording that ended while Asides was open. What's said in a session waits for it to end, to
+/// A recording that ended while asides was open. What's said in a session waits for it to end, to
 /// make one aside with what was annotated (`asides_core::takes`).
 struct Take {
     started_at: Instant,
@@ -170,7 +172,7 @@ struct App {
     jobs: Sender<Job>,
     recording: Option<Recording>,
     in_flight: usize,
-    /// Asides being typed into their sessions.
+    /// asides being typed into their sessions.
     sending: usize,
     model_state: Option<ModelState>,
     flash: Option<Flash>,
@@ -183,7 +185,7 @@ struct App {
     /// The agent sessions running, as last found, and how to ask for a fresh look.
     sessions: Vec<AgentSession>,
     find_sessions: Option<Sender<()>>,
-    /// Asides opened and asked for a fresh look, not answered yet.
+    /// asides opened and asked for a fresh look, not answered yet.
     looking: bool,
     /// The coding agents installed (`None` until the login shell has answered).
     agents: Option<Vec<AgentKind>>,
@@ -202,11 +204,11 @@ struct App {
     /// Screen Recording is allowed. Asking takes 11 ms each time, so it's asked until it is, and
     /// again after a capture fails.
     screen_permitted: bool,
-    /// The overlay, while Asides is open...
+    /// The overlay, while asides is open...
     overlay: Option<Overlay>,
     /// ...and the next one, started ahead of time.
     standby: Option<Standby>,
-    /// Asides opens over the live screen (`⌃⌥P` with it closed), once the screens are listed.
+    /// asides opens over the live screen (`⌃⌥P` with it closed), once the screens are listed.
     open_live: bool,
     /// What was said in the open session, until it ends.
     takes: Vec<Take>,
@@ -214,13 +216,13 @@ struct App {
     said: Vec<(u32, u64, Option<String>)>,
     next_take: u64,
     finishing: Option<Finishing>,
-    /// Wispr Flow dictations made while frozen, at the seconds since Asides opened.
+    /// Wispr Flow dictations made while frozen, at the seconds since asides opened.
     dictations: Vec<(f32, String)>,
     /// The last session's guides and held measurements, which the next can restore.
     last_measure: Saved,
     /// The overlay showed its keys once already.
     overlay_tips_seen: bool,
-    /// The Asides window's process.
+    /// The asides window's process.
     window: Option<Child>,
     /// The microphones, for the window's settings.
     input_devices: Vec<String>,
@@ -376,7 +378,7 @@ impl App {
     /// is already set up, or once the user declined the password prompt.
     fn link_command(&self) {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        // …/Asides.app/Contents/MacOS/Asides
+        // …/asides.app/Contents/MacOS/asides-app
         let app = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
         let Some(cli) = app.and_then(|app| install::installed_cli(&app, &home)) else { return };
         if self.command_link_declined || install::command_installed(&install::command_dirs(&home)) {
@@ -418,6 +420,7 @@ impl App {
             UserEvent::Agents(agents) => {
                 self.agents = Some(agents);
                 self.tell_overlay_targets();
+                self.publish();
             }
             UserEvent::Delivered { id, delivery } => self.delivered(&id, delivery, true),
             UserEvent::CommandLinked(CommandLink::Linked) => {
@@ -432,7 +435,7 @@ impl App {
             UserEvent::CommandLinked(CommandLink::Failed(message)) => {
                 self.fail(format!("Could not add the asides command to {}: {message}", install::LINK));
             }
-            // Asides frozen as it opens, or, open, frozen again.
+            // asides frozen as it opens, or, open, frozen again.
             UserEvent::Captured(Ok(captures)) if self.overlay.is_some() => self.freeze_overlay(captures),
             UserEvent::Captured(Ok(captures)) => self.show_overlay(captures),
             UserEvent::Captured(Err(message)) => {
@@ -505,7 +508,7 @@ impl App {
         }
     }
 
-    /// The Asides shortcut (or the menu, or `asides open`): opens Asides frozen, or, open, sends.
+    /// The asides shortcut (or the menu, or `asides open`): opens asides frozen, or, open, sends.
     fn open_or_send(&mut self) {
         match &mut self.overlay {
             Some(overlay) => overlay.send(&OverlayCommand::Finish),
@@ -514,7 +517,7 @@ impl App {
         }
     }
 
-    /// The freeze shortcut: freezes the screen, or back to live; closed, opens Asides live.
+    /// The freeze shortcut: freezes the screen, or back to live; closed, opens asides live.
     fn freeze(&mut self) {
         match &mut self.overlay {
             Some(overlay) => overlay.send(&OverlayCommand::ToggleFreeze),
@@ -526,7 +529,13 @@ impl App {
         let Some(action) = self.tray.as_ref().and_then(|t| t.action(&event.id)) else { return };
         match action {
             MenuAction::Open => self.open_or_send(),
-            MenuAction::Window => self.open_window(),
+            MenuAction::Live => self.freeze(),
+            MenuAction::CopyLast => self.copy_last(),
+            MenuAction::Listen => self.update_config(|c| c.mic_on_open = !c.mic_on_open),
+            MenuAction::Sounds => self.update_config(|c| c.sounds = !c.sounds),
+            MenuAction::Identify => self.update_config(|c| c.measure.identify_elements = !c.measure.identify_elements),
+            MenuAction::History => self.open_window_at(Some("history")),
+            MenuAction::Settings => self.open_window_at(Some("general")),
             MenuAction::Quit => self.request_quit(),
         }
     }
@@ -574,7 +583,7 @@ impl App {
         let id = aside.id.clone();
         match target {
             None | Some(Target::History) => {
-                self.flash(SENT_FLASH, Mark::Check, "Kept in History (Asides window)");
+                self.flash(SENT_FLASH, Mark::Check, "Saved in History (asides window)");
                 self.sound("Glass");
             }
             Some(Target::Session { id: session }) => {
@@ -617,7 +626,7 @@ impl App {
                 let name = sessions::repo_name(&dir);
                 let delivery = Delivery {
                     at_ms: history::now_ms(),
-                    to: format!("New {} · {name}", agent.name()),
+                    to: format!("New {} ({name})", agent.name()),
                     agent: Some(agent),
                     dir: Some(dir.clone()),
                     app: terminal_app.clone(),
@@ -676,7 +685,7 @@ impl App {
             Some(session) => Target::Session { id: session.to_string() },
             None => match sessions::latest(&self.sessions) {
                 Some(session) => Target::Session { id: session.id() },
-                None => return self.fail("No agent session is running that Asides can type into.".into()),
+                None => return self.fail("No agent session is running that asides can type into.".into()),
             },
         };
         self.send_again_to(id, target);
@@ -715,7 +724,7 @@ impl App {
                 id: s.id(),
                 label,
                 app: s.host.name().to_string(),
-                unreachable: (!s.host.reachable()).then(|| format!("In {}: Asides can't type there", s.host.name())),
+                unreachable: (!s.host.reachable()).then(|| format!("In {}: asides can't type there", s.host.name())),
             })
             .collect();
         let folders =
@@ -780,7 +789,7 @@ impl App {
             Mic::Granted => self.mic = Mic::Granted,
             Mic::Undetermined => {
                 if let Some(overlay) = &mut self.overlay {
-                    let text = "Asides needs the microphone: close this (Esc) to answer macOS's prompt.".into();
+                    let text = "asides needs the microphone: close this (Esc) to answer macOS's prompt.".into();
                     overlay.send(&OverlayCommand::Notice { text });
                 }
                 return self.request_mic();
@@ -788,7 +797,7 @@ impl App {
             Mic::Denied => {
                 self.mic = Mic::Denied;
                 return self.fail(
-                    "Microphone access is denied: allow Asides in System Settings → Privacy & Security → Microphone."
+                    "Microphone access is denied: allow asides in System Settings → Privacy & Security → Microphone."
                         .into(),
                 );
             }
@@ -849,14 +858,14 @@ impl App {
             let job = TranscribeJob { id, samples: take.samples, sample_rate: take.sample_rate, model, languages };
             return self.submit(Job::Transcribe(Box::new(job)));
         }
-        // In Asides, what's said waits for it to be sent, to make one aside with what's annotated.
+        // In asides, what's said waits for it to be sent, to make one aside with what's annotated.
         if self.overlay.as_ref().is_some_and(|o| !o.over) {
             self.takes.push(take);
             self.refresh();
             self.publish();
             return;
         }
-        // Outside Asides (`asides simulate`): an aside of its own, kept in the history.
+        // Outside asides (`asides simulate`): an aside of its own, kept in the history.
         let origin = take.started_at;
         self.add_session(vec![take], OverlayOutcome::default(), Vec::new(), Vec::new(), origin, Some(Target::History));
     }
@@ -883,7 +892,7 @@ impl App {
     }
 
     /// A Wispr Flow dictation made while the screen is frozen joins the aside, when it was made.
-    /// (The watcher reports it a moment later: one made before Asides opened isn't its.)
+    /// (The watcher reports it a moment later: one made before asides opened isn't its.)
     fn add_dictation(&mut self, dictation: Dictation) {
         let Some(overlay) = self.overlay.as_ref().filter(|o| o.frozen && !o.over) else { return };
         let at = dictation.at.with_timezone(&Local);
@@ -897,9 +906,9 @@ impl App {
         self.sound("Tink");
     }
 
-    // --- Asides on screen ---
+    // --- asides on screen ---
 
-    /// Opens Asides with every screen frozen (or, `live`, over the live screen).
+    /// Opens asides with every screen frozen (or, `live`, over the live screen).
     fn open_asides(&mut self, live: bool) {
         self.open_live = live;
         self.looking = true;
@@ -907,7 +916,7 @@ impl App {
         self.capture_screens();
     }
 
-    /// Freezes every screen (asking for the Screen Recording permission the first time): Asides
+    /// Freezes every screen (asking for the Screen Recording permission the first time): asides
     /// opens once the screenshots arrive, or, open, freezes (`freeze_overlay`).
     fn capture_screens(&mut self) {
         // A capture that never answered doesn't block the next one for long.
@@ -917,8 +926,8 @@ impl App {
         if !self.screen_permitted && !capture::permitted() {
             capture::request();
             return self.fail(
-                "Asides needs to see the screen to freeze it: allow it in System Settings → Privacy & Security → \
-                 Screen & System Audio Recording, then quit and reopen Asides."
+                "asides needs to see the screen to freeze it: allow it in System Settings → Privacy & Security → \
+                 Screen & System Audio Recording, then quit and reopen asides."
                     .into(),
             );
         }
@@ -954,7 +963,7 @@ impl App {
         self.capturing = Some(Capturing { at: Instant::now(), screens, windows, place });
     }
 
-    /// Asides, open over the live screen, frozen: the screenshots go to its overlay.
+    /// asides, open over the live screen, frozen: the screenshots go to its overlay.
     fn freeze_overlay(&mut self, captures: Vec<Capture>) {
         let Some(Capturing { screens, windows, place, .. }) = self.capturing.take() else { return };
         let (spec_screens, frames) = spec_screens(screens, captures, place.lock().unwrap().take());
@@ -987,7 +996,7 @@ impl App {
         let spec = Spec { screens: spec_screens, tips, live, ..self.overlay_spec() };
         if let Err(err) = self.open_overlay(spec, &frames, windows) {
             self.stand_by();
-            return self.fail(format!("Could not open Asides: {err:#}"));
+            return self.fail(format!("Could not open asides: {err:#}"));
         }
         if tips {
             self.overlay_tips_seen = true;
@@ -1071,7 +1080,7 @@ impl App {
     }
 
     fn on_overlay(&mut self, pid: u32, message: OverlayMessage) {
-        // The one standing by quit: Asides opens in a process of its own, until the next session ends.
+        // The one standing by quit: asides opens in a process of its own, until the next session ends.
         if self.standby.as_ref().is_some_and(|s| s.pid() == pid) {
             if matches!(message, OverlayMessage::Exited) {
                 self.standby = None;
@@ -1143,7 +1152,7 @@ impl App {
                         self.finishing = Some(Finishing { outcome, images, takes, origin, last_take, dictations });
                         self.try_finish();
                     }
-                    Err(err) => self.fail(format!("Asides: {err:#}")),
+                    Err(err) => self.fail(format!("asides: {err:#}")),
                 }
             }
             OverlayMessage::Event(OverlayEvent::Cancelled { saved }) => {
@@ -1185,7 +1194,7 @@ impl App {
                     macos::activate_app(pid);
                 }
                 if crashed {
-                    self.fail("Asides' overlay closed unexpectedly. What you said is in History.".into());
+                    self.fail("asides' overlay closed unexpectedly. What you said is in History.".into());
                 }
                 self.stand_by();
                 self.refresh();
@@ -1257,9 +1266,8 @@ impl App {
             if outcome.items.is_empty() && dictations.is_empty() {
                 return;
             }
-            let (pictures, mut texts) = inspection_parts(outcome, images, |time| time);
+            let (pictures, mut texts, pins) = inspection_parts(outcome, images, |time| time);
             texts.extend(dictations);
-            asides_core::markdown::without_repeated_places(&mut texts);
             return self.submit(Job::Aside(Box::new(AsideJob {
                 samples: Vec::new(),
                 sample_rate: 16_000,
@@ -1271,6 +1279,7 @@ impl App {
                 languages: self.config.languages.clone(),
                 takes: Vec::new(),
                 target,
+                pins,
             })));
         }
         takes.sort_by_key(|t| t.started_at);
@@ -1282,7 +1291,7 @@ impl App {
             .collect();
         let joined = takes::join(&parts);
         drop(parts);
-        let (mut pictures, mut texts) = inspection_parts(outcome, images, |time| joined.offset(time));
+        let (mut pictures, mut texts, pins) = inspection_parts(outcome, images, |time| joined.offset(time));
         texts.extend(dictations.into_iter().map(|(time, text)| (joined.offset(time), text)));
         let started = takes.first().map_or(opened, |t| t.started.min(opened));
         for (take, start) in takes.into_iter().zip(starts) {
@@ -1291,7 +1300,6 @@ impl App {
             );
             texts.extend(take.texts.into_iter().map(|(offset, text)| (joined.offset(start + offset), text)));
         }
-        asides_core::markdown::without_repeated_places(&mut texts);
         let parts = joined.takes();
         self.submit(Job::Aside(Box::new(AsideJob {
             samples: joined.samples,
@@ -1304,10 +1312,11 @@ impl App {
             languages: self.config.languages.clone(),
             takes: parts,
             target,
+            pins,
         })));
     }
 
-    /// What was said in a session that ends without Send or Esc (it crashed, or Asides quits): kept
+    /// What was said in a session that ends without Send or Esc (it crashed, or asides quits): kept
     /// in the history.
     fn keep_takes(&mut self) {
         let mut takes = std::mem::take(&mut self.takes);
@@ -1319,25 +1328,31 @@ impl App {
         }
     }
 
-    /// The Asides window (History, Sessions, Settings): `asides-overlay --window`; brought forward
-    /// when it's open.
     fn open_window(&mut self) {
+        self.open_window_at(None);
+    }
+
+    /// The asides window (History, Sessions, Settings): `asides-overlay --window`; brought forward
+    /// when it's open, at `page` (`history`, `general`…) when there's one.
+    fn open_window_at(&mut self, page: Option<&str>) {
         if let Some(child) = &mut self.window
             && child.try_wait().ok().flatten().is_none()
         {
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
-                let _ = writeln!(stdin, "show");
+                let _ = writeln!(stdin, "show {}", page.unwrap_or_default());
             }
             return;
         }
-        let spawned = std::process::Command::new(overlay::helper())
-            .arg(asides_core::helper::WINDOW)
-            .stdin(std::process::Stdio::piped())
-            .spawn();
+        let mut command = std::process::Command::new(overlay::helper());
+        command.arg(asides_core::helper::WINDOW).stdin(std::process::Stdio::piped());
+        if let Some(page) = page {
+            command.env("ASIDES_WINDOW_PAGE", page);
+        }
+        let spawned = command.spawn();
         match spawned {
             Ok(child) => self.window = Some(child),
-            Err(err) => self.fail(format!("Could not open the Asides window: {err}")),
+            Err(err) => self.fail(format!("Could not open the asides window: {err}")),
         }
     }
 
@@ -1391,7 +1406,7 @@ impl App {
         self.in_flight += 1;
         if self.jobs.send(job).is_err() {
             self.in_flight -= 1;
-            self.fail("The transcription worker stopped. Please restart Asides.".into());
+            self.fail("The transcription worker stopped. Please restart asides.".into());
         }
         self.refresh();
         self.publish();
@@ -1400,6 +1415,10 @@ impl App {
     fn tick(&mut self) {
         if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.until) {
             self.flash = None;
+        }
+        // The pill's microphone fills with what it hears.
+        if let (Some(recording), Some(overlay)) = (&self.recording, &mut self.overlay) {
+            overlay.send(&OverlayCommand::Level { level: recording.recorder.level() });
         }
         self.refresh();
     }
@@ -1412,6 +1431,9 @@ impl App {
     fn next_wakeup(&self) -> Option<Instant> {
         let now = Instant::now();
         let error_icon = self.error.as_ref().is_some_and(|(at, _)| now < *at + ERROR_ICON);
+        if self.recording.is_some() && self.overlay.is_some() {
+            return Some(now + LEVEL_TICK);
+        }
         (self.recording.is_some() || self.flash.is_some() || error_icon).then_some(now + TICK)
     }
 
@@ -1447,22 +1469,23 @@ impl App {
         } else if let Some(p) = downloading {
             (Mark::Arrow, Some(format!("{p}%")), format!("Downloading the voice model… {p}%"))
         } else if self.overlay.is_some() {
-            (Mark::Letter, None, format!("Asides is open · {shortcut} sends"))
+            (Mark::Letter, None, format!("asides is open ({shortcut} sends)"))
         } else {
-            let voice = if ModelSpec::find(&self.config.model).downloaded() { "" } else { " · no voice model yet" };
+            let voice = if ModelSpec::find(&self.config.model).downloaded() { "" } else { ", no voice model yet" };
             let status = match &error_text {
                 Some(message) => format!("⚠ {message}"),
-                None => format!("Ready · {shortcut} opens Asides{voice}"),
+                None => format!("Ready ({shortcut} opens asides{voice})"),
             };
             (Mark::Letter, None, status)
         };
-        let view = View { mark, icon: icons.get(mark), title, status, open: self.overlay.is_some() };
+        let has_last = self.last_aside.is_some();
+        let view = View { mark, icon: icons.get(mark), title, status, open: self.overlay.is_some(), has_last };
         if let Some(tray) = &mut self.tray {
             tray.show(&view);
         }
     }
 
-    /// Publishes the app's state for the CLI and the Asides window.
+    /// Publishes the app's state for the CLI and the asides window.
     fn publish(&self) {
         let status = if self.recording.is_some() {
             "recording"
@@ -1499,6 +1522,7 @@ impl App {
                 _ => None,
             },
             recent_dirs: self.recent_dirs.clone(),
+            agents: self.agents.clone().unwrap_or_default(),
             last_aside: self.last_aside.clone(),
             model_ready: ModelSpec::find(&self.config.model).downloaded(),
             input_devices: self.input_devices.clone(),
@@ -1548,6 +1572,18 @@ impl App {
             // Finish the queued transcriptions and sends first.
             self.quit_when_idle = true;
         }
+    }
+
+    /// The last aside, as Markdown with its screenshots' paths, on the clipboard.
+    fn copy_last(&mut self) {
+        match self.last_aside.as_ref().and_then(|id| history::find(&history::dir(), id)) {
+            Some(aside) => {
+                clipboard::put_text(&aside.markdown());
+                self.flash(FLASH, Mark::Check, "Copied the last aside");
+            }
+            None => self.fail("The last aside isn't in History any more.".into()),
+        }
+        self.refresh();
     }
 
     fn update_config(&mut self, change: impl FnOnce(&mut Config)) {
@@ -1650,7 +1686,7 @@ impl App {
             sample_rate: spec.sample_rate,
             annotation,
         };
-        // As if just said: while Asides is open, part of its aside; outside it, an aside of its own.
+        // As if just said: while asides is open, part of its aside; outside it, an aside of its own.
         if self.overlay.as_ref().is_some_and(|o| !o.over) || take.annotation.is_some() {
             self.keep_take(take);
             return Ok(());
@@ -1759,7 +1795,7 @@ fn spec_screens(
     (spec_screens, frames)
 }
 
-/// The screens, listed for Asides opening over the live screen (no pixels until they freeze).
+/// The screens, listed for asides opening over the live screen (no pixels until they freeze).
 fn spec_screens_live(screens: Vec<ScreenInfo>) -> Vec<SpecScreen> {
     screens
         .into_iter()
@@ -1780,22 +1816,27 @@ fn spec_screens_live(screens: Vec<ScreenInfo>) -> Vec<SpecScreen> {
         .collect()
 }
 
-/// A session's images and Markdown, at `offset(seconds into the session)`.
+/// A session's images and Markdown, at `offset(seconds into the session)`, and its pins' colors.
 fn inspection_parts(
     outcome: OverlayOutcome,
     images: Vec<Option<Vec<u8>>>,
     offset: impl Fn(f32) -> f32,
-) -> (Vec<CapturedImage>, Vec<(f32, String)>) {
+) -> (Vec<CapturedImage>, Vec<(f32, String)>, Vec<history::Pin>) {
     let mut pictures = Vec::new();
     let mut texts = Vec::new();
+    let mut pins = Vec::new();
     for (item, bytes) in outcome.items.into_iter().zip(images) {
         let offset = offset(item.time);
+        let number = item.text.as_deref().and_then(asides_core::markdown::pin_number);
+        if let (Some(number), Some(color)) = (number, item.color) {
+            pins.push(history::Pin { number, color });
+        }
         match bytes {
             Some(bytes) => pictures.push(CapturedImage { offset, bytes, extension: "png".into(), details: item.text }),
             None => texts.extend(item.text.map(|text| (offset, text))),
         }
     }
-    (pictures, texts)
+    (pictures, texts, pins)
 }
 
 /// Aside `id`'s number among today's (it's the newest): the menu bar shows it (`[3]`).

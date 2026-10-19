@@ -1,4 +1,4 @@
-//! Platform-independent logic shared by the `asides` CLI, the Asides menu-bar app and its overlay.
+//! Platform-independent logic shared by the `asides` CLI, the asides menu-bar app and its overlay.
 
 pub mod agents;
 pub mod config;

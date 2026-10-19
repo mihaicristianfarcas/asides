@@ -5,7 +5,7 @@ How asides fits together, for anyone changing it, and why it works this way.
 ## Overview
 
 ```
-                      Asides.app (menu bar, one process)
+                      asides.app (menu bar, one process)
  terminal            ┌──────────────────────────────────────────────────────────────┐
 ┌──────────┐ open -g │ main thread: tao event loop                                  │
 │  asides  │ ──────▶ │   App: recording, status item and menu, shortcuts, sessions, │
@@ -16,7 +16,7 @@ How asides fits together, for anyone changing it, and why it works this way.
       ▼                 ▼                                ▼                     ▼
  ~/.asides/history   asides-overlay (GPUI): the     agent sessions: claude, codex, opencode…
  (asides mcp reads)  frozen screens and the pill;   in Terminal, Ghostty or Diri, each aside
-                     --window: the Asides window    typed in as the user's message
+                     --window: the asides window    typed in as the user's message
 ```
 
 - **The app** is one long-lived, menu-bar-only process. The main thread owns the UI and recording;
@@ -29,7 +29,7 @@ How asides fits together, for anyone changing it, and why it works this way.
 - **The overlay** is a second process (`asides-overlay`, GPUI), because GPUI and tao each own their
   `NSApplication`. The app captures the screens and hands it the pixels; it draws the frozen screens
   and the pill. The next one is started ahead of time (`--standby`). The session's logic
-  (`overlay.rs`, `measure.rs`, `inspect.rs`) lives in `asides-core`. `--window` is the Asides window.
+  (`overlay.rs`, `measure.rs`, `inspect.rs`) lives in `asides-core`. `--window` is the asides window.
 - **The CLI and the window** are remote controls: `asides://` links in, `state.json` and the history
   out. `asides mcp` only reads the history and measures images.
 
@@ -42,7 +42,7 @@ crates/
     sessions.rs       running sessions from ps/lsof: host app, last input, labels, folders
     deliver.rs        per-app plans for typing an aside in; new-session launch scripts
     history.rs        ~/.asides/history: records, messages, images; listing, pruning
-    markdown.rs       what was said and made → the message, placed by time
+    markdown.rs       what was said and made → the message, placed by time (pins by the word)
     link.rs           asides:// links (CLI and window → app)
     state.rs          state.json (app → CLI and window)
     measure.rs        PixelSnap-style measuring: edges, distances, snapping, guides, colors
@@ -57,24 +57,26 @@ crates/
     models.rs         Whisper model catalog (sizes, SHA-256)
     resample.rs       resampling to 16 kHz
     paths.rs          bundle ID, URL scheme, paths
-  asides-cli/      the asides binary (Asides.app/Contents/Helpers/asides)
+  asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
     mcp.rs            asides mcp: get_aside, list_asides, measure_image
     measure.rs        asides measure and measure_image
-  asides-overlay/  GPUI overlay (Asides.app/Contents/MacOS/asides-overlay)
+  asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
-    window.rs         the Asides window: History, Sessions, Settings
-    windows.rs        opening, showing and hiding the windows (from the clock); the live pill
+    window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins
+    controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
+    windows.rs        opening, showing and hiding the windows (from the clock); the pill's
     input.rs          the card's text field
     export.rs         images that leave it, drawn with AppKit
     finish.rs         result.json
     style.rs          shared colors and shapes
+    glass.rs          glass on a frozen screen: a blurred copy of the freeze
     native.rs         AppKit glue: borderless panels, levels, kiosk, focus, drawing
     io.rs             stdin/stdout protocol, spec and pixels
     replay.rs         development: replays AppKit events and captures windows
     assets.rs         SVG icons
-  asides-app/      the menu-bar app (asides-app, renamed Asides in the bundle)
+  asides-app/      the menu-bar app (asides-app, renamed asides in the bundle)
     main.rs           App: event loop, recording, overlay sessions, sending
     tray.rs, icons.rs the status item, its menu and its icons
     hotkeys.rs        Carbon hot keys
@@ -134,15 +136,17 @@ latest reachable session is the default target (`sessions::latest`).
    stamped with its time (`Session::clock`). A new pin asks the app `identify`
    (`elements::identify`).
 3. **Live and back** (`⌃⌥P`): the overlay hands the keyboard back and shows only the pill, a
-   non-activating panel. Freezing again captures again, leaving out the overlay's windows
+   non-activating panel (the same one frozen, above the screens). Freezing again captures again, leaving out the overlay's windows
    (`Session::refrozen`).
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).
 5. **Send** (`finish`): the overlay renders each freeze's screenshot (`export.rs`) and Markdown
    (`inspect`) into `result.json`. The app joins the takes (`takes::join`), places every item and
    Wispr Flow dictation at its moment, and queues one `Job::Aside`. `cancelled` sends nothing.
-6. **Worker** (`keep`): resample, transcribe (no prompt), compose (`markdown::compose_message`),
-   keep (`history::create`), and return `Outcome::Kept` with the target.
+6. **Worker** (`keep`): resample, transcribe (no prompt; each word timed), compose
+   (`markdown::compose_message`: a pin's number after the word said as it was placed, its details
+   after that paragraph), keep (`history::create`, with the pins' colors), and return
+   `Outcome::Kept` with the target.
 
 ### Delivering
 
@@ -170,8 +174,7 @@ Break these only on purpose, and update this list.
 5. **Never into a session the user didn't choose.** Dev hooks send to the history unless `--to`.
 6. **Transcripts are verbatim**: no prompt, vocabulary or post-processing (a prompt silently dropped
    words in testing).
-7. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together. New
-   `state.json` and `config.toml` fields get serde defaults.
+7. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together.
 8. **Launch Services launches the app**, never a terminal (or the terminal gets the microphone
    permission, and the app dies with it).
 9. **Binary names differ by more than case** (case-insensitive APFS).
@@ -193,9 +196,9 @@ Break these only on purpose, and update this list.
 | Path | Written by | Notes |
 |---|---|---|
 | `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
-| `~/Library/Application Support/Asides/config.toml` | app, window, user | reloaded on change |
-| `…/Asides/state.json` | app | status, sessions, folders, the pill's place, the last aside |
-| `…/Asides/models/` | download thread | `.part` until the SHA-256 checks |
+| `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
+| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside |
+| `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, overlay | a session's pixels, spec, result; removed on exit |
@@ -214,7 +217,7 @@ Break these only on purpose, and update this list.
   pins open no card, everything else is a key away.
 - **Press, not hold**: holding `⌃⌥` while clicking makes right-clicks and changes measuring.
 - **English model by default, downloaded on request**: smaller, never mistakes the language, and
-  Asides works without one. On 54 synthetic clips (`compares_models`), `small.en` had a 0.8% word
+  asides works without one. On 54 synthetic clips (`compares_models`), `small.en` had a 0.8% word
   error rate at 0.34 s a clip, against 0.4% at 1.30 s for `large-v3-turbo`. With a strong accent,
   `large-v3-turbo` with `languages = ["en"]` was the most accurate.
 - **Measure a frozen frame**: what's measured is exactly what's in the screenshot, nothing moves.

@@ -12,7 +12,7 @@ use asides_core::wispr::{Dictation, History};
 use chrono::Utc;
 
 const WISPR_POLL: Duration = Duration::from_millis(700);
-/// How often the agent sessions are looked for, besides when the app asks (Asides opening).
+/// How often the agent sessions are looked for, besides when the app asks (asides opening).
 const SESSIONS_POLL: Duration = Duration::from_secs(10);
 
 /// Reports Wispr Flow dictations finished from now on, until the returned flag is set. Each
@@ -51,7 +51,7 @@ pub fn wispr_flow(db: PathBuf, report: impl Fn(Result<Dictation, String>) -> boo
 }
 
 /// Reports the agent sessions running (`sessions::discover`), every `SESSIONS_POLL`, and at once
-/// each time something comes on `asked` (Asides opening, a window wanting them).
+/// each time something comes on `asked` (asides opening, a window wanting them).
 pub fn sessions(asked: Receiver<()>, report: impl Fn(Vec<AgentSession>) -> bool + Send + 'static) {
     std::thread::Builder::new()
         .name("asides-sessions".into())

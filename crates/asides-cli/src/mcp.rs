@@ -1,4 +1,4 @@
-//! `asides mcp`: an MCP server (JSON-RPC 2.0 over stdio), optional. Asides types the user's asides
+//! `asides mcp`: an MCP server (JSON-RPC 2.0 over stdio), optional. asides types the user's asides
 //! into the agent's chat as their own messages; this server lets an agent read them again from the
 //! history (with the screenshots inline, without asking to read files outside the repo) and measure
 //! screenshots. Every tool is read-only (Codex asks before each call to one that isn't).
@@ -21,8 +21,8 @@ const PROTOCOL_VERSIONS: &[&str] = &["2024-11-05", "2025-03-26", "2025-06-18", "
 const MAX_INLINE_IMAGE: u64 = 3_750_000;
 const MAX_INLINE_IMAGES: usize = 6;
 
-const INSTRUCTIONS: &str = "Asides lets the user freeze their screen, click what's wrong (numbered pins on elements and \
-    areas), measure, draw and say why; Asides then types it into this chat as their message, with each freeze's \
+const INSTRUCTIONS: &str = "asides lets the user freeze their screen, click what's wrong (numbered pins on elements and \
+    areas), measure, draw and say why; asides then types it into this chat as their message, with each freeze's \
     screenshot. Each aside is also kept in their history (~/.asides/history). get_aside reads one again (the newest by \
     default) with its screenshots; list_asides lists recent ones. Transcripts are verbatim speech-to-text: expect \
     misheard words, especially names of projects and libraries. measure_image measures a screenshot (distances \
@@ -86,7 +86,7 @@ fn initialize(params: &Value) -> Value {
     json!({
         "protocolVersion": version,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": "asides", "title": "Asides", "version": env!("CARGO_PKG_VERSION") },
+        "serverInfo": { "name": "asides", "title": "asides", "version": env!("CARGO_PKG_VERSION") },
         "instructions": INSTRUCTIONS,
     })
 }
@@ -312,8 +312,15 @@ mod tests {
         let at = Local.with_ymd_and_hms(2026, 10, 18, 22, 15, 30).unwrap();
         let png = [0x89, b'P', b'N', b'G'];
         let message = "The button is too low.\n\n![Screenshot 1]({image:0})\n\n### 1. button";
-        let aside = history::create(tmp.path(), at, message, &[history::Image { bytes: &png, extension: "png" }], None)
-            .unwrap();
+        let aside = history::create(
+            tmp.path(),
+            at,
+            message,
+            &[history::Image { bytes: &png, extension: "png" }],
+            Vec::new(),
+            None,
+        )
+        .unwrap();
         let content = aside_content(&aside);
         let kinds: Vec<&str> =
             content["content"].as_array().unwrap().iter().map(|c| c["type"].as_str().unwrap()).collect();
