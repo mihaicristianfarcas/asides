@@ -179,7 +179,7 @@ struct App {
     tray: Option<Tray>,
     hotkeys: Option<Hotkeys>,
     models: Arc<ModelManager>,
-    jobs: Sender<Job>,
+    worker: worker::Worker,
     recording: Option<Recording>,
     in_flight: usize,
     /// asides being typed into their sessions.
@@ -314,7 +314,7 @@ impl App {
             let _ = p.send_event(UserEvent::Model(id, state));
         });
         let p = proxy.clone();
-        let jobs = worker::spawn(models.clone(), move |outcome| {
+        let worker = worker::spawn(models.clone(), move |outcome| {
             let _ = p.send_event(UserEvent::Work(outcome));
         });
         let previous = AppState::read(&paths::state_path()).unwrap_or_default();
@@ -331,7 +331,7 @@ impl App {
             tray: None,
             hotkeys: None,
             models,
-            jobs,
+            worker,
             recording: None,
             in_flight: 0,
             sending: 0,
@@ -905,7 +905,7 @@ impl App {
         let pid = frozen.map_or_else(macos::frontmost_app, |o| o.previous_app).filter(|_| annotation.is_none());
         let place = look_up_place(pid, self.config.measure.identify_elements);
         // The speech model, loaded while the user talks (it's let go after a while unused).
-        let _ = self.jobs.send(Job::Warm(self.config.model.clone()));
+        let _ = self.worker.jobs.send(Job::Warm(self.config.model.clone()));
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -1497,7 +1497,7 @@ impl App {
 
     fn submit(&mut self, job: Job) {
         self.in_flight += 1;
-        if self.jobs.send(job).is_err() {
+        if self.worker.jobs.send(job).is_err() {
             self.in_flight -= 1;
             self.fail("The transcription worker stopped. Please restart asides.".into());
         }
@@ -1808,6 +1808,8 @@ impl App {
     /// asides is quitting: the update downloaded goes in now. Asked for, asides opens again;
     /// installed as asides quits (automatic updates), it stays closed.
     fn exit(&mut self) {
+        // The speech model let go first: ggml aborts as the process ends if it still holds any.
+        self.worker.quit();
         let Some(staged) = self.updates.staged.take() else { return };
         let reopen = match self.restart {
             Some(true) => Some("asides://window"),

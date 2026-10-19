@@ -5,6 +5,7 @@ use std::fs;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -66,6 +67,9 @@ pub enum Job {
     Warm(String),
     Aside(Box<AsideJob>),
     Transcribe(Box<TranscribeJob>),
+    /// asides is quitting: the speech model is let go, and the worker ends. ggml frees its Metal
+    /// device as the process exits, and aborts if a model still holds resources on it.
+    Quit,
 }
 
 pub enum Outcome {
@@ -83,9 +87,25 @@ pub enum Outcome {
     },
 }
 
-pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static) -> Sender<Job> {
+/// The worker, on a thread of its own: jobs go to it, and it ends after `Job::Quit`.
+pub struct Worker {
+    pub jobs: Sender<Job>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Worker {
+    /// Ends the worker once what it's doing is done, its speech model let go.
+    pub fn quit(&mut self) {
+        let _ = self.jobs.send(Job::Quit);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static) -> Worker {
     let (tx, rx) = mpsc::channel::<Job>();
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("asides-worker".into())
         .spawn(move || {
             let mut transcriber: Option<Transcriber> = None;
@@ -99,6 +119,7 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
                     Err(RecvTimeoutError::Disconnected) => return,
                 };
                 let outcome = match job {
+                    Job::Quit => return,
                     Job::Warm(model) => {
                         warm(&model, &mut transcriber);
                         continue;
@@ -121,7 +142,7 @@ pub fn spawn(models: Arc<ModelManager>, done: impl Fn(Outcome) + Send + 'static)
             }
         })
         .expect("spawn worker thread");
-    tx
+    Worker { jobs: tx, thread: Some(thread) }
 }
 
 /// Transcribes what was said and keeps the aside in `history`.
