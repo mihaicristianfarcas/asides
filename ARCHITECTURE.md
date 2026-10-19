@@ -41,8 +41,8 @@ crates/
     agents.rs         the agents: processes, new-session command lines, submit key, session markers
     sessions.rs       running sessions from ps/lsof: host app, last input, labels, folders
     deliver.rs        per-app plans for typing an aside in; new-session launch scripts
-    history.rs        ~/.asides/history: records, messages, images; listing, pruning
-    markdown.rs       what was said and made → the message, placed by time (pins by the word)
+    history.rs        ~/.asides/history: records, messages, images; listing, pruning, edits
+    markdown.rs       what was said and made → the message, placed by time (pins by the word); checks
     link.rs           asides:// links (CLI and window → app)
     state.rs          state.json (app → CLI and window)
     measure.rs        PixelSnap-style measuring: edges, distances, snapping, guides, colors
@@ -68,7 +68,7 @@ crates/
     window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
     windows.rs        opening, showing and hiding the windows (from the clock); the pill's
-    input.rs          the card's text field
+    input.rs          the card's text field, and the area History edits Markdown in
     export.rs         images that leave it, drawn with AppKit
     finish.rs         result.json
     style.rs          shared colors and shapes
@@ -183,7 +183,8 @@ Break these only on purpose, and update this list.
 1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates.
 2. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted).
 3. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
-   file renamed over the old), deletion, or pruning.
+   file renamed over the old), an edit in History (only a message `markdown::check_message`
+   passes), deletion, or pruning.
 4. **An aside is typed in as the user would**: nothing installed in or changed for the agents.
 5. **Never into a session the user didn't choose.** Dev hooks send to the history unless `--to`.
 6. **Transcripts are verbatim**: no prompt, vocabulary or post-processing (a prompt silently dropped

@@ -50,6 +50,8 @@ pub struct Record {
     pub pins: Vec<Pin>,
     /// The version of asides that made it.
     pub version: String,
+    /// When its message was last edited by hand (milliseconds since the epoch).
+    pub edited_ms: Option<u64>,
 }
 
 /// A pin of an aside: its number, and its color (`#3B82F6`).
@@ -126,6 +128,35 @@ impl Aside {
         self.record.deliveries.push(delivery);
         write_record(&self.dir, &self.record)
     }
+
+    /// Its screenshots on disk, as its message names them (`images/1.png`).
+    pub fn images(&self) -> Vec<String> {
+        self.record.images.iter().filter(|i| self.dir.join(i).is_file()).cloned().collect()
+    }
+
+    /// What's wrong with `message` as its message (`markdown::check_message`).
+    pub fn check(&self, message: &str) -> Vec<markdown::Problem> {
+        markdown::check_message(message, &self.images())
+    }
+
+    /// Saves `message`, edited by hand, as its message, with its title again and when: refused
+    /// when it doesn't check. Whole or not at all, like its record (read again: a delivery noted
+    /// meanwhile stays).
+    pub fn save_message(&mut self, message: &str) -> io::Result<()> {
+        let message = message.trim_end();
+        if let Some(problem) = self.check(message).first() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("line {}: {}", problem.line, problem.text)));
+        }
+        let tmp = self.dir.join(format!("{MESSAGE_FILE}.tmp"));
+        fs::write(&tmp, message)?;
+        fs::rename(tmp, self.dir.join(MESSAGE_FILE))?;
+        if let Some(now) = read(&self.dir) {
+            self.record = now.record;
+        }
+        self.record.title = title_of(message);
+        self.record.edited_ms = Some(now_ms());
+        write_record(&self.dir, &self.record)
+    }
 }
 
 /// An image to keep with an aside.
@@ -191,6 +222,7 @@ pub fn create(
         deliveries: Vec::new(),
         pins,
         version: env!("CARGO_PKG_VERSION").into(),
+        edited_ms: None,
     };
     write_record(&dir, &record)?;
     Ok(Aside { id, dir, record })
@@ -310,6 +342,32 @@ mod tests {
             find(tmp.path(), "2026-10-18-221530").map(|a| a.record.title),
             Some("The save button is too low.".into())
         );
+    }
+
+    #[test]
+    fn saves_messages_edited_by_hand() {
+        let tmp = tempfile::tempdir().unwrap();
+        let png = [0x89, b'P', b'N', b'G'];
+        let message = "Too low [1].\n\n![Screenshot 1]({image:0})\n\n### 1. button \"Save\"";
+        let images = [Image { bytes: &png, extension: "png" }];
+        let mut aside = create(tmp.path(), Local::now(), message, &images, Vec::new(), None).unwrap();
+        let delivery = Delivery { at_ms: 1, to: "Codex (shop)".into(), ..Default::default() };
+        // Noted by the app meanwhile: it stays.
+        find(tmp.path(), &aside.id).unwrap().record_delivery(delivery.clone()).unwrap();
+
+        let edited = "Much too low [1].\n\n![Screenshot 1](images/1.png)\n\n### 1. button \"Save\"\n\n";
+        aside.save_message(edited).unwrap();
+        let again = find(tmp.path(), &aside.id).unwrap();
+        assert_eq!(again.message(), edited.trim_end());
+        assert_eq!(again.record.title, "Much too low.");
+        assert_eq!(again.record.deliveries, [delivery]);
+        assert!(again.record.edited_ms.is_some());
+
+        // What doesn't check isn't saved.
+        let err = aside.save_message("Gone [2].").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(find(tmp.path(), &aside.id).unwrap().message(), edited.trim_end());
+        assert_eq!(aside.images(), ["images/1.png"]);
     }
 
     #[test]

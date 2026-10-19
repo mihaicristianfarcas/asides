@@ -42,7 +42,7 @@ pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light (a few seconds on screen); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_FOCUS` (a key recording, or a field focused, for posted keys) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light (a few seconds on screen); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
 | the overlay | a replay (below) |
 | the app | `make install`, then use it (it quits and replaces the running asides) |
 
@@ -126,8 +126,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **New session in…** in Terminal, Ghostty and Diri, in bash, zsh and fish.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.
-- [ ] **asides window**: History actions; Sessions matches `asides sessions`; every setting writes
-  `config.toml` and takes effect; light and dark.
+- [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,
+  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect;
+  light and dark.
 - [ ] **Wispr Flow**: a dictation while frozen joins the aside; elsewhere, nothing.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.

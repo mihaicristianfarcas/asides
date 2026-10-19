@@ -39,7 +39,17 @@ use gpui::{
 
 actions!(
     asides_window,
-    [ShowHistory, ShowSessions, ShowSettings, CheckForUpdates, QuitAsides, HideAsides, Minimize, CloseWindow]
+    [
+        ShowHistory,
+        ShowSessions,
+        ShowSettings,
+        CheckForUpdates,
+        QuitAsides,
+        HideAsides,
+        Minimize,
+        CloseWindow,
+        SaveAside
+    ]
 );
 
 use crate::controls::{
@@ -55,6 +65,11 @@ const TICK: Duration = Duration::from_millis(500);
 const TOAST: Duration = Duration::from_millis(2500);
 /// History's list of asides.
 const LIST: f32 = 300.0;
+/// An aside's Markdown, edited: its font, and the height of a line in it.
+const EDITOR_FONT: &str = "Menlo";
+const EDITOR_LINE: f32 = 20.0;
+/// What edited Markdown can't be, at most, listed under it.
+const PROBLEMS_SHOWN: usize = 4;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -201,6 +216,12 @@ pub struct AsidesWindow {
     recording: Option<Recording>,
     /// What's New was read, up to this version (told to the app once).
     told_seen: Option<String>,
+    /// History's aside being edited (its id), and what's typed in each edited, kept while the window
+    /// is open: going back to View, or to another aside, loses nothing.
+    editing: Option<String>,
+    drafts: HashMap<String, Entity<TextInput>>,
+    /// Development (`ASIDES_WINDOW_FOCUS=edit`): the aside shown opens in Edit.
+    edit_at_first: bool,
 }
 
 /// Opens the window; it quits when it's closed.
@@ -224,6 +245,7 @@ pub fn run() {
             KeyBinding::new("cmd-h", HideAsides, None),
             KeyBinding::new("cmd-m", Minimize, None),
             KeyBinding::new("cmd-w", CloseWindow, None),
+            KeyBinding::new("cmd-s", SaveAside, None),
         ]);
         cx.on_action(|_: &QuitAsides, cx| {
             let _ = send_link(&Link::Quit);
@@ -381,6 +403,9 @@ impl AsidesWindow {
             fields: HashMap::new(),
             recording: None,
             told_seen: None,
+            editing: None,
+            drafts: HashMap::new(),
+            edit_at_first: std::env::var("ASIDES_WINDOW_FOCUS").is_ok_and(|f| f == "edit"),
         };
         this.reload();
         this.selected = this.asides.first().map(|a| a.id.clone());
@@ -468,6 +493,63 @@ impl AsidesWindow {
 
     fn selected(&self) -> Option<&Aside> {
         self.selected.as_ref().and_then(|id| self.asides.iter().find(|a| &a.id == id))
+    }
+
+    /// Aside `id` shown as it is (View) or as its Markdown, to edit (Edit, the field taking the
+    /// keyboard).
+    fn set_editing(&mut self, id: &str, edit: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !edit {
+            self.editing = None;
+            window.focus(&self.focus);
+            return cx.notify();
+        }
+        let Some(aside) = self.asides.iter().find(|a| a.id == id) else { return };
+        let message = aside.message();
+        let draft = self.drafts.entry(id.to_string()).or_insert_with(|| {
+            let draft = cx.new(|cx| TextInput::area(&message, EDITOR_FONT, 20, cx));
+            draft.update(cx, |d, _| d.look = editor_look(self.theme));
+            draft
+        });
+        let focus = draft.read(cx).focus_handle(cx);
+        window.focus(&focus);
+        self.editing = Some(id.to_string());
+        self.aside_scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    /// What's typed for aside `id`, when it differs from what's saved.
+    fn unsaved(&self, aside: &Aside, cx: &App) -> Option<String> {
+        let text = self.drafts.get(&aside.id)?.read(cx).text();
+        (text.trim_end() != aside.message().trim_end()).then_some(text)
+    }
+
+    /// Saves what's typed for aside `id`, if it checks, and shows it.
+    fn save_draft(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(mut aside) = history::find(&history::dir(), id) else { return };
+        let Some(text) = self.unsaved(&aside, cx) else {
+            self.editing = None;
+            return cx.notify();
+        };
+        if let Some(problem) = aside.check(&text).first() {
+            self.toast(format!("Not saved: line {}: {}", problem.line, problem.text));
+            return cx.notify();
+        }
+        match aside.save_message(&text) {
+            Ok(()) => {
+                self.drafts.remove(id);
+                self.editing = None;
+                self.toast("Saved");
+            }
+            Err(err) => self.toast(format!("Could not save it: {err}")),
+        }
+        self.reload();
+        cx.notify();
+    }
+
+    /// Puts back what's saved for aside `id`, and shows it.
+    fn discard_draft(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.drafts.remove(id);
+        self.set_editing(id, false, window, cx);
     }
 
     /// The sessions the app last found that asides can be typed into, typed into last first.
@@ -755,8 +837,13 @@ impl Render for AsidesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         self.width = f32::from(window.viewport_size().width);
+        if std::mem::take(&mut self.edit_at_first)
+            && let Some(id) = self.selected.clone()
+        {
+            self.set_editing(&id, true, window, cx);
+        }
         let content = match self.page {
-            Page::History => self.history(cx),
+            Page::History => self.history(window, cx),
             Page::Sessions => self.sessions(window, cx),
             Page::General => self.general(cx),
             Page::Keys => self.keys(cx),
@@ -769,6 +856,11 @@ impl Render for AsidesWindow {
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
             .on_action(cx.listener(|this, _: &ShowSessions, _, cx| this.page_or_keys(Page::Sessions, "cmd+2", cx)))
             .on_action(cx.listener(|this, _: &ShowSettings, _, cx| this.page_or_keys(Page::General, "cmd+comma", cx)))
+            .on_action(cx.listener(|this, _: &SaveAside, _, cx| {
+                if let Some(id) = this.editing.clone() {
+                    this.save_draft(&id, cx);
+                }
+            }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
             // Recording, the next key pressed is it.
@@ -993,7 +1085,7 @@ impl AsidesWindow {
 
     // --- History ---
 
-    fn history(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         if self.asides.is_empty() {
             let shortcut = pretty_shortcut(&self.config.shortcuts.asides);
@@ -1067,7 +1159,7 @@ impl AsidesWindow {
                     .into_any_element(),
             );
         }
-        let detail = self.selected().cloned().map(|aside| self.aside_detail(&aside, cx));
+        let detail = self.selected().cloned().map(|aside| self.aside_detail(&aside, window, cx));
         let chosen = self.selected.as_ref().and_then(|id| self.asides.iter().position(|a| &a.id == id));
         div()
             .size_full()
@@ -1125,8 +1217,11 @@ impl AsidesWindow {
             .into_any_element()
     }
 
-    fn aside_detail(&mut self, aside: &Aside, cx: &mut Context<Self>) -> AnyElement {
+    fn aside_detail(&mut self, aside: &Aside, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
+        if self.editing.as_deref() == Some(aside.id.as_str()) {
+            return self.aside_editor(aside, window, cx);
+        }
         // The sessions running, then a new one in a recent folder, or in one chosen.
         let reachable = self.reachable();
         let mut folders: Vec<PathBuf> = Vec::new();
@@ -1286,14 +1381,19 @@ impl AsidesWindow {
         if deliveries.is_empty() {
             deliveries.push(status("Only saved in History, not sent".into(), t.tertiary));
         }
+        if let Some(ms) = aside.record.edited_ms {
+            deliveries.push(status(format!("Edited at {}", history_time(ms)), t.tertiary));
+        }
         // The reading column: the window less the sidebar, the list and the margins.
         let column = (self.width - Metrics::SIDEBAR - LIST - 58.).clamp(200., Metrics::FORM + 60.);
         let body = aside_body(t, aside, column);
+        let unsaved = self.unsaved(aside, cx).is_some();
+        let leading = self.mode_switch(aside, false, unsaved, cx);
         div()
             .size_full()
             .flex()
             .flex_col()
-            .child(toolbar_row(None, actions))
+            .child(toolbar_row(Some(leading), actions))
             .child(scrolled(
                 div().id("aside").size_full().overflow_y_scroll().track_scroll(&self.aside_scroll).child(
                     div().w_full().flex().justify_center().px(px(28.)).pb(px(32.)).child(
@@ -1324,6 +1424,102 @@ impl AsidesWindow {
                 &self.aside_scroll,
                 t,
             ))
+            .into_any_element()
+    }
+
+    /// View or Edit, for aside `aside`; with what's typed and not saved, a mark saying so.
+    fn mode_switch(&self, aside: &Aside, editing: bool, unsaved: bool, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let (this, id) = (cx.weak_entity(), aside.id.clone());
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(segmented("mode", ["View", "Edit"], Some(usize::from(editing)), t).on_select(
+                move |i, window, cx| {
+                    let _ = this.update(cx, |this, cx| this.set_editing(&id, i == 1, window, cx));
+                },
+            ))
+            .when(unsaved && !editing, |d| d.child(chip("Not saved", t.attention)))
+            .into_any_element()
+    }
+
+    /// An aside's Markdown, to edit: what's wrong with it as it's typed (it saves only once nothing
+    /// is), and how it's written.
+    fn aside_editor(&mut self, aside: &Aside, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let Some(draft) = self.drafts.get(&aside.id).cloned() else {
+            self.editing = None;
+            return div().into_any_element();
+        };
+        // As many lines as the column has room for, under the strip and above what's said of it.
+        let room = f32::from(window.viewport_size().height) - Metrics::TOOLBAR - 170.;
+        let lines = ((room / EDITOR_LINE) as usize).max(8);
+        draft.update(cx, |d, _| (d.max_lines, d.look) = (lines, editor_look(t)));
+        let text = draft.read(cx).text();
+        let problems = aside.check(&text);
+        let changed = self.unsaved(aside, cx).is_some();
+        let (save, discard) = (aside.id.clone(), aside.id.clone());
+        let actions = vec![
+            button("discard", "Discard Changes", t)
+                .disabled(!changed)
+                .on_click(cx.listener(move |this, _, window, cx| this.discard_draft(&discard, window, cx)))
+                .into_any_element(),
+            button("save", "Save", t)
+                .accent()
+                .disabled(!changed || !problems.is_empty())
+                .on_click(cx.listener(move |this, _, _, cx| this.save_draft(&save, cx)))
+                .into_any_element(),
+        ];
+        let status: AnyElement = match (problems.is_empty(), changed) {
+            (false, _) => {
+                let more = problems.len().saturating_sub(PROBLEMS_SHOWN);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .text_size(px(12.))
+                    .line_height(px(17.))
+                    .children(problems.iter().take(PROBLEMS_SHOWN).map(|p| {
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(div().flex_none().w(px(52.)).text_color(t.danger).child(format!("Line {}", p.line)))
+                            .child(div().flex_1().min_w_0().text_color(t.secondary).child(p.text.clone()))
+                    }))
+                    .when(more > 0, |d| {
+                        d.child(div().pl(px(60.)).text_color(t.tertiary).child(format!("and {more} more")))
+                    })
+                    .into_any_element()
+            }
+            (true, true) => footnote("Ready to save: ⌘S.", t).text_color(t.fresh).into_any_element(),
+            (true, false) => footnote("As saved.", t).into_any_element(),
+        };
+        let leading = self.mode_switch(aside, true, changed, cx);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(toolbar_row(Some(leading), actions))
+            .child(
+                div().flex_1().min_h_0().flex().justify_center().px(px(28.)).pb(px(24.)).child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .max_w(px(Metrics::FORM + 60.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .child(footnote(
+                            "What's sent, as Markdown. A screenshot is a line like ![Screenshot 1](images/1.png); a pin, \
+                             after a blank line, is ### 1. what it's on, then lines like **Said:** …; [1] is where you \
+                             placed it.",
+                            t,
+                        ))
+                        .child(draft)
+                        .child(status),
+                ),
+            )
             .into_any_element()
     }
 
@@ -1892,6 +2088,18 @@ impl AsidesWindow {
                     t,
                 ))),
         )
+    }
+}
+
+/// An aside's Markdown, edited: a quiet surface, near solid like the cards.
+fn editor_look(t: Theme) -> Look {
+    Look {
+        text: t.primary,
+        placeholder: t.quaternary,
+        border: t.card_stroke,
+        background: t.card,
+        caret: t.accent,
+        selection: t.accent.opacity(0.35),
     }
 }
 

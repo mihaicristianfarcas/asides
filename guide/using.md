@@ -92,7 +92,8 @@ closes it, `⌘Q` quits asides.
 
 - **History**: every aside, and whether it was sent (to which session) or only saved. What was
   said with its pins' numbers, the screenshots and each pin. Send it again, copy it, show it in
-  Finder, delete it. asides are kept in `~/.asides/history` for 30 days by default.
+  Finder, delete it, or **Edit** its Markdown (`⌘S` saves it once nothing in it is wrong: each
+  problem is listed by line). asides are kept in `~/.asides/history` for 30 days by default.
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
 - **General**, **Keys**, **Voice**, **Pins**: every [setting](settings.md). Click a shortcut or a
   key, then press the new one.

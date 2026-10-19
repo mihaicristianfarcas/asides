@@ -286,6 +286,142 @@ pub fn message_parts(message: &str) -> Vec<Part> {
     parts
 }
 
+/// What's wrong in a message edited by hand, by its line (from 1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    pub line: usize,
+    pub text: String,
+}
+
+/// A line that's only a screenshot, `![label](path)`: its path (what [`message_parts`] sends as one).
+fn image_path(line: &str) -> Option<&str> {
+    line.trim()
+        .strip_prefix("![")
+        .and_then(|rest| rest.split_once("]("))
+        .and_then(|(_, rest)| rest.strip_suffix(')'))
+        .filter(|path| !path.is_empty() && !path.contains(' '))
+}
+
+/// `**Label:** value` (or `**Measured** in pt`): a pin's detail, or where the user was.
+fn is_field(line: &str) -> bool {
+    line.trim().strip_prefix("**").and_then(|rest| rest.split_once("**")).is_some_and(|(label, _)| !label.is_empty())
+}
+
+/// The pins' numbers said in `text`: `[2]`.
+fn pin_marks(text: &str) -> Vec<u32> {
+    let mut marks = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find(']') else { break };
+        if let Ok(n) = rest[..close].parse::<u32>()
+            && rest[..close].chars().all(|c| c.is_ascii_digit())
+        {
+            marks.push(n);
+        }
+        rest = &rest[close + 1..];
+    }
+    marks
+}
+
+/// Checks a message edited by hand against what asides makes, so History shows it as it shows one
+/// asides made, and agents get it as they would: screenshots on lines of their own, naming the
+/// aside's (`images`, `images/1.png`); a pin a block of its own after a blank line, `### N. what it's
+/// on`, its details lines like `**Said:** …` (its type one of fix, change, question, approve), each
+/// number once; and every `[N]` said, a pin there is. Empty, nothing's wrong.
+pub fn check_message(message: &str, images: &[String]) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let mut say = |line: usize, text: String| problems.push(Problem { line, text });
+    if message.trim().is_empty() {
+        say(1, "There's nothing in it.".into());
+        return problems;
+    }
+    let lines: Vec<&str> = message.lines().collect();
+    // Blocks between blank lines: (the first line's number, the lines).
+    let mut blocks: Vec<(usize, Vec<&str>)> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        match (line.trim().is_empty(), blocks.last_mut()) {
+            (true, _) => {}
+            (false, Some((start, block))) if *start + block.len() == i + 1 => block.push(line),
+            (false, _) => blocks.push((i + 1, vec![line])),
+        }
+    }
+    let mut pins: Vec<(u32, usize)> = Vec::new();
+    let mut said: Vec<(u32, usize)> = Vec::new();
+    for (start, block) in &blocks {
+        let pin = pin_number(&block.join("\n"));
+        if let Some(number) = pin {
+            let head = block[0].trim().trim_start_matches("### ");
+            let title = head.split_once(". ").map_or("", |(_, title)| title.trim());
+            if number == 0 {
+                say(*start, "Pins are numbered from 1.".into());
+            } else if let Some((_, first)) = pins.iter().find(|(n, _)| *n == number) {
+                say(*start, format!("Pin {number} is already on line {first}."));
+            } else {
+                pins.push((number, *start));
+            }
+            if title.is_empty() {
+                say(*start, format!("Pin {number} needs what it's on, like ### {number}. button \"Save\"."));
+            }
+        } else if block[0].trim_start().starts_with('#') {
+            say(*start, "Only pins have headings, like ### 1. button \"Save\".".into());
+        }
+        for (k, line) in block.iter().enumerate() {
+            let number = start + k;
+            let text = line.trim();
+            if let Some(path) = image_path(text) {
+                if pin.is_some() {
+                    say(number, "A screenshot can't go in a pin's details: put a blank line before it.".into());
+                } else if !images.iter().any(|i| i == path) {
+                    let kept = match images {
+                        [] => "it has none".to_string(),
+                        list => list.join(", "),
+                    };
+                    say(number, format!("{path} isn't one of this aside's screenshots ({kept})."));
+                }
+                continue;
+            }
+            if text.contains("![") && text.contains("](") {
+                say(number, "A screenshot goes on a line of its own, like ![Screenshot 1](images/1.png).".into());
+            }
+            if k > 0 && text.starts_with('#') {
+                say(number, "A heading starts a block: put a blank line before it.".into());
+                continue;
+            }
+            match pin {
+                Some(n) if k > 0 && !is_field(text) => {
+                    say(number, format!("Pin {n}'s details are lines like **Said:** what you said."))
+                }
+                Some(n) if k > 0 => {
+                    let (label, value) = text[2..].split_once("**").unwrap_or_default();
+                    let value = value.trim();
+                    let known: &[&str] = match label.trim_end_matches(':') {
+                        "Intent" => &["fix", "change", "question", "approve"],
+                        "Severity" => &["blocking", "important", "suggestion"],
+                        _ => &[],
+                    };
+                    if !known.is_empty() && !known.contains(&value) {
+                        let label = label.trim_end_matches(':');
+                        say(number, format!("Pin {n}'s {} is one of {}.", label.to_lowercase(), known.join(", ")));
+                    }
+                }
+                Some(_) => {}
+                None => said.extend(pin_marks(text).into_iter().map(|m| (m, number))),
+            }
+        }
+    }
+    for (mark, line) in said {
+        if !pins.iter().any(|(n, _)| *n == mark) {
+            say(
+                line,
+                format!("[{mark}] is pin {mark}, which isn't there: add ### {mark}. what it's on, or remove it."),
+            );
+        }
+    }
+    problems.sort_by_key(|p| p.line);
+    problems
+}
+
 /// The plain transcript of a recording, used for titles and for "nothing heard" checks.
 pub fn plain_text(segments: &[Segment]) -> String {
     segments.iter().map(|s| s.text.trim()).filter(|t| !t.is_empty()).collect::<Vec<_>>().join(" ")
@@ -429,6 +565,31 @@ mod tests {
             [Part::Image("x.png".into()), Part::Image("y.png".into())]
         );
         assert_eq!(message_parts("Look at ![this](x.png) here"), [Part::Text("Look at ![this](x.png) here".into())]);
+    }
+
+    #[test]
+    fn checks_messages_edited_by_hand() {
+        let images = ["images/1.png".to_string()];
+        let lines = |message: &str| -> Vec<usize> { check_message(message, &images).iter().map(|p| p.line).collect() };
+        // What asides makes passes.
+        let made = "**In:** Safari (\"Shop\")\n\n![Screenshot 1](images/1.png)\n\nThis [1] and that [2].\n\n\
+                    ### 1. button \"Save\"\n**Intent:** fix\n**Said:** Bigger.\n\n- Area 10 × 10 at (0, 0)\n\n\
+                    ### 2. Area 320 × 48 at (380, 200)\n**Move to:** (380, 120)";
+        assert_eq!(check_message(made, &images), []);
+        assert_eq!(lines("Only words."), [] as [usize; 0]);
+        assert_eq!(lines("  \n"), [1], "empty");
+        assert_eq!(lines("![Screenshot 2](images/2.png)"), [1], "not its screenshot");
+        assert_eq!(lines("Look ![here](images/1.png) now"), [1], "inline");
+        assert_eq!(lines("# Title\n\nText"), [1], "a heading that isn't a pin");
+        assert_eq!(lines("Text\n### 1. a"), [2], "a pin needs a blank line before it");
+        assert_eq!(lines("### 1. a\nnot a field"), [2], "details are fields");
+        assert_eq!(lines("### 1. a\n**Intent:** later"), [2], "a type there is");
+        assert_eq!(lines("### 1. a\n\n### 1. b"), [3], "each number once");
+        assert_eq!(lines("### 1."), [1], "what it's on");
+        assert_eq!(lines("This [3].\n\n### 1. a"), [1], "a pin said that isn't there");
+        assert_eq!(lines("### 1. a\n![Screenshot 1](images/1.png)"), [2], "a screenshot in a pin");
+        let problem = &check_message("![x](images/9.png)", &images)[0];
+        assert!(problem.text.contains("images/1.png"), "{problem:?}");
     }
 
     #[test]
