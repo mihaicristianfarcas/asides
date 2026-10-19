@@ -731,9 +731,11 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         let p = |v: gpui::Pixels| f32::from(v) as f64;
         let size = |b: Option<gpui::Bounds<gpui::Pixels>>| b.map(|b| (p(b.size.width), p(b.size.height)));
         let (mut pill, mut whole) = (size(o.pill_bounds).unwrap_or(PILL_GUESS), size(o.toolbar_bounds));
-        // About to be drawn wider or narrower (a new name): as it will be, with what's around it.
+        // About to be drawn wider (a new name): the window grows as much as the pill does, its
+        // border with it. Narrower, the window shrinks once the pill is drawn (`drawn_toolbar`):
+        // shrunk as it's drawn, the pill often showed a frame after the toast.
         if let Some(width) = width {
-            whole = whole.map(|w| if (w.0 - pill.0).abs() < 1.0 { (width, w.1) } else { (w.0.max(width), w.1) });
+            whole = whole.map(|(w, h)| (w + (width - pill.0).max(0.0), h));
             pill.0 = width;
         }
         // The pill and, open, its list (fading with it): where macOS blurs what's behind (in the
