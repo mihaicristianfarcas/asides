@@ -32,9 +32,6 @@ use crate::export::{self, Exporter};
 use crate::input::TextInput;
 use crate::{finish, glass, io, style};
 
-/// A new name or a toast not drawn on the pill after this: its window is drawn again
-/// (`windows::sync`).
-pub const UNDRAWN: Duration = Duration::from_millis(150);
 const TOAST: Duration = Duration::from_millis(1600);
 /// A recording about an annotation ended: shown as being transcribed this long at most, until the
 /// app says it is (it doesn't for one too short to keep).
@@ -254,8 +251,6 @@ pub struct Overlay {
     pub toast: Option<(SharedString, Instant)>,
     pub toast_waits: bool,
     pub toast_shown: Option<SharedString>,
-    /// Since when a new name or a toast waits for the pill to be drawn (`UNDRAWN`).
-    pub undrawn_since: Option<Instant>,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
     /// Where the aside goes, as the pill shows it. Another (Tab, the list) is first drawn unseen
@@ -419,7 +414,6 @@ impl Overlay {
             toast: None,
             toast_waits: false,
             toast_shown: None,
-            undrawn_since: None,
             following: false,
             pill_label: spec.targets.label(spec.targets.chosen.as_ref()).into(),
             label_widths: (None, None),
@@ -770,14 +764,12 @@ impl Overlay {
     fn toast(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + TOAST));
         self.toast_waits = true;
-        self.undrawn_since.get_or_insert_with(Instant::now);
     }
 
     /// A message the user must read (an error from the app): it stays longer.
     fn notice(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + NOTICE));
         self.toast_waits = true;
-        self.undrawn_since.get_or_insert_with(Instant::now);
     }
 
     /// Without a speech model there's nothing to listen with: the app is asked to download one (the
@@ -800,7 +792,6 @@ impl Overlay {
     /// Where the aside goes now.
     fn choose_target(&mut self, target: Target) {
         self.target = Some(target.clone());
-        self.undrawn_since.get_or_insert_with(Instant::now);
         self.chose_target = true;
         self.show_list(false);
         io::emit(&Event::Target { target });

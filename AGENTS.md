@@ -210,9 +210,12 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - GPUI adds destination alpha (its pipelines' factor is one): anything half drawn over the window's
   glass (a menu fading in) hid the blur first, a dark square. The window process makes them blend
   "over" (`native::blend_alpha_over`).
-- GPUI draws a window on the display's frames, and stops for one macOS says is hidden until it says
-  it shows. Once, fast Tabs left the pill unchanged until asides went live: a name or toast not
-  drawn within `ui::UNDRAWN` draws it again (`native::revive`, logged to the debug log).
+- In one Core Animation transaction (`native::transaction`), each window's drawing holds one of its
+  layer's three drawables until the commit, and an active GPUI window presents for a second after
+  input even when nothing changed: drawn three times (a resize with `display:YES`, `draw_now`, then
+  the commit redisplaying the resized layer), it waited a second for a drawable only the commit
+  frees. Fast Tabs froze the pill so. Settle what's shown first, resize without drawing, draw each
+  window once, through its layer (`native::draw_now`).
 - Changing a window's style mask (`native::make_overlay`) resets the first responder: keys arrive
   but typed text doesn't. Make GPUI's view first responder again (replays didn't show it).
 - Synthetic events: `mouseEventWithType…` has no button number (every click is left; send a

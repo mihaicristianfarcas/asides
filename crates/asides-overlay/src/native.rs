@@ -135,10 +135,23 @@ fn view<'a>(pointer: usize) -> Option<&'a NSView> {
 
 /// Draws these windows now, as GPUI would their next frames, and puts it on screen: hidden ones
 /// show it when they're shown, not what they showed last. (Hidden, GPUI doesn't draw them.)
+///
+/// GPUI draws on `displayLayer:`, which its layer calls once it's marked to be displayed: marked
+/// and displayed here, it's displayed once. Called directly, the mark (left by a resize) stayed, and
+/// a transaction's commit drew the window again: a third draw in one transaction waits a second for
+/// one of its layer's three drawables, which the commit itself frees (fast Tabs froze the pill).
 pub fn draw_now(views: &[usize]) {
     for v in views.iter().filter_map(|&v| view(v)) {
-        // GPUI draws on `displayLayer:`, for whatever needs drawing.
-        let _: () = unsafe { msg_send![v, displayLayer: std::ptr::null::<AnyObject>()] };
+        let layer: *mut AnyObject = unsafe { msg_send![v, layer] };
+        match unsafe { layer.as_ref() } {
+            Some(layer) => {
+                let _: () = unsafe { msg_send![layer, setNeedsDisplay] };
+                let _: () = unsafe { msg_send![layer, displayIfNeeded] };
+            }
+            None => {
+                let _: () = unsafe { msg_send![v, displayLayer: std::ptr::null::<AnyObject>()] };
+            }
+        }
     }
     if let Some(transaction) = AnyClass::get(c"CATransaction") {
         let _: () = unsafe { msg_send![transaction, flush] };
@@ -217,10 +230,11 @@ pub fn move_to(pointer: usize, (x, y): (f64, f64)) {
     }
 }
 
+/// Moves and resizes the window, without drawing it: `draw_now` draws it, once.
 pub fn set_frame(pointer: usize, frame: PtRect) {
     if let Some(window) = view(pointer).and_then(|v| v.window()) {
         let rect = NSRect::new(NSPoint::new(frame.x, frame.y), NSSize::new(frame.width, frame.height));
-        window.setFrame_display(rect, true);
+        window.setFrame_display(rect, false);
     }
 }
 
@@ -550,22 +564,6 @@ static POINTER_WATCHED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomi
 
 pub fn watch_pointer(watched: bool) {
     POINTER_WATCHED.store(watched, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Draws these windows now, and has GPUI draw them on the display's frames again: it stops for a
-/// window macOS says is hidden, until it says it shows (`windowDidChangeOcclusionState:`, which it
-/// asks again here).
-pub fn revive(views: &[usize]) {
-    let changed = objc2::sel!(windowDidChangeOcclusionState:);
-    for window in views.iter().filter_map(|&v| view(v)).filter_map(|v| v.window()) {
-        let Some(delegate) = window.delegate() else { continue };
-        let delegate: &AnyObject = delegate.as_ref();
-        let responds: bool = unsafe { msg_send![delegate, respondsToSelector: changed] };
-        if responds {
-            let _: () = unsafe { msg_send![delegate, windowDidChangeOcclusionState: std::ptr::null::<AnyObject>()] };
-        }
-    }
-    draw_now(views);
 }
 
 /// Development: logs when the app's activation, key window or the frontmost app change.
