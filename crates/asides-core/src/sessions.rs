@@ -259,12 +259,12 @@ pub fn discover() -> Vec<AgentSession> {
             .unwrap_or_default()
     };
     let mut procs = parse_ps(&run("/bin/ps", &["-A", "-ww", "-o", "pid=,ppid=,tty=,comm="]));
-    // Arguments and environments only for agents' processes (and their parents: Node's scripts).
+    // Arguments and environments only for agents' processes (and scripts', which may be agents).
     let wanted: Vec<i32> = procs
         .iter()
         .filter(|p| {
-            let base = p.executable.rsplit('/').next().unwrap_or(&p.executable);
-            p.tty.is_some() && (base == "node" || AgentKind::of_process(base, &[]).is_some())
+            p.tty.is_some()
+                && (crate::agents::is_runtime(&p.executable) || AgentKind::of_process(&p.executable, &[]).is_some())
         })
         .map(|p| p.pid)
         .collect();
@@ -381,6 +381,13 @@ mod tests {
             proc(60, 1, Some("ttys006"), "node /opt/homebrew/bin/gemini", &[("TERM_PROGRAM", "WarpTerminal")]),
             proc(70, 1, Some("ttys007"), "codex exec fix", &[("TERM_PROGRAM", "ghostty")]),
             proc(80, 1, Some("ttys008"), "zsh", &[]),
+            proc(
+                90,
+                1,
+                Some("ttys009"),
+                "/Users/me/.local/share/claude/versions/2.1.303",
+                &[("TERM_PROGRAM", "ghostty")],
+            ),
         ];
         let found = sessions_of(&procs);
         let summary: Vec<(i32, AgentKind, Host)> = found.iter().map(|s| (s.pid, s.agent, s.host.clone())).collect();
@@ -392,6 +399,7 @@ mod tests {
                 // A terminal's own program wins over a Diri id it inherited.
                 (40, AgentKind::OpenCode, Host::Ghostty),
                 (60, AgentKind::Gemini, Host::Other { name: "Warp".into() }),
+                (90, AgentKind::Claude, Host::Ghostty),
             ]
         );
     }

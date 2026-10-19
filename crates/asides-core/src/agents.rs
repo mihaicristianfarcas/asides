@@ -22,18 +22,44 @@ struct Facts {
     /// Its program, which is also its key in `[agents]`.
     program: &'static str,
     name: &'static str,
-    /// Its process: the executable's name, or for agents run by Node, a word of its script's path.
-    process: Process,
+    /// How its process looks: each way it can be installed.
+    process: &'static [Process],
     /// Variables it sets for the commands it runs (and only there): they mark a process as part of
     /// its session.
     markers: &'static [&'static str],
 }
 
 enum Process {
-    /// A native executable with this name.
+    /// A native executable with this name, by its path or its `argv[0]`, or a version of it kept
+    /// as `…/<name>/versions/<version>` (Claude Code's own installs: started by that path, as when
+    /// it starts itself again, its process isn't named `claude`).
     Executable(&'static str),
-    /// `node …/<word>…`: a Node script whose path has this word.
-    Node(&'static str),
+    /// `node …/<word>…` (or Bun): a script whose path has this word (npm's installs).
+    Script(&'static str),
+}
+
+impl Process {
+    fn matches(&self, executable: &str, args: &[&str]) -> bool {
+        let base = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
+        let first = args.first().map(|a| base(a));
+        match *self {
+            Process::Executable(name) => {
+                base(executable) == name
+                    || first.as_deref() == Some(name)
+                    || executable.contains(&format!("/{name}/versions/"))
+            }
+            Process::Script(word) => {
+                let runtime = |n: &str| matches!(n, "node" | "bun");
+                (runtime(&base(executable)) || first.as_deref().is_some_and(runtime))
+                    && args.get(1).is_some_and(|script| script.to_ascii_lowercase().contains(word))
+            }
+        }
+    }
+}
+
+/// Whether `executable` runs scripts (Node, Bun): agents installed with npm run in one.
+pub fn is_runtime(executable: &str) -> bool {
+    matches!(executable.rsplit('/').next().unwrap_or(executable), "node" | "bun")
 }
 
 const FACTS: [Facts; 6] = [
@@ -41,42 +67,42 @@ const FACTS: [Facts; 6] = [
         kind: AgentKind::Claude,
         program: "claude",
         name: "Claude Code",
-        process: Process::Executable("claude"),
+        process: &[Process::Executable("claude"), Process::Script("claude-code")],
         markers: &["CLAUDECODE"],
     },
     Facts {
         kind: AgentKind::Codex,
         program: "codex",
         name: "Codex",
-        process: Process::Executable("codex"),
+        process: &[Process::Executable("codex"), Process::Script("codex")],
         markers: &[],
     },
     Facts {
         kind: AgentKind::OpenCode,
         program: "opencode",
         name: "OpenCode",
-        process: Process::Executable("opencode"),
+        process: &[Process::Executable("opencode"), Process::Script("opencode")],
         markers: &["OPENCODE"],
     },
     Facts {
         kind: AgentKind::Gemini,
         program: "gemini",
         name: "Gemini CLI",
-        process: Process::Node("gemini"),
+        process: &[Process::Script("gemini")],
         markers: &["GEMINI_CLI"],
     },
     Facts {
         kind: AgentKind::Copilot,
         program: "copilot",
         name: "Copilot CLI",
-        process: Process::Node("copilot"),
+        process: &[Process::Script("copilot")],
         markers: &[],
     },
     Facts {
         kind: AgentKind::Qwen,
         program: "qwen",
         name: "Qwen Code",
-        process: Process::Node("qwen"),
+        process: &[Process::Script("qwen")],
         markers: &["QWEN_CODE"],
     },
 ];
@@ -118,17 +144,11 @@ impl AgentKind {
         AgentKind::ALL.into_iter().find(|k| k.program() == program)
     }
 
-    /// The agent a process is, from its executable's name (`comm`) and its arguments: `claude`, or
+    /// The agent a process is, from its executable (`comm`, a path or a name) and its arguments
+    /// (none yet, to tell whether they're worth reading): `claude`, `…/claude/versions/2.1.303`, or
     /// `node /opt/homebrew/bin/gemini`.
     pub fn of_process(executable: &str, args: &[&str]) -> Option<AgentKind> {
-        let base = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
-        let executable = base(executable);
-        AgentKind::ALL.into_iter().find(|k| match k.facts().process {
-            Process::Executable(name) => executable == name,
-            Process::Node(word) => {
-                executable == "node" && args.get(1).is_some_and(|script| script.to_ascii_lowercase().contains(word))
-            }
-        })
+        AgentKind::ALL.into_iter().find(|k| k.facts().process.iter().any(|p| p.matches(executable, args)))
     }
 
     pub fn submit_key(self) -> SubmitKey {
@@ -215,6 +235,22 @@ mod tests {
         );
         assert_eq!(AgentKind::of_process("node", &["node", "server.js"]), None);
         assert_eq!(AgentKind::of_process("zsh", &["-zsh"]), None);
+        // Claude Code started by its versioned path, as when it starts itself again.
+        let versioned = "/Users/me/.local/share/claude/versions/2.1.303";
+        assert_eq!(AgentKind::of_process(versioned, &[]), Some(AgentKind::Claude));
+        assert_eq!(AgentKind::of_process("2.1.303", &["claude", "--resume"]), Some(AgentKind::Claude));
+        // npm's installs, under Node or Bun.
+        let npm = "/Users/me/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js";
+        assert_eq!(AgentKind::of_process("node", &["node", npm]), Some(AgentKind::Claude));
+        assert_eq!(
+            AgentKind::of_process("/opt/homebrew/bin/bun", &["bun", "/x/node_modules/opencode-ai/bin/opencode"]),
+            Some(AgentKind::OpenCode)
+        );
+        assert_eq!(
+            AgentKind::of_process("node", &["node", "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js"]),
+            Some(AgentKind::Codex)
+        );
+        assert!(is_runtime("/opt/homebrew/bin/node") && is_runtime("bun") && !is_runtime("claude"));
     }
 
     #[test]
