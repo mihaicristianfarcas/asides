@@ -46,6 +46,8 @@ struct Step {
     alt: bool,
     cmd: bool,
     key: Option<String>,
+    /// The key down again, as the keyboard repeats it while it's held.
+    held: bool,
     keyup: Option<String>,
     #[serde(rename = "type")]
     text: Option<String>,
@@ -122,10 +124,10 @@ fn send(view: usize, offset: (f64, f64), step: &Step) {
         mouse(Mouse::Up { right }, p);
     }
     if let Some(chord) = step.key.as_deref().and_then(|k| keys::parse(k).into_iter().next()) {
-        synthetic::key(view, &chord, true);
+        synthetic::key(view, &chord, true, step.held);
     }
     if let Some(chord) = step.keyup.as_deref().and_then(|k| keys::parse(k).into_iter().next()) {
-        synthetic::key(view, &chord, false);
+        synthetic::key(view, &chord, false, false);
     }
     if let Some(text) = &step.text {
         synthetic::text(view, text);

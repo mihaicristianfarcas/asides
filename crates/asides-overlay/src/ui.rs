@@ -44,6 +44,8 @@ const NOTICE: Duration = Duration::from_millis(5000);
 /// The pill's list, opened by pointing at where the aside goes, stays this long after the pointer
 /// leaves the name and the list.
 const LIST_LINGER: Duration = Duration::from_millis(200);
+/// Tab held moves to the next session this often, slower than keys repeat: each name can be read.
+const TARGET_REPEAT: Duration = Duration::from_millis(240);
 const CARD_WIDTH: f64 = 440.0;
 /// The card's trash button and the gap before it.
 const TRASH_WIDTH: f64 = 34.0;
@@ -251,6 +253,8 @@ pub struct Overlay {
     pub toast: Option<(SharedString, Instant)>,
     pub toast_waits: bool,
     pub toast_shown: Option<SharedString>,
+    /// When the next session was last chosen by key (`TARGET_REPEAT`).
+    target_switched: Option<Instant>,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
     /// Where the aside goes, as the pill shows it. Another (Tab, the list) is first drawn unseen
@@ -414,6 +418,7 @@ impl Overlay {
             toast: None,
             toast_waits: false,
             toast_shown: None,
+            target_switched: None,
             following: false,
             pill_label: spec.targets.label(spec.targets.chosen.as_ref()).into(),
             label_widths: (None, None),
@@ -818,6 +823,7 @@ impl Overlay {
 
     /// Tab: the next session the aside can go to.
     fn next_target(&mut self) {
+        self.target_switched = Some(Instant::now());
         let next = self.spec.targets.next(self.target.as_ref());
         let label = self.spec.targets.label(Some(&next));
         self.choose_target(next);
@@ -1160,6 +1166,10 @@ impl Overlay {
             return cx.notify();
         }
         if let Some(cmd) = self.keys.command(&key, mods) {
+            let soon = self.target_switched.is_some_and(|at| at.elapsed() < TARGET_REPEAT);
+            if cmd == Cmd::Target && e.is_held && soon {
+                return;
+            }
             self.help = self.help && cmd == Cmd::Help;
             match cmd {
                 Cmd::Close => self.close_by_key(cx),

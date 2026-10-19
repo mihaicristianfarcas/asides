@@ -769,7 +769,7 @@ pub mod synthetic {
             .map(|(plain, code, shifted)| (*code, plain.to_string(), shifted.to_string()))
     }
 
-    fn send_key(view: &NSView, number: isize, chord: &Chord, down: bool) {
+    fn send_key(view: &NSView, number: isize, chord: &Chord, down: bool, held: bool) {
         let Some((code, plain, shifted)) = key_code(&chord.key) else { return };
         let shift = chord.shift || (shifted == chord.key && plain != chord.key);
         let typed = if shift { shifted } else { plain.clone() };
@@ -783,7 +783,7 @@ pub mod synthetic {
             None,
             &NSString::from_str(&typed),
             &NSString::from_str(&plain),
-            false,
+            held,
             code,
         ) else {
             return;
@@ -797,11 +797,11 @@ pub mod synthetic {
         }
     }
 
-    /// A key going down or up (`chord` like `shift+h`).
-    pub fn key(window: usize, chord: &Chord, down: bool) {
+    /// A key going down or up (`chord` like `shift+h`); `held`, a repeat of it going down.
+    pub fn key(window: usize, chord: &Chord, down: bool, held: bool) {
         let Some(view) = view(window) else { return };
         let number = view.window().map_or(0, |w| w.windowNumber());
-        send_key(view, number, chord, down);
+        send_key(view, number, chord, down, held);
     }
 
     /// Typing `text`, a key at a time.
@@ -815,8 +815,8 @@ pub mod synthetic {
                 key: if c.is_uppercase() || shifted == key && plain != key { shifted } else { plain },
                 ..Chord::default()
             };
-            send_key(view, number, &chord, true);
-            send_key(view, number, &chord, false);
+            send_key(view, number, &chord, true, false);
+            send_key(view, number, &chord, false, false);
         }
     }
 }

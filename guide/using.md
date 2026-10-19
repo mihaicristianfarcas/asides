@@ -32,8 +32,8 @@ color. `⏎` or `Esc` closes it.
 
 ## Where it goes
 
-The pill names the agent session you typed into last. Press `Tab` for the next one, or point at
-the name for the list (click it to keep it open):
+The pill names the agent session you typed into last. Press `Tab` for the next one (held, it goes
+through them slowly enough to read), or point at the name for the list (click it to keep it open):
 
 - **Sessions**: every agent running in a terminal. Those in apps asides can't type into (Warp,
   iTerm, VS Code…) are dimmed.
