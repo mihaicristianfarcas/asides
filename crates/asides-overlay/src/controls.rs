@@ -316,7 +316,8 @@ pub struct Theme {
     pub floating_stroke: Hsla,
     /// One-point separators.
     pub hairline: Hsla,
-    /// A card of rows: its fill and outline.
+    /// A card of rows: its fill (near solid: over a bright or busy desktop, a faint one left its
+    /// text hard to read) and outline.
     pub card: Hsla,
     pub card_stroke: Hsla,
     pub hover: Hsla,
@@ -346,10 +347,10 @@ impl Theme {
             quaternary: white(0.26),
             background: hex(0x1d1c1a, 0.82),
             sidebar: hex(0x262422, 0.6),
-            floating: hex(0x2c2a28, 1.0),
+            floating: hex(0x33312e, 1.0),
             floating_stroke: white(0.09),
             hairline: white(0.07),
-            card: white(0.055),
+            card: hex(0x2a2826, 0.94),
             card_stroke: white(0.10),
             hover: white(0.06),
             selected: white(0.10),
@@ -378,7 +379,7 @@ impl Theme {
             floating: hex(0xffffff, 1.0),
             floating_stroke: black(0.10),
             hairline: black(0.08),
-            card: hex(0xffffff, 0.6),
+            card: hex(0xffffff, 0.94),
             card_stroke: black(0.09),
             hover: black(0.045),
             selected: hex(0xffffff, 0.92),
@@ -414,7 +415,7 @@ pub fn lift(alpha: f32) -> Vec<BoxShadow> {
     vec![BoxShadow { color: black(alpha), offset: point(px(0.), px(1.)), blur_radius: px(3.), spread_radius: px(0.) }]
 }
 
-/// Menus and tooltips: a raised panel.
+/// Menus and tooltips: a raised panel, its shadow soft and close (a deep one read as heavy).
 pub fn floating(t: Theme) -> Div {
     div()
         .flex()
@@ -424,9 +425,9 @@ pub fn floating(t: Theme) -> Div {
         .border_1()
         .border_color(t.floating_stroke)
         .shadow(vec![BoxShadow {
-            color: black(if t.dark { 0.40 } else { 0.16 }),
-            offset: point(px(0.), px(14.)),
-            blur_radius: px(36.),
+            color: black(if t.dark { 0.18 } else { 0.07 }),
+            offset: point(px(0.), px(4.)),
+            blur_radius: px(14.),
             spread_radius: px(0.),
         }])
         .font_family(font())
