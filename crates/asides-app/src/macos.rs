@@ -1,7 +1,10 @@
-//! Small AppKit/AVFoundation helpers: sounds, microphone permission, apps in front, the command link.
+//! Small AppKit/AVFoundation helpers: sounds, the microphone and Automation permissions, apps in
+//! front, the command link.
 
+use std::ffi::c_void;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::runtime::Bool;
@@ -40,6 +43,82 @@ pub fn request_mic(done: impl Fn(bool) + 'static) {
     let Some(audio) = (unsafe { AVMediaTypeAudio }) else { return };
     let block = RcBlock::new(move |granted: Bool| done(granted.as_bool()));
     unsafe { AVCaptureDevice::requestAccessForMediaType_completionHandler(audio, &block) };
+}
+
+/// Whether asides may send Apple events to an app (Automation: how it types into Terminal and
+/// Ghostty).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Automation {
+    Granted,
+    Denied,
+    Undetermined,
+    /// macOS tells only for an app that runs.
+    NotRunning,
+}
+
+impl Automation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Automation::Granted => "granted",
+            Automation::Denied => "denied",
+            Automation::Undetermined => "undetermined",
+            Automation::NotRunning => "not running",
+        }
+    }
+}
+
+#[repr(C)]
+struct AEDesc {
+    descriptor_type: u32,
+    data_handle: *mut c_void,
+}
+
+#[link(name = "CoreServices", kind = "framework")]
+unsafe extern "C" {
+    fn AECreateDesc(type_code: u32, data: *const c_void, size: isize, result: *mut AEDesc) -> i16;
+    fn AEDisposeDesc(desc: *mut AEDesc) -> i16;
+    fn AEDeterminePermissionToAutomateTarget(target: *const AEDesc, class: u32, id: u32, ask: u8) -> i32;
+}
+
+/// `typeApplicationBundleID`, and `typeWildCard`: any event.
+const TYPE_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
+const WILDCARD: u32 = u32::from_be_bytes(*b"****");
+
+/// Whether asides may automate the app `bundle` (an ID). With `ask`, macOS asks the user if they
+/// haven't answered: it blocks until they do (off the main thread).
+pub fn automation(bundle: &str, ask: bool) -> Automation {
+    let mut desc = AEDesc { descriptor_type: 0, data_handle: std::ptr::null_mut() };
+    // SAFETY: the bytes outlive the call, which copies them into the descriptor; it's disposed of.
+    let status = unsafe {
+        if AECreateDesc(TYPE_BUNDLE_ID, bundle.as_ptr().cast(), bundle.len() as isize, &mut desc) != 0 {
+            return Automation::NotRunning;
+        }
+        let status = AEDeterminePermissionToAutomateTarget(&desc, WILDCARD, WILDCARD, u8::from(ask));
+        AEDisposeDesc(&mut desc);
+        status
+    };
+    match status {
+        0 => Automation::Granted,
+        // errAEEventNotPermitted
+        -1743 => Automation::Denied,
+        // errAEEventWouldRequireUserConsent
+        -1744 => Automation::Undetermined,
+        // procNotFound, and anything else macOS can't tell
+        _ => Automation::NotRunning,
+    }
+}
+
+/// Asks for Automation of the app `bundle`: started in the background first if it isn't running
+/// (macOS asks only about an app that runs). Blocks until the user answers.
+pub fn ask_automation(bundle: &str) -> Automation {
+    if automation(bundle, false) == Automation::NotRunning {
+        let _ = Command::new("/usr/bin/open").args(["-g", "-j", "-b", bundle]).status();
+        let started = Instant::now();
+        while automation(bundle, false) == Automation::NotRunning && started.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+    automation(bundle, true)
 }
 
 pub fn play(sound: &str) {

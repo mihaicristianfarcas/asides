@@ -42,7 +42,7 @@ use asides_core::models::ModelSpec;
 use asides_core::overlay::Saved;
 use asides_core::paths;
 use asides_core::sessions::{self, AgentSession};
-use asides_core::state::{self as app_state, AppState};
+use asides_core::state::{self as app_state, AppState, Permission, Permissions};
 use asides_core::takes;
 use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
@@ -83,6 +83,8 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 const FOLDERS: usize = 8;
 /// How long the folders found are good for.
 const FOLDERS_FRESH: Duration = Duration::from_secs(60);
+/// How often the permissions are looked at while the asides window is open (setup shows them).
+const PERMISSIONS_TICK: Duration = Duration::from_millis(1500);
 
 enum UserEvent {
     HotKey(GlobalHotKeyEvent),
@@ -108,6 +110,8 @@ enum UserEvent {
     Overlay(u32, OverlayMessage),
     /// What the updater found, downloaded or couldn't do.
     Update(UpdateReply),
+    /// What macOS lets asides do now (and the microphone).
+    Permissions(Permissions, Mic),
 }
 
 struct Recording {
@@ -238,6 +242,13 @@ struct App {
     restart: Option<bool>,
     /// The newest version whose What's New the user saw.
     whats_new_seen: String,
+    /// What macOS lets asides do, as last looked at, when, and whether a look is under way.
+    permissions: Permissions,
+    permissions_at: Option<Instant>,
+    checking_permissions: bool,
+    /// The user went through setup or skipped it, and how far it got.
+    onboarded: bool,
+    setup_step: Option<String>,
     quit_when_idle: bool,
     quit: bool,
 }
@@ -355,6 +366,11 @@ impl App {
             updates,
             restart: None,
             whats_new_seen,
+            permissions: previous.permissions,
+            permissions_at: None,
+            checking_permissions: false,
+            onboarded: previous.onboarded,
+            setup_step: previous.setup_step,
             quit_when_idle: false,
             quit: false,
         }
@@ -376,10 +392,6 @@ impl App {
             }
             Err(err) => self.error = Some((Instant::now(), format!("Global shortcuts unavailable: {err}"))),
         }
-        // Ask for the microphone up front, while the user is setting up, not mid-bug.
-        if self.mic == Mic::Undetermined && !cfg!(feature = "dev-hooks") {
-            self.request_mic();
-        }
         self.watch_config();
         let (asked, requests) = std::sync::mpsc::channel();
         self.find_sessions = Some(asked);
@@ -391,6 +403,13 @@ impl App {
         self.link_command();
         self.stand_by();
         self.start_updater();
+        self.check_permissions();
+        // The first time: setup (permissions, the voice model, where new sessions open). Skipped,
+        // each permission and the model are asked for when first needed. Test builds skip it.
+        let setup = !cfg!(feature = "dev-hooks") || std::env::var_os("ASIDES_SETUP").is_some();
+        if !self.onboarded && setup {
+            self.open_window_at(Some("setup"));
+        }
         self.refresh();
         self.publish();
     }
@@ -467,6 +486,27 @@ impl App {
             }
             UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
             UserEvent::Update(reply) => self.on_update(reply),
+            UserEvent::Permissions(mut permissions, mic) => {
+                // macOS answers only for an app that runs: one that quit keeps its last answer.
+                for (app, status) in &mut permissions.automation {
+                    if let Some(known) = self.permissions.automation(app).filter(|s| *s == "granted" || *s == "denied")
+                        && status == "not running"
+                    {
+                        *status = known.to_string();
+                    }
+                }
+                self.checking_permissions = false;
+                self.permissions_at = Some(Instant::now());
+                self.screen_permitted |= permissions.screen;
+                let changed = mic != self.mic
+                    || Permissions { checked_ms: 0, ..permissions.clone() }
+                        != Permissions { checked_ms: 0, ..self.permissions.clone() };
+                (self.permissions, self.mic) = (permissions, mic);
+                if changed {
+                    self.refresh();
+                    self.publish();
+                }
+            }
         }
     }
 
@@ -486,6 +526,11 @@ impl App {
                 self.models.download(&self.config.model);
             }
             Link::Update { step, .. } => self.update_step(step),
+            Link::Permission { name, .. } => self.ask_permission(name),
+            Link::Setup { step, .. } => match step.as_str() {
+                "done" => (self.onboarded, self.setup_step) = (true, None),
+                _ => self.setup_step = Some(step),
+            },
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                 #[cfg(feature = "dev-hooks")]
@@ -1441,6 +1486,10 @@ impl App {
         if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.until) {
             self.flash = None;
         }
+        // While the window is open, what macOS allows shows there (setup's checks).
+        if self.window_open() && self.permissions_at.is_none_or(|at| at.elapsed() >= PERMISSIONS_TICK) {
+            self.check_permissions();
+        }
         // The pill's microphone fills with what it hears.
         if let (Some(recording), Some(overlay)) = (&self.recording, &mut self.overlay) {
             overlay.send(&OverlayCommand::Level { level: recording.recorder.level() });
@@ -1459,7 +1508,10 @@ impl App {
         if self.recording.is_some() && self.overlay.is_some() {
             return Some(now + LEVEL_TICK);
         }
-        (self.recording.is_some() || self.flash.is_some() || error_icon).then_some(now + TICK)
+        if self.recording.is_some() || self.flash.is_some() || error_icon {
+            return Some(now + TICK);
+        }
+        self.window.is_some().then_some(now + PERMISSIONS_TICK)
     }
 
     fn refresh(&mut self) {
@@ -1568,6 +1620,9 @@ impl App {
             pill_at: self.pill_at,
             update: self.updates.status.clone(),
             whats_new_seen: Some(self.whats_new_seen.clone()),
+            permissions: self.permissions.clone(),
+            onboarded: self.onboarded,
+            setup_step: self.setup_step.clone(),
             updated_ms: history::now_ms(),
         };
         if let Err(err) = state.write(&paths::state_path()) {
@@ -1597,6 +1652,57 @@ impl App {
         macos::request_mic(move |granted| {
             let _ = proxy.send_event(UserEvent::Mic(granted));
         });
+    }
+
+    /// Looks at what macOS lets asides do (off the main thread: Screen Recording takes 11 ms, and
+    /// Apple events wait on the app asked about).
+    fn check_permissions(&mut self) {
+        if std::mem::replace(&mut self.checking_permissions, true) {
+            return;
+        }
+        let proxy = self.proxy.clone();
+        let terminals = deliver::installed_terminals();
+        std::thread::spawn(move || {
+            let automation = terminals
+                .into_iter()
+                .filter_map(|app| deliver::automated_bundle(app).map(|bundle| (app, bundle)))
+                .map(|(app, bundle)| (app.to_string(), macos::automation(bundle, false).as_str().to_string()))
+                .collect();
+            let permissions = Permissions {
+                screen: capture::permitted(),
+                accessibility: elements::trusted(),
+                automation,
+                checked_ms: history::now_ms(),
+            };
+            let _ = proxy.send_event(UserEvent::Permissions(permissions, macos::mic_status()));
+        });
+    }
+
+    /// Asks macOS for a permission (setup's buttons): its prompt the first time, then its settings.
+    fn ask_permission(&mut self, permission: Permission) {
+        match permission {
+            Permission::Microphone => self.request_mic(),
+            Permission::Screen => {
+                capture::request();
+            }
+            Permission::Accessibility => {
+                elements::request_trust();
+            }
+            Permission::Automation(app) => {
+                let Some(bundle) = deliver::automated_bundle(&app) else { return };
+                // macOS waits for the answer; the next look at the permissions finds it.
+                std::thread::spawn(move || macos::ask_automation(bundle));
+            }
+        }
+        self.permissions_at = None;
+    }
+
+    /// The asides window is open (a process that's gone is forgotten).
+    fn window_open(&mut self) -> bool {
+        if self.window.as_mut().is_some_and(|w| w.try_wait().ok().flatten().is_some()) {
+            self.window = None;
+        }
+        self.window.is_some()
     }
 
     fn request_quit(&mut self) {

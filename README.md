@@ -43,12 +43,13 @@ make install   # ~/Applications/asides.app, and the command in ~/.local/bin
 
 ## Get started
 
-1. Open asides. It lives in the menu bar as `[a]`.
+1. Open asides. Setup walks you through the permissions, the voice model (190 MB) and where new
+   sessions open, or skip it. asides lives in the menu bar as `[a]`.
 2. Start your agent (`claude`, `codex`…) in Terminal, Ghostty or Diri, as usual.
 3. In the app you're testing, press `⌃⌥Space`, click, talk, and press `⌃⌥Space` again.
 
-The first time, click the pill's microphone to download a voice model (190 MB). Pins, measuring
-and screenshots work without one.
+Pins, measuring and screenshots work without a voice model; skipped, it's downloaded the first time
+you click the pill's microphone.
 
 ## Documentation
 

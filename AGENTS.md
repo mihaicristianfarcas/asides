@@ -309,7 +309,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - A terminal app started from inside an agent's session hands its markers to every shell: start
   test terminals from the Dock (or strip them), and quit them after.
 - The Automation prompt holds an AppleScript until answered, failing after 2 minutes: run it off
-  the main thread. It needs the `automation.apple-events` entitlement and
+  the main thread. `AEDeterminePermissionToAutomateTarget` answers only for an app that runs
+  (`procNotFound` otherwise): setup starts it hidden first, and keeps the last answer once it quits. It needs the `automation.apple-events` entitlement and
   `NSAppleEventsUsageDescription`. Permissions follow the signing identity.
 - Terminal's AppleScript can't make a tab (only ⌘T through System Events). Ghostty 1.3 has `new
   window … with configuration`; `osacompile` checks a script against its dictionary without sending.

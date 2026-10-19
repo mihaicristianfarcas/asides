@@ -48,7 +48,66 @@ pub struct AppState {
     pub update: crate::update::Status,
     /// The newest version whose What's New the user saw (a fresh install starts at its own).
     pub whats_new_seen: Option<String>,
+    /// What macOS lets asides do, besides the microphone (`microphone`), as last looked at.
+    pub permissions: Permissions,
+    /// The user went through setup (or skipped it): the window no longer opens on it at launch.
+    pub onboarded: bool,
+    /// How far setup got (its step), to go on from there after asides restarts (Screen Recording
+    /// can ask for that).
+    pub setup_step: Option<String>,
     pub updated_ms: u64,
+}
+
+/// What macOS lets asides do, looked at while its window is open (setup shows it).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Permissions {
+    /// Screen Recording: to freeze the screen.
+    pub screen: bool,
+    /// Accessibility: to name what's under a pin.
+    pub accessibility: bool,
+    /// Automation, by app ("Terminal", "Ghostty"): `granted`, `denied`, `undetermined`, or
+    /// `not running` (macOS says only for an app that runs).
+    pub automation: Vec<(String, String)>,
+    /// When they were looked at (milliseconds since the epoch; 0: not yet).
+    pub checked_ms: u64,
+}
+
+impl Permissions {
+    /// Automation for `app`, as last looked at.
+    pub fn automation(&self, app: &str) -> Option<&str> {
+        self.automation.iter().find(|(a, _)| a.eq_ignore_ascii_case(app)).map(|(_, s)| s.as_str())
+    }
+}
+
+/// A permission asides can ask for (setup's buttons).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Permission {
+    Microphone,
+    Screen,
+    Accessibility,
+    /// Typing into this app ("Terminal", "Ghostty").
+    Automation(String),
+}
+
+impl Permission {
+    pub fn as_str(&self) -> String {
+        match self {
+            Permission::Microphone => "microphone".into(),
+            Permission::Screen => "screen".into(),
+            Permission::Accessibility => "accessibility".into(),
+            Permission::Automation(app) => format!("automation:{app}"),
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Permission> {
+        Some(match text {
+            "microphone" => Permission::Microphone,
+            "screen" => Permission::Screen,
+            "accessibility" => Permission::Accessibility,
+            other => Permission::Automation(other.strip_prefix("automation:").filter(|a| !a.is_empty())?.into()),
+        })
+    }
 }
 
 /// How many folders New session in… offers.
@@ -93,10 +152,27 @@ mod tests {
             recent_dirs: vec!["/x".into(), "/y".into()],
             target: Some("123".into()),
             pill_at: Some((0.5, 0.1)),
+            permissions: Permissions {
+                screen: true,
+                automation: vec![("Terminal".into(), "granted".into())],
+                ..Default::default()
+            },
+            onboarded: true,
+            setup_step: Some("voice".into()),
             ..Default::default()
         };
         state.write(&path).unwrap();
-        assert_eq!(AppState::read(&path), Some(state));
+        assert_eq!(AppState::read(&path), Some(state.clone()));
+        assert_eq!(state.permissions.automation("terminal"), Some("granted"));
+        for permission in [
+            Permission::Microphone,
+            Permission::Screen,
+            Permission::Accessibility,
+            Permission::Automation("Ghostty".into()),
+        ] {
+            assert_eq!(Permission::parse(&permission.as_str()), Some(permission));
+        }
+        assert_eq!(Permission::parse("automation:"), None);
     }
 
     #[test]

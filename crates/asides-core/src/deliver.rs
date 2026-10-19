@@ -171,6 +171,16 @@ fn terminal(agent: AgentKind, tty: &str, parts: &[&Part], submit: SubmitKey) -> 
 /// is the default.
 pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "Diri"];
 
+/// The bundle ID of the terminal app `name` asides types into with Apple events (Automation): none
+/// for Diri, which needs no permission.
+pub fn automated_bundle(name: &str) -> Option<&'static str> {
+    match name.to_ascii_lowercase().as_str() {
+        "terminal" => Some("com.apple.Terminal"),
+        "ghostty" => Some("com.mitchellh.ghostty"),
+        _ => None,
+    }
+}
+
 /// Where the app `name` is installed, if it is (names match ignoring case, as the file system does).
 pub fn app_bundle(name: &str) -> Option<PathBuf> {
     let home = std::env::home_dir().unwrap_or_default();

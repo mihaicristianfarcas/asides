@@ -1,5 +1,10 @@
 # Using asides
 
+The first time asides opens, setup asks where new sessions open (Terminal, Ghostty or Diri, and
+the agent), what macOS must allow, the voice model and the shortcuts. Skip it for the defaults:
+asides asks for each permission and the model when it first needs them. General → **Set Up Again**
+goes through it again.
+
 ## Freeze, pin, talk, send
 
 | | |

@@ -15,9 +15,11 @@
 
 ## Permissions
 
+Setup asks for each as you go (General → **Set Up Again** shows them, allowed or not). Skipped:
+
 | Permission | Asked | For |
 |---|---|---|
-| Microphone | at first launch | talking |
+| Microphone | the first time you talk | talking |
 | Screen Recording | the first time you freeze the screen | the screenshots |
 | Accessibility | the first time asides opens | naming what's under a pin. Without it, pins name the app and window. |
 | Automation | the first time asides types into Terminal or Ghostty | typing the aside in (Diri needs none) |

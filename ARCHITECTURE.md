@@ -65,7 +65,7 @@ crates/
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
-    window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins
+    window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins; setup
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
     windows.rs        opening, showing and hiding the windows (from the clock); the pill's
     input.rs          the card's text field, and the area History edits Markdown in
@@ -165,6 +165,14 @@ latest reachable session is the default target (`sessions::latest`).
 `UserEvent::Delivered` records where it went (`Aside::record_delivery`) and flashes `[n]` or the
 error.
 
+### Setting up
+
+Until `onboarded`, the app opens the window on setup at launch (`--window`, page `setup`). Its steps
+change `config.toml` as the settings do, and ask the app through links: `asides://permission`
+(macOS's prompt; Automation with `AEDeterminePermissionToAutomateTarget`, the app started first),
+`asides://setup` (the step reached, to go on after a restart; `done` ends it). While the window is
+open, the app looks at the permissions every 1.5 s, off the main thread, into `state.permissions`.
+
 ### Updating
 
 The updater (`asides-app/src/update.rs`) reads `appcast.json` from the latest GitHub release
@@ -214,7 +222,7 @@ Break these only on purpose, and update this list.
 |---|---|---|
 | `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
-| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen |
+| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, setup |
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |

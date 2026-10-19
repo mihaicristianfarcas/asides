@@ -42,9 +42,9 @@ pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light (a few seconds on screen); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light (a few seconds on screen); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
 | the overlay | a replay (below) |
-| the app | `make install`, then use it (it quits and replaces the running asides) |
+| the app | `make install`, then use it (it quits and replaces the running asides); dev-hooks builds open setup only with `ASIDES_SETUP=1` |
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"me","version":"1"}}}' \
@@ -104,8 +104,10 @@ logged to `asides-overlay-debug.log` there.
 
 Run what your change touches, and say in the pull request what you tried.
 
-- [ ] **First launch** after `tccutil reset Microphone io.github.mihaicristianfarcas.asides`: the
-  prompt names asides; nothing downloads.
+- [ ] **First launch** (`onboarded` false in `state.json`; after `tccutil reset Microphone
+  io.github.mihaicristianfarcas.asides`): setup opens; each **Allow…** shows macOS's prompt naming
+  asides, then **Allowed**; the download shows its progress; **Skip** leaves the defaults and
+  nothing downloads; reopened mid-way, it goes on at the step it was at.
 - [ ] **Menu bar**: the mark alone (dot recording, dots busy, `[n]` sent, `!` error); the menu has
   the status, Open asides, Open Live, Copy the Last Aside, three switches, History…, Settings…, Quit.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,

@@ -27,7 +27,7 @@ use asides_core::markdown::Part;
 use asides_core::models::{MODELS, ModelSpec};
 use asides_core::paths::{self, tilde};
 use asides_core::sessions::{self, AgentSession};
-use asides_core::state::AppState;
+use asides_core::state::{AppState, Permission};
 use asides_core::update::{self, Block, Notes, Phase, Span, Step};
 use chrono::{Local, TimeZone};
 use gpui::{
@@ -53,9 +53,9 @@ actions!(
 );
 
 use crate::controls::{
-    Choice, Glide, Metrics, Radius, Theme, Type, button, chip, fade_in, floating, font, footnote, hex, icon,
-    icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section, segmented, select, setting, stepper,
-    swatches, switch, toolbar_row,
+    ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, fade_in, floating, font, footnote, hex,
+    icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section, segmented, select, setting,
+    stepper, swatches, switch, toolbar_row,
 };
 use crate::input::{Look, TextInput};
 use crate::{assets, native, style};
@@ -70,6 +70,8 @@ const EDITOR_FONT: &str = "Menlo";
 const EDITOR_LINE: f32 = 20.0;
 /// What edited Markdown can't be, at most, listed under it.
 const PROBLEMS_SHOWN: usize = 4;
+/// Setup's column.
+const SETUP_WIDTH: f32 = 560.0;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
@@ -81,6 +83,8 @@ enum Page {
     Pins,
     /// What's new in this asides and the update found (not in the sidebar: its foot leads here).
     WhatsNew,
+    /// Setup, the whole window: the first time asides opens, or from General.
+    Setup,
 }
 
 impl Page {
@@ -93,9 +97,81 @@ impl Page {
             "voice" => Page::Voice,
             "pins" => Page::Pins,
             "whats-new" => Page::WhatsNew,
+            "setup" => Page::Setup,
             _ => return None,
         })
     }
+}
+
+/// Setup's steps, in order: what asides does, where sessions open, what macOS must allow, the
+/// voice model, the shortcuts, and done.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SetupStep {
+    Welcome,
+    Sessions,
+    Permissions,
+    Voice,
+    Shortcuts,
+    Done,
+}
+
+impl SetupStep {
+    const ALL: [SetupStep; 6] = [
+        SetupStep::Welcome,
+        SetupStep::Sessions,
+        SetupStep::Permissions,
+        SetupStep::Voice,
+        SetupStep::Shortcuts,
+        SetupStep::Done,
+    ];
+
+    /// Its name in `asides://setup` and `state.json`.
+    fn name(self) -> &'static str {
+        match self {
+            SetupStep::Welcome => "welcome",
+            SetupStep::Sessions => "sessions",
+            SetupStep::Permissions => "permissions",
+            SetupStep::Voice => "voice",
+            SetupStep::Shortcuts => "shortcuts",
+            SetupStep::Done => "done",
+        }
+    }
+
+    fn named(name: &str) -> Option<SetupStep> {
+        SetupStep::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// What the progress along the top calls it (the steps between the welcome and done).
+    fn title(self) -> &'static str {
+        match self {
+            SetupStep::Sessions => "Sessions",
+            SetupStep::Permissions => "Permissions",
+            SetupStep::Voice => "Voice",
+            SetupStep::Shortcuts => "Shortcuts",
+            SetupStep::Welcome | SetupStep::Done => "",
+        }
+    }
+
+    fn next(self) -> SetupStep {
+        let i = SetupStep::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        SetupStep::ALL[(i + 1).min(SetupStep::ALL.len() - 1)]
+    }
+
+    fn back(self) -> SetupStep {
+        let i = SetupStep::ALL.iter().position(|s| *s == self).unwrap_or(0);
+        SetupStep::ALL[i.saturating_sub(1)]
+    }
+}
+
+/// The permissions setup and General show: what macOS calls each (its Privacy & Security pane),
+/// and why asides needs it.
+#[derive(Clone, PartialEq)]
+enum Need {
+    Microphone,
+    Screen,
+    Accessibility,
+    /// Typing into this terminal app.
+    Automation(&'static str),
 }
 
 /// What a key press records, while one is being recorded.
@@ -222,6 +298,10 @@ pub struct AsidesWindow {
     drafts: HashMap<String, Entity<TextInput>>,
     /// Development (`ASIDES_WINDOW_FOCUS=edit`): the aside shown opens in Edit.
     edit_at_first: bool,
+    /// Setup's step shown, and the permissions asked for meanwhile (asked once, macOS shows them
+    /// only in System Settings after).
+    setup: SetupStep,
+    asked: Vec<String>,
 }
 
 /// Opens the window; it quits when it's closed.
@@ -346,7 +426,7 @@ pub fn run() {
 }
 
 /// Development (`ASIDES_WINDOW_CAPTURE=<dir>`): each page in each appearance, captured to
-/// `<dir>/<page>-<dark|light>.png`, then it quits.
+/// `<dir>/<page>-<dark|light>.png` (setup's steps, `setup-<step>-…`), then it quits.
 fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mut App) {
     let pages = [
         (Page::History, "history"),
@@ -357,11 +437,16 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
         (Page::Pins, "pins"),
         (Page::WhatsNew, "whats-new"),
     ];
+    let shots = pages
+        .into_iter()
+        .map(|(page, name)| (page, SetupStep::Welcome, name.to_string()))
+        .chain(SetupStep::ALL.into_iter().map(|step| (Page::Setup, step, format!("setup-{}", step.name()))))
+        .collect::<Vec<_>>();
     cx.spawn(async move |cx| {
         for (theme, look) in [(Theme::dark(), "dark"), (Theme::light(), "light")] {
-            for (page, name) in pages {
+            for (page, step, name) in shots.clone() {
                 let _ = handle.update(cx, |this, _, cx| {
-                    (this.page, this.theme) = (page, theme);
+                    (this.page, this.setup, this.theme) = (page, step, theme);
                     cx.notify();
                 });
                 cx.background_executor().timer(Duration::from_millis(500)).await;
@@ -406,12 +491,18 @@ impl AsidesWindow {
             editing: None,
             drafts: HashMap::new(),
             edit_at_first: std::env::var("ASIDES_WINDOW_FOCUS").is_ok_and(|f| f == "edit"),
+            setup: SetupStep::Welcome,
+            asked: Vec::new(),
         };
         this.reload();
         this.selected = this.asides.first().map(|a| a.id.clone());
         // Development: where it opens (to capture each page).
         // Where it opens: the menu's History… or Settings…, or a page to capture.
         this.page = std::env::var("ASIDES_WINDOW_PAGE").ok().and_then(|p| Page::named(&p)).unwrap_or(Page::History);
+        // Setup goes on where it was left (asides may have restarted for Screen Recording), or at a
+        // step to capture it.
+        let step = std::env::var("ASIDES_WINDOW_SETUP").ok().or(this.state.setup_step.clone());
+        this.setup = step.as_deref().and_then(SetupStep::named).unwrap_or(SetupStep::Welcome);
         // Development: a shortcut or key recording, or a field focused, when it opens (to try them
         // with posted keys).
         this.recording = match std::env::var("ASIDES_WINDOW_FOCUS").as_deref() {
@@ -850,7 +941,9 @@ impl Render for AsidesWindow {
             Page::Voice => self.voice(window, cx),
             Page::Pins => self.pins(window, cx),
             Page::WhatsNew => self.whats_new(),
+            Page::Setup => self.setup_page(window, cx),
         };
+        let sidebar = (self.page != Page::Setup).then(|| self.sidebar(cx));
         div()
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
@@ -894,7 +987,7 @@ impl Render for AsidesWindow {
             .font_family(font())
             .text_color(t.primary)
             .text_size(px(Type::BODY))
-            .child(self.sidebar(cx))
+            .children(sidebar)
             .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(t.background).child(content))
             .children(self.toast.as_ref().map(|(text, _)| {
                 div().absolute().bottom(px(18.)).left_0().right_0().flex().justify_center().child(fade_in(
@@ -1523,6 +1616,562 @@ impl AsidesWindow {
             .into_any_element()
     }
 
+    // --- Setup ---
+
+    /// Goes to setup's `step`, telling the app how far it got (at Done, setup is over).
+    fn setup_go(&mut self, step: SetupStep, cx: &mut Context<Self>) {
+        self.setup = step;
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
+        let _ = send_link(&Link::Setup { step: step.name().into(), request: None });
+        cx.notify();
+    }
+
+    /// Setup is over (done, or skipped with the defaults): History.
+    fn setup_finish(&mut self, cx: &mut Context<Self>) {
+        let _ = send_link(&Link::Setup { step: SetupStep::Done.name().into(), request: None });
+        self.setup = SetupStep::Welcome;
+        self.go(Page::History, cx);
+    }
+
+    /// Setup, the whole window: its steps along the top, the step, and Back, Skip and Continue at
+    /// the bottom.
+    fn setup_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let step = self.setup;
+        if step == SetupStep::Welcome {
+            return self.setup_welcome(cx);
+        }
+        let body = match step {
+            SetupStep::Sessions => self.setup_sessions(cx),
+            SetupStep::Permissions => self.setup_permissions(cx),
+            SetupStep::Voice => self.setup_voice(window, cx),
+            SetupStep::Shortcuts => self.setup_shortcuts(cx),
+            SetupStep::Welcome | SetupStep::Done => self.setup_done(),
+        };
+        let index = |s: SetupStep| SetupStep::ALL.iter().position(|x| *x == s).unwrap_or(0);
+        // The steps between the welcome and done: those behind checked, this one lit.
+        let progress = div().flex().items_center().gap(px(20.)).children(SetupStep::ALL[1..5].iter().map(|&s| {
+            let (behind, on) = (index(s) < index(step), s == step);
+            let mark = match behind {
+                true => icon("check", 12., t.fresh).into_any_element(),
+                false => {
+                    div().size(px(7.)).rounded_full().bg(if on { t.accent } else { t.quaternary }).into_any_element()
+                }
+            };
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(if on { t.primary } else { t.tertiary })
+                .child(div().w(px(12.)).flex().justify_center().child(mark))
+                .child(s.title())
+        }));
+        let back = step.back();
+        let footer = div()
+            .flex_none()
+            .h(px(60.))
+            .px(px(24.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .border_t_1()
+            .border_color(t.hairline)
+            .child(button("setup-back", "Back", t).on_click(cx.listener(move |this, _, _, cx| this.setup_go(back, cx))))
+            .child(match step {
+                SetupStep::Done => div()
+                    .child(
+                        button("setup-finish", "Done", t)
+                            .accent()
+                            .on_click(cx.listener(|this, _, _, cx| this.setup_finish(cx))),
+                    )
+                    .into_any_element(),
+                _ => {
+                    let next = step.next();
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(
+                            button("setup-skip", "Skip Setup", t)
+                                .kind(ButtonKind::Ghost)
+                                .on_click(cx.listener(|this, _, _, cx| this.setup_finish(cx))),
+                        )
+                        .child(
+                            button("setup-next", "Continue", t)
+                                .accent()
+                                .on_click(cx.listener(move |this, _, _, cx| this.setup_go(next, cx))),
+                        )
+                        .into_any_element()
+                }
+            });
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(div().flex_none().h(px(Metrics::TOOLBAR)).flex().items_center().justify_center().child(progress))
+            .child(scrolled(
+                div().id("setup").size_full().overflow_y_scroll().track_scroll(&self.page_scroll).child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .justify_center()
+                        .px(px(28.))
+                        .pt(px(28.))
+                        .pb(px(32.))
+                        .child(div().w_full().min_w_0().max_w(px(SETUP_WIDTH)).child(body)),
+                ),
+                "setup-bar".into(),
+                &self.page_scroll,
+                t,
+            ))
+            .child(footer)
+            .into_any_element()
+    }
+
+    /// What asides does, and the way in: set up, or the defaults.
+    fn setup_welcome(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let open = pretty_shortcut(&self.config.shortcuts.asides);
+        let line = |text: String| {
+            div().text_size(px(14.)).line_height(px(21.)).text_color(t.secondary).text_center().child(text)
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(12.))
+            .px(px(40.))
+            .child(
+                div()
+                    .size(px(64.))
+                    .rounded(px(16.))
+                    .bg(t.accent)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("mark", 38., t.on_accent)),
+            )
+            .child(div().pt(px(10.)).text_size(px(28.)).font_weight(FontWeight::BOLD).child("Welcome to asides"))
+            .child(div().max_w(px(470.)).flex().flex_col().gap(px(8.)).children([
+                line(format!("Press {open} over any app: the screen freezes. Click what's wrong and say why.")),
+                line(format!(
+                    "Press {open} again: it's typed into your coding agent's session, with screenshots, as your own message."
+                )),
+            ]))
+            .child(
+                div()
+                    .pt(px(16.))
+                    .flex()
+                    .gap(px(10.))
+                    .child(
+                        button("setup-start", "Set Up asides", t)
+                            .accent()
+                            .on_click(cx.listener(|this, _, _, cx| this.setup_go(SetupStep::Sessions, cx))),
+                    )
+                    .child(
+                        button("setup-defaults", "Skip, Use the Defaults", t)
+                            .on_click(cx.listener(|this, _, _, cx| this.setup_finish(cx))),
+                    ),
+            )
+            .child(
+                div().pt(px(6.)).max_w(px(420.)).child(
+                    footnote(
+                        "A minute: where sessions open, what macOS must allow, and the voice model. Skipped, asides \
+                         asks for each when it first needs it; everything is in Settings later.",
+                        t,
+                    )
+                    .text_center(),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// Where asides goes: the terminal app new sessions open in, the agent they start, and the
+    /// sessions running now.
+    fn setup_sessions(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let current = terminal_app(&self.config.agents.terminal);
+        let terminals: Vec<AnyElement> = deliver::installed_terminals()
+            .into_iter()
+            .map(|name| {
+                let detail = match name {
+                    "Diri" => "Types without asking for any permission.",
+                    "Ghostty" => "asides asks once to type there (Automation).",
+                    _ => "macOS's own. asides asks once to type there (Automation).",
+                };
+                let pick = self.setter(cx, move |c, _: ()| {
+                    c.agents.terminal = if name == "Terminal" { String::new() } else { name.to_string() };
+                });
+                choice_row(
+                    SharedString::from(format!("setup-terminal-{name}")),
+                    t,
+                    "terminal",
+                    name,
+                    detail,
+                    name == current,
+                )
+                .on_click(move |_, window, cx| pick((), window, cx))
+                .into_any_element()
+            })
+            .collect();
+        let agents = match self.state.agents.as_slice() {
+            [] => vec![AgentKind::Claude, AgentKind::Codex, AgentKind::OpenCode],
+            installed => installed.to_vec(),
+        };
+        let chosen_agent = agents.iter().position(|a| *a == self.config.agents.default_agent());
+        let names: Vec<&str> = agents.iter().map(|a| a.name()).collect();
+        let pick_agent = self.setter(cx, move |c, i: usize| c.agents.default = agents[i].program().into());
+        let mut found = self.state.sessions.clone();
+        found.sort_by_key(|s| std::cmp::Reverse(s.last_input));
+        let running: Vec<String> = found
+            .iter()
+            .zip(sessions::labels(&found))
+            .map(|(s, label)| format!("{label}, in {}", s.host.name()))
+            .collect();
+        let running = match running.as_slice() {
+            [] => "None running now: start one in a terminal, or from the pill's New session.".to_string(),
+            list => format!("Running now: {}.", list.join("; ")),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(
+                "Where asides goes",
+                Some(
+                    "Each aside is typed into the agent session you typed into last: Claude Code, Codex or \
+                     OpenCode, in Terminal, Ghostty or Diri. Or it starts a new one."
+                        .into(),
+                ),
+                t,
+            ))
+            .child(section("New sessions open in", t).child(rows(terminals, t)))
+            .child(
+                section("And start", t)
+                    .child(rows(
+                        [setting(
+                            "Agent",
+                            Some("With the aside as its first message."),
+                            segmented("setup-agent", names, chosen_agent, t).on_select(pick_agent),
+                            t,
+                        )],
+                        t,
+                    ))
+                    .child(footnote(running, t)),
+            )
+            .into_any_element()
+    }
+
+    /// What macOS must allow: each with why, and a button that asks (or opens its settings).
+    fn setup_permissions(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let terminal = terminal_app(&self.config.agents.terminal);
+        let typing = match deliver::automated_bundle(terminal) {
+            Some(_) => self.permission_row(Need::Automation(terminal), cx),
+            None => div()
+                .min_h(px(Metrics::SETTINGS_ROW))
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(tile(t, "terminal"))
+                .child(label_stack(format!("Typing into {terminal}"), Some("Needs no permission.".into()), t))
+                .child(chip("Not needed", t.tertiary))
+                .into_any_element(),
+        };
+        let open = pretty_shortcut(&self.config.shortcuts.asides);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(
+                "What macOS must allow",
+                Some("Each is asked once; after that, it's in System Settings → Privacy & Security.".into()),
+                t,
+            ))
+            .child(rows(
+                [
+                    self.permission_row(Need::Microphone, cx),
+                    self.permission_row(Need::Screen, cx),
+                    typing,
+                    self.permission_row(Need::Accessibility, cx),
+                ],
+                t,
+            ))
+            .child(footnote(format!("Nothing is recorded or sent until you press {open}."), t))
+            .into_any_element()
+    }
+
+    /// A permission: why asides needs it, and allowed, or a button that asks macOS (the first time)
+    /// or opens its settings.
+    fn permission_row(&mut self, need: Need, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let p = &self.state.permissions;
+        let (glyph, name, why, pane, ask, status): (&str, String, String, &str, Permission, &str) = match need {
+            Need::Microphone => (
+                "mic",
+                "Microphone".into(),
+                "To hear what you say: it's transcribed on this Mac.".into(),
+                "Microphone",
+                Permission::Microphone,
+                self.state.microphone.as_str(),
+            ),
+            Need::Screen => (
+                "display",
+                "Screen Recording".into(),
+                "To freeze the screen. macOS may ask to reopen asides after.".into(),
+                "ScreenCapture",
+                Permission::Screen,
+                if p.screen { "granted" } else { "undetermined" },
+            ),
+            Need::Accessibility => (
+                "person",
+                "Accessibility (optional)".into(),
+                "To name what's under each pin, and the page in a browser. Pins work without it.".into(),
+                "Accessibility",
+                Permission::Accessibility,
+                if p.accessibility { "granted" } else { "undetermined" },
+            ),
+            Need::Automation(app) => (
+                "terminal",
+                format!("Typing into {app}"),
+                format!("To type each aside into its sessions in {app}."),
+                "Automation",
+                Permission::Automation(app.into()),
+                p.automation(app).unwrap_or("undetermined"),
+            ),
+        };
+        // Not known yet (the app hasn't looked): nothing to press.
+        let known = self.state.pid != 0 && (p.checked_ms > 0 || matches!(need, Need::Microphone));
+        let asked = self.asked.contains(&ask.as_str());
+        let control: AnyElement = match (known, status) {
+            (false, _) => chip("Looking…", t.tertiary).into_any_element(),
+            (true, "granted") => chip("Allowed", t.fresh).into_any_element(),
+            (true, _) if asked || status == "denied" => {
+                let url = format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}");
+                button(SharedString::from(format!("settings-{}", ask.as_str())), "Open System Settings…", t)
+                    .on_click(move |_, _, _| open_url(&url))
+                    .into_any_element()
+            }
+            (true, _) => {
+                let id = ask.as_str();
+                button(SharedString::from(format!("allow-{id}")), "Allow…", t)
+                    .accent()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let _ = send_link(&Link::Permission { name: ask.clone(), request: None });
+                        this.asked.push(ask.as_str());
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            }
+        };
+        div()
+            .min_h(px(Metrics::SETTINGS_ROW))
+            .px(px(12.))
+            .py(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(tile(t, glyph))
+            .child(label_stack(name, Some(why.into()), t))
+            .child(div().flex_none().child(control))
+            .into_any_element()
+    }
+
+    /// The voice model (one to choose, and download), the languages, and listening.
+    fn setup_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let chosen = ModelSpec::find(&self.config.model);
+        let models: Vec<AnyElement> = MODELS
+            .iter()
+            .map(|m| {
+                let id = m.id;
+                let what = if m.english { "English only" } else { "Any language" };
+                let detail = match (m.downloaded(), id == asides_core::models::DEFAULT) {
+                    (true, _) => format!("{what}, {}, downloaded", m.size_label()),
+                    (false, true) => format!("{what}, {}: the default", m.size_label()),
+                    (false, false) => format!("{what}, {}", m.size_label()),
+                };
+                let pick = self.setter(cx, move |c, _: ()| c.model = id.into());
+                choice_row(
+                    SharedString::from(format!("setup-model-{id}")),
+                    t,
+                    "mic",
+                    model_name(m),
+                    detail,
+                    m.id == chosen.id,
+                )
+                .on_click(move |_, window, cx| pick((), window, cx))
+                .into_any_element()
+            })
+            .collect();
+        let downloading = (self.state.status == "downloading").then(|| self.state.detail.clone()).flatten();
+        let model_state: AnyElement = if chosen.downloaded() {
+            chip("Ready", t.fresh).into_any_element()
+        } else if let Some(progress) = downloading {
+            div().text_size(px(12.)).text_color(t.tertiary).child(progress).into_any_element()
+        } else {
+            let id = chosen.id;
+            button("setup-download", format!("Download {}", chosen.size_label()), t)
+                .accent()
+                .icon("download")
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let _ = send_link(&Link::Download { model: id.into(), request: None });
+                    this.toast("Downloading…");
+                    cx.notify();
+                }))
+                .into_any_element()
+        };
+        let languages = (!chosen.english).then(|| {
+            let codes = self.config.languages.join(", ");
+            let field = self.field("languages", codes, "Any", 160., window, cx);
+            setting(
+                "Languages",
+                Some("What you speak, as codes like en, ro: detection on short clips is surer."),
+                field,
+                t,
+            )
+        });
+        let listen = self.setter(cx, |c, on| c.mic_on_open = on);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(
+                "Your voice",
+                Some("Transcribed on this Mac by Whisper, word for word: nothing leaves it.".into()),
+                t,
+            ))
+            .child(section("Voice model", t).child(rows(models, t)))
+            .child(
+                section("", t)
+                    .child(rows(
+                        [setting(model_name(chosen), Some(model_note(chosen)), model_state, t)]
+                            .into_iter()
+                            .chain(languages)
+                            .chain([setting(
+                                "Listen as soon as asides opens",
+                                Some("Else the pill's microphone, or holding Space, turns it on."),
+                                switch("setup-listen", self.config.mic_on_open, t).on_toggle(listen),
+                                t,
+                            )]),
+                        t,
+                    ))
+                    .when(!chosen.downloaded(), |d| {
+                        d.child(footnote(
+                            "Not downloaded now, it's downloaded the first time you click the pill's microphone.",
+                            t,
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// The two shortcuts, to record anew.
+    fn setup_shortcuts(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let shortcut = |s: &str| if s.trim().is_empty() { Vec::new() } else { vec![pretty_shortcut(s)] };
+        let c = self.config.shortcuts.clone();
+        let open = self.recorder("setup-record-asides", shortcut(&c.asides), Recording::Asides, cx);
+        let freeze = self.recorder("setup-record-freeze", shortcut(&c.freeze), Recording::Freeze, cx);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header("Shortcuts", Some("They work over any app.".into()), t))
+            .child(
+                section("", t)
+                    .child(rows(
+                        [
+                            setting(
+                                "Open asides, and send",
+                                Some("Freezes the screen; pressed again, sends what you made."),
+                                open,
+                                t,
+                            ),
+                            setting(
+                                "Frozen or live",
+                                Some("Back to the live screen and your app, to freeze again: one aside, many freezes."),
+                                freeze,
+                                t,
+                            ),
+                        ],
+                        t,
+                    ))
+                    .child(footnote("Click one, then press the new keys. On the frozen screen, ? shows every key.", t)),
+            )
+            .into_any_element()
+    }
+
+    /// What's ready, what's left (asked for when first needed), and how to try it.
+    fn setup_done(&mut self) -> AnyElement {
+        let t = self.theme;
+        let p = &self.state.permissions;
+        let model = ModelSpec::find(&self.config.model);
+        let terminal = terminal_app(&self.config.agents.terminal);
+        let downloading = (self.state.status == "downloading").then(|| self.state.detail.clone()).flatten();
+        let item = |ready: bool, label: String, detail: String| {
+            div()
+                .min_h(px(44.))
+                .px(px(12.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(div().w(px(28.)).flex().justify_center().child(icon(
+                    if ready { "check" } else { "clock" },
+                    16.,
+                    if ready { t.fresh } else { t.tertiary },
+                )))
+                .child(label_stack(label, Some(detail.into()), t))
+                .into_any_element()
+        };
+        let later = "asks when first needed".to_string();
+        let mic = self.state.microphone == "granted";
+        let typing = match deliver::automated_bundle(terminal) {
+            Some(_) => p.automation(terminal) == Some("granted"),
+            None => true,
+        };
+        let agent = self.config.agents.default_agent().name();
+        let open = pretty_shortcut(&self.config.shortcuts.asides);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(
+                "You're set",
+                Some(format!("Press {open} over any app: click what's wrong, say why, and press {open} again.").into()),
+                t,
+            ))
+            .child(rows(
+                [
+                    item(mic, "Microphone".into(), if mic { "Allowed".into() } else { later.clone() }),
+                    item(p.screen, "Screen Recording".into(), if p.screen { "Allowed".into() } else { later.clone() }),
+                    item(
+                        model.downloaded(),
+                        format!("Voice model: {}", model_name(model)),
+                        match (model.downloaded(), downloading) {
+                            (true, _) => "Ready".into(),
+                            (false, Some(progress)) => progress,
+                            (false, None) => "Downloaded the first time you click the pill's microphone".into(),
+                        },
+                    ),
+                    item(
+                        typing,
+                        format!("New sessions: {agent} in {terminal}"),
+                        if typing { "Ready".into() } else { "macOS asks the first time asides types there".into() },
+                    ),
+                ],
+                t,
+            ))
+            .child(footnote("Everything here is in Settings; General → Set Up Again goes through it again.", t))
+            .into_any_element()
+    }
+
     // --- Sessions ---
 
     fn sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1698,17 +2347,21 @@ impl AsidesWindow {
         let shortcut = |s: &str| if s.trim().is_empty() { Vec::new() } else { vec![pretty_shortcut(s)] };
         let open = self.recorder("record-asides", shortcut(&c.shortcuts.asides), Recording::Asides, cx);
         let freeze = self.recorder("record-freeze", shortcut(&c.shortcuts.freeze), Recording::Freeze, cx);
+        let mut permissions = vec![
+            self.permission_row(Need::Microphone, cx),
+            self.permission_row(Need::Screen, cx),
+            self.permission_row(Need::Accessibility, cx),
+        ];
+        for app in deliver::installed_terminals() {
+            if deliver::automated_bundle(app).is_some() {
+                permissions.push(self.permission_row(Need::Automation(app), cx));
+            }
+        }
+        let set_up = button("set-up-again", "Set Up Again…", t).on_click(cx.listener(|this, _, _, cx| {
+            this.setup = SetupStep::Sessions;
+            this.go(Page::Setup, cx);
+        }));
         let c = &self.config;
-        let permission = |id: &'static str, name: &'static str, what: &'static str, pane: &'static str| {
-            setting(
-                name,
-                Some(what),
-                button(id, "Open…", t).on_click(move |_, _, _| {
-                    open_url(&format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"))
-                }),
-                t,
-            )
-        };
         page(
             "general",
             &self.page_scroll,
@@ -1795,16 +2448,19 @@ impl AsidesWindow {
                 )
                 .child(
                     section("Permissions", t)
-                        .child(rows(
-                            [
-                                permission("perm-mic", "Microphone", "To hear what you say.", "Microphone"),
-                                permission("perm-screen", "Screen Recording", "To freeze the screen.", "ScreenCapture"),
-                                permission("perm-ax", "Accessibility", "To name what's under each pin.", "Accessibility"),
-                                permission("perm-auto", "Automation", "To type into Terminal and Ghostty.", "Automation"),
-                            ],
-                            t,
-                        ))
+                        .child(rows(permissions, t))
                         .child(footnote("macOS asks for each the first time asides needs it.", t)),
+                )
+                .child(
+                    section("Setup", t).child(rows(
+                        [setting(
+                            "Set up asides again",
+                            Some("Where sessions open, the permissions, the voice model and the shortcuts, step by step."),
+                            set_up,
+                            t,
+                        )],
+                        t,
+                    )),
                 ),
         )
     }
@@ -2146,6 +2802,44 @@ fn empty(t: Theme, glyph: &str, title: &str, text: &str) -> AnyElement {
         .child(div().pt(px(4.)).text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
         .child(div().max_w(px(380.)).text_color(t.tertiary).text_center().child(text.to_string()))
         .into_any_element()
+}
+
+/// A choice among several, as a row: its icon, what it is, and a round mark where it's chosen.
+fn choice_row(
+    id: impl Into<gpui::ElementId>,
+    t: Theme,
+    glyph: &str,
+    label: impl Into<SharedString>,
+    detail: impl Into<SharedString>,
+    chosen: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let mark = div()
+        .flex_none()
+        .size(px(18.))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(chosen, |d| d.bg(t.accent).child(icon("check", 11., t.on_accent)))
+        .when(!chosen, |d| d.border_1().border_color(t.control_stroke));
+    div()
+        .id(id)
+        .min_h(px(Metrics::SETTINGS_ROW))
+        .px(px(12.))
+        .py(px(8.))
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .cursor_pointer()
+        .hover(move |s| s.bg(t.hover))
+        .child(tile(t, glyph))
+        .child(label_stack(label, Some(detail.into()), t))
+        .child(mark)
+}
+
+/// The terminal app new sessions open in, as Settings has it ("" is Terminal).
+fn terminal_app(configured: &str) -> &'static str {
+    deliver::TERMINALS.iter().copied().find(|n| n.eq_ignore_ascii_case(configured.trim())).unwrap_or("Terminal")
 }
 
 /// An icon on a quiet square.

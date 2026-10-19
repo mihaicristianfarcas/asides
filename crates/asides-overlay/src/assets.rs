@@ -102,6 +102,14 @@ const ICONS: &[(&str, &str)] = &[
         ),
     ),
     ("warning", icon(r#"<path d="M12 4.5 20.5 19h-17z"/><path d="M12 10v4M12 16.6v.1"/>"#)),
+    // Setup's permissions: the screen, and Accessibility's figure.
+    ("display", icon(r#"<rect x="3.5" y="4.5" width="17" height="11.5" rx="1.5"/><path d="M9 20h6M12 16v4"/>"#)),
+    (
+        "person",
+        icon(
+            r#"<circle cx="12" cy="5" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M12 14.5l-3 5.5M12 14.5l3 5.5"/>"#,
+        ),
+    ),
     // asides' mark: brackets around a point.
     ("mark", icon(r#"<path d="M8.5 4.5h-3v15h3M15.5 4.5h3v15h-3"/><circle cx="12" cy="12" r="1.6"/>"#)),
 ];

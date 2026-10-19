@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::agents::AgentKind;
 use crate::paths::URL_SCHEME;
+use crate::state::Permission;
 use crate::update::Step;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,16 @@ pub enum Link {
         request: Option<String>,
     },
     Quit,
+    /// Asks macOS for a permission (setup's buttons): its prompt, or its settings.
+    Permission {
+        name: Permission,
+        request: Option<String>,
+    },
+    /// How far setup got (`step`, a page of it), or `done` (finished, or skipped).
+    Setup {
+        step: String,
+        request: Option<String>,
+    },
     /// Development hook: process `wav` as if it had just been recorded (outside asides, an aside of
     /// its own, sent to session `to`, or kept in the history only).
     Simulate {
@@ -88,6 +99,12 @@ impl Link {
                 }
                 Link::Update { step, .. } => {
                     q.append_pair("step", step.as_str());
+                }
+                Link::Permission { name, .. } => {
+                    q.append_pair("name", &name.as_str());
+                }
+                Link::Setup { step, .. } => {
+                    q.append_pair("step", step);
                 }
                 Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                     q.append_pair("wav", &wav.to_string_lossy());
@@ -137,6 +154,8 @@ impl Link {
             "download" => Some(Link::Download { model: nonempty("model")?, request }),
             "update" => Some(Link::Update { step: Step::parse(&get("step")?)?, request }),
             "quit" => Some(Link::Quit),
+            "permission" => Some(Link::Permission { name: Permission::parse(&get("name")?)?, request }),
+            "setup" => Some(Link::Setup { step: nonempty("step")?, request }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
                 image: get("image").map(PathBuf::from),
@@ -164,6 +183,8 @@ impl Link {
             Link::Download { .. } => "download",
             Link::Update { .. } => "update",
             Link::Quit => "quit",
+            Link::Permission { .. } => "permission",
+            Link::Setup { .. } => "setup",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
         }
@@ -178,6 +199,8 @@ impl Link {
             | Link::NewSession { request, .. }
             | Link::Download { request, .. }
             | Link::Update { request, .. }
+            | Link::Permission { request, .. }
+            | Link::Setup { request, .. }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
             Link::Quit => None,
@@ -211,6 +234,9 @@ mod tests {
             round_trip(Link::Update { step, request: Some("r3".into()) });
         }
         round_trip(Link::Quit);
+        round_trip(Link::Permission { name: Permission::Automation("Ghostty".into()), request: None });
+        round_trip(Link::Permission { name: Permission::Screen, request: Some("r4".into()) });
+        round_trip(Link::Setup { step: "voice".into(), request: None });
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
             image: Some("/tmp/i.png".into()),
