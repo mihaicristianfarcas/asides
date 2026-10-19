@@ -44,6 +44,9 @@ changes.
 
 ## Rules
 
+- **Never poll.** Wait on events (input, AppKit and NSWorkspace notifications, FSEvents through
+  `asides_core::watch`, kqueue, a child ending, a channel) or sleep until the exact deadline. A
+  timer only where nothing says, with a comment saying why.
 - **Follow the invariants in ARCHITECTURE.md.** The ones most often at risk:
   - `asides-core` has no macOS dependencies
   - AppKit, tray and menu code runs on the main thread only

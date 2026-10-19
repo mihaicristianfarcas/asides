@@ -13,8 +13,9 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// Starts capturing from `device_name`, or the system default input when empty or missing.
-    pub fn start(device_name: &str) -> Result<Recorder> {
+    /// Starts capturing from `device_name`, or the system default input when empty or missing;
+    /// `heard` is called (on the audio thread) each time more comes in.
+    pub fn start(device_name: &str, heard: impl Fn() + Send + Sync + 'static) -> Result<Recorder> {
         let host = cpal::default_host();
         let named = (!device_name.is_empty())
             .then(|| host.input_devices().ok()?.find(|d| name_of(d).as_deref() == Some(device_name)))
@@ -25,11 +26,12 @@ impl Recorder {
         let sample_rate = supported.sample_rate();
         let samples = Arc::new(Mutex::new(Vec::with_capacity(sample_rate as usize * 120)));
         let config = supported.config();
+        let heard: Heard = Arc::new(heard);
         let stream = match supported.sample_format() {
-            SampleFormat::F32 => build::<f32>(&device, config, channels, samples.clone()),
-            SampleFormat::I16 => build::<i16>(&device, config, channels, samples.clone()),
-            SampleFormat::I32 => build::<i32>(&device, config, channels, samples.clone()),
-            SampleFormat::U16 => build::<u16>(&device, config, channels, samples.clone()),
+            SampleFormat::F32 => build::<f32>(&device, config, channels, samples.clone(), heard),
+            SampleFormat::I16 => build::<i16>(&device, config, channels, samples.clone(), heard),
+            SampleFormat::I32 => build::<i32>(&device, config, channels, samples.clone(), heard),
+            SampleFormat::U16 => build::<u16>(&device, config, channels, samples.clone(), heard),
             other => bail!("unsupported microphone sample format {other:?}"),
         }?;
         stream.play().context("could not start the microphone")?;
@@ -67,11 +69,15 @@ fn name_of(device: &cpal::Device) -> Option<String> {
     device.description().ok().map(|d| d.name().to_string())
 }
 
+/// Called as the microphone hears more.
+type Heard = Arc<dyn Fn() + Send + Sync>;
+
 fn build<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     channels: usize,
     samples: Arc<Mutex<Vec<f32>>>,
+    heard: Heard,
 ) -> Result<cpal::Stream>
 where
     T: SizedSample,
@@ -80,11 +86,14 @@ where
     let stream = device.build_input_stream(
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
-            let Ok(mut out) = samples.lock() else { return };
-            for frame in data.chunks(channels) {
-                let sum: f32 = frame.iter().map(|s| f32::from_sample(*s)).sum();
-                out.push(sum / channels as f32);
+            {
+                let Ok(mut out) = samples.lock() else { return };
+                for frame in data.chunks(channels) {
+                    let sum: f32 = frame.iter().map(|s| f32::from_sample(*s)).sum();
+                    out.push(sum / channels as f32);
+                }
             }
+            heard();
         },
         |err| eprintln!("microphone stream error: {err}"),
         None,

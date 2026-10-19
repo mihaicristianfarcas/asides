@@ -11,7 +11,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 
 const SQLITE3: &str = "/usr/bin/sqlite3";
-/// The most recent rows looked at on each poll; far more than anyone dictates between two polls.
+/// The most recent rows looked at each time; far more than anyone dictates between two changes.
 const RECENT_ROWS: u32 = 50;
 /// A dictation's row is written when it starts and finished later, so rows stay candidates for a while.
 const WINDOW: Duration = Duration::minutes(15);
@@ -49,9 +49,9 @@ impl History {
         History { db, since, seen: HashMap::new(), columns: None, files: None }
     }
 
-    /// Dictations finished since the last call. The database is only queried when its files have
-    /// changed, so polling often is cheap.
-    pub fn poll(&mut self) -> Result<Vec<Dictation>, String> {
+    /// Dictations finished since the last call (made as its files change). The database is only
+    /// queried when they have.
+    pub fn read_new(&mut self) -> Result<Vec<Dictation>, String> {
         if !self.db.is_file() {
             return Err(format!(
                 "Wispr Flow's history isn't at {}. Is Wispr Flow installed, and does it keep history on this Mac?",
@@ -238,7 +238,7 @@ mod tests {
         let start = Utc::now();
         insert(&db, "old", start - Duration::seconds(30), "formatted", "Before asides watched.", "");
         let mut history = History::new(db.clone(), start);
-        assert_eq!(texts(history.poll().unwrap()), Vec::<String>::new());
+        assert_eq!(texts(history.read_new().unwrap()), Vec::<String>::new());
 
         insert(
             &db,
@@ -254,18 +254,18 @@ mod tests {
         insert(&db, "e", start + Duration::seconds(5), "formatted", "Archived.", "");
         exec(&db, "UPDATE History SET isArchived = 1 WHERE transcriptEntityId = 'e'");
         insert(&db, "f", start + Duration::seconds(6), "processing", "", "");
-        let found = history.poll().unwrap();
+        let found = history.read_new().unwrap();
         assert_eq!(found[0].app.as_deref(), Some("com.apple.Safari"));
         assert_eq!(texts(found), ["The card needs padding.", "raw only"]);
-        assert!(history.poll().unwrap().is_empty());
+        assert!(history.read_new().unwrap().is_empty());
 
         // A row finished after it was first seen.
         exec(
             &db,
             "UPDATE History SET status = 'formatted', formattedText = 'It''s done now.' WHERE transcriptEntityId = 'f'",
         );
-        assert_eq!(texts(history.poll().unwrap()), ["It's done now."]);
-        assert!(history.poll().unwrap().is_empty());
+        assert_eq!(texts(history.read_new().unwrap()), ["It's done now."]);
+        assert!(history.read_new().unwrap().is_empty());
     }
 
     #[test]
@@ -276,13 +276,13 @@ mod tests {
         let start = Utc::now();
         let mut history = History::new(db.clone(), start - Duration::seconds(1));
         exec(&db, &format!("INSERT INTO History VALUES ('{}', 'Just words.')", stamp(start)));
-        let found = history.poll().unwrap();
+        let found = history.read_new().unwrap();
         assert_eq!((found[0].id.as_str(), found[0].app.as_deref(), found[0].text.as_str()), ("1", None, "Just words."));
 
         let unknown = tmp.path().join("other.sqlite");
         exec(&unknown, "CREATE TABLE History (\"when\" TEXT, words TEXT);");
-        assert!(History::new(unknown, start).poll().unwrap_err().contains("format"));
-        let missing = History::new(tmp.path().join("missing.sqlite"), start).poll().unwrap_err();
+        assert!(History::new(unknown, start).read_new().unwrap_err().contains("format"));
+        let missing = History::new(tmp.path().join("missing.sqlite"), start).read_new().unwrap_err();
         assert!(missing.contains("Is Wispr Flow installed"), "{missing}");
     }
 

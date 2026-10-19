@@ -9,11 +9,11 @@
 //! their terminal has.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use asides_core::agents::AgentKind;
@@ -102,17 +102,9 @@ fn applescript(script: &str) -> Result<()> {
         .spawn()
         .context("could not run osascript")?;
     child.stdin.take().context("no stdin")?.write_all(script.as_bytes())?;
-    let started = Instant::now();
-    while child.try_wait()?.is_none() {
-        if started.elapsed() > SCRIPT_TIMEOUT {
-            let _ = child.kill();
-            bail!(
-                "macOS didn't let asides control the app in time (System Settings → Privacy & Security → Automation)"
-            );
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let out = child.wait_with_output()?;
+    let Some(out) = finished(child, SCRIPT_TIMEOUT)? else {
+        bail!("macOS didn't let asides control the app in time (System Settings → Privacy & Security → Automation)");
+    };
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("-1743") || err.contains("Not authorized") {
@@ -178,22 +170,31 @@ pub fn start_session(
     Ok(launch)
 }
 
+/// What `child` wrote, once it ends (it's waited on, on a thread of its own), or `None` when it
+/// takes longer than `timeout`: it's stopped then.
+fn finished(child: Child, timeout: Duration) -> Result<Option<Output>> {
+    let pid = child.id() as libc::pid_t;
+    let (done, ended) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(child.wait_with_output());
+    });
+    match ended.recv_timeout(timeout) {
+        Ok(out) => Ok(Some(out?)),
+        Err(_) => {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            Ok(None)
+        }
+    }
+}
+
 /// The agents installed for the user: programs on their login shell's PATH.
 pub fn installed_agents() -> Vec<AgentKind> {
-    let mut child = match login_shell("printf '%s' \"$PATH\"").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+    let child = match login_shell("printf '%s' \"$PATH\"").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(child) => child,
         Err(_) => return Vec::new(),
     };
-    let started = Instant::now();
-    while child.try_wait().ok().flatten().is_none() {
-        if started.elapsed() > SHELL_TIMEOUT {
-            let _ = child.kill();
-            return Vec::new();
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let mut path = String::new();
-    let _ = child.stdout.take().map(|mut out| out.read_to_string(&mut path));
+    let Ok(Some(out)) = finished(child, SHELL_TIMEOUT) else { return Vec::new() };
+    let path = String::from_utf8_lossy(&out.stdout);
     // Interactive shells may print a banner first: the PATH is the last line.
     let path = path.lines().last().unwrap_or_default();
     AgentKind::ALL.into_iter().filter(|kind| on_path(path, kind.program())).collect()

@@ -285,23 +285,22 @@ fn send_again(id: &str, to: Option<String>) -> Result<()> {
     let request = request_id();
     send(&Link::Send { id: aside.id.clone(), to, request: Some(request.clone()) })?;
     wait_for_ack(&request)?;
+    // The aside's record says where it went once it got there (or didn't).
     let deadline = Instant::now() + Duration::from_secs(60);
-    while Instant::now() < deadline {
-        if let Some(again) = history::find(&history::dir(), &aside.id)
-            && again.record.deliveries.len() > before
-            && let Some(delivery) = again.last_delivery()
-        {
-            return match &delivery.error {
-                None => {
-                    println!("Sent to {}", delivery.to);
-                    Ok(())
-                }
-                Some(error) => bail!("could not send it to {}: {error}", delivery.to),
-            };
-        }
-        std::thread::sleep(Duration::from_millis(200));
+    let delivered = asides_core::watch::until(&history::dir().join(&aside.id), deadline, || {
+        let again = history::find(&history::dir(), &aside.id)?;
+        (again.record.deliveries.len() > before).then(|| again.last_delivery().cloned()).flatten()
+    });
+    match delivered {
+        Some(delivery) => match &delivery.error {
+            None => {
+                println!("Sent to {}", delivery.to);
+                Ok(())
+            }
+            Some(error) => bail!("could not send it to {}: {error}", delivery.to),
+        },
+        None => bail!("asides didn't say whether it got there; `asides status` may say why"),
     }
-    bail!("asides didn't say whether it got there; `asides status` may say why")
 }
 
 fn status() -> Result<()> {
@@ -376,17 +375,15 @@ fn own_app() -> Option<PathBuf> {
         .then(|| app.to_path_buf())
 }
 
+/// The app's state once it handled the link with `request` (it echoes it as it writes the state).
 pub(crate) fn wait_for_ack(request: &str) -> Result<AppState> {
+    let path = paths::state_path();
     let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline {
-        if let Some(state) = AppState::read(&paths::state_path())
-            && state.last_request.as_deref() == Some(request)
-        {
-            return Ok(state);
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    bail!("asides did not respond within 15 s")
+    let dir = path.parent().context("no folder for the app's state")?;
+    asides_core::watch::until(dir, deadline, || {
+        AppState::read(&path).filter(|state| state.last_request.as_deref() == Some(request))
+    })
+    .context("asides did not respond within 15 s")
 }
 
 /// The published state, if the app that wrote it is still alive.

@@ -224,7 +224,8 @@ impl Updater {
     }
 }
 
-/// Starts the updater: it checks `first_check` after launch, then every 6 hours, while `automatic`.
+/// Starts the updater: it checks `first_check` after launch, then every 6 hours, while `automatic`
+/// (a timer: nothing tells asides a release is out).
 pub fn spawn(automatic: bool, first_check: Duration, report: impl Fn(Reply) -> bool + Send + 'static) -> Updater {
     let (requests, asked) = channel();
     std::thread::Builder::new()

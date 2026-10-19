@@ -6,11 +6,16 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use std::ptr::NonNull;
+
 use block2::RcBlock;
 use objc2::runtime::Bool;
-use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSSound, NSWorkspace};
+use objc2_app_kit::{
+    NSApplicationActivationOptions, NSRunningApplication, NSSound, NSWorkspace,
+    NSWorkspaceDidActivateApplicationNotification, NSWorkspaceDidLaunchApplicationNotification,
+};
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
-use objc2_foundation::NSString;
+use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSString};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mic {
@@ -109,16 +114,46 @@ pub fn automation(bundle: &str, ask: bool) -> Automation {
 }
 
 /// Asks for Automation of the app `bundle`: started in the background first if it isn't running
-/// (macOS asks only about an app that runs). Blocks until the user answers.
+/// (macOS asks only about an app that runs; it says when one has started). Blocks until the user
+/// answers: call it off the main thread.
 pub fn ask_automation(bundle: &str) -> Automation {
     if automation(bundle, false) == Automation::NotRunning {
+        let (launched, launches) = std::sync::mpsc::channel();
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+            let _ = launched.send(());
+        });
+        let center = NSWorkspace::sharedWorkspace().notificationCenter();
+        let name = unsafe { NSWorkspaceDidLaunchApplicationNotification };
+        let observer = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) };
         let _ = Command::new("/usr/bin/open").args(["-g", "-j", "-b", bundle]).status();
-        let started = Instant::now();
-        while automation(bundle, false) == Automation::NotRunning && started.elapsed() < Duration::from_secs(10) {
-            std::thread::sleep(Duration::from_millis(250));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while automation(bundle, false) == Automation::NotRunning {
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
+            if launches.recv_timeout(left).is_err() {
+                break;
+            }
         }
+        unsafe { center.removeObserver(observer.as_ref()) };
     }
     automation(bundle, true)
+}
+
+/// Calls `changed` when what macOS lets asides do may have changed: an app came to the front (back
+/// from System Settings, or a permission prompt answered), or Accessibility was turned on or off
+/// for an app. macOS tells nothing more: Screen Recording and Automation change in System
+/// Settings, which the user leaves.
+pub fn on_permission_changes(changed: impl Fn() + 'static) {
+    let block = RcBlock::new(move |_: NonNull<NSNotification>| changed());
+    let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+    let activated = unsafe { NSWorkspaceDidActivateApplicationNotification };
+    std::mem::forget(unsafe {
+        workspace.addObserverForName_object_queue_usingBlock(Some(activated), None, None, &block)
+    });
+    let distributed = NSDistributedNotificationCenter::defaultCenter();
+    let accessibility = NSString::from_str("com.apple.accessibility.api");
+    std::mem::forget(unsafe {
+        distributed.addObserverForName_object_queue_usingBlock(Some(&accessibility), None, None, &block)
+    });
 }
 
 pub fn play(sound: &str) {

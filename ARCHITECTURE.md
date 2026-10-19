@@ -53,6 +53,7 @@ crates/
     keys.rs           the overlay's key chords
     install.rs        linking the asides command for a hand-installed app
     wispr.rs          Wispr Flow's dictation history (read-only sqlite3)
+    watch.rs          files and folders watched (FSEvents): what changes, as it changes
     config.rs         config.toml schema and defaults
     models.rs         Whisper model catalog (sizes, SHA-256)
     resample.rs       resampling to 16 kHz
@@ -83,7 +84,7 @@ crates/
     hotkeys.rs        Carbon hot keys
     audio.rs          cpal capture
     worker.rs         transcription, keeping asides
-    watch.rs          polling: Wispr Flow, sessions
+    watch.rs          Wispr Flow (as its database changes), sessions (when asked, and as one ends)
     terminal.rs       running plans (dirijor, osascript, clipboard), starting sessions
     clipboard.rs      pasting screenshots, restoring the pasteboard
     capture.rs        ScreenCaptureKit screenshots in sRGB; Screen Recording
@@ -104,12 +105,12 @@ Casks/asides.rb       the Homebrew cask (the repository is a tap)
 | Thread | Owns | Reports with |
 |---|---|---|
 | Main (tao) | `App`, status item, menu, shortcuts, the cpal stream | n/a |
-| cpal callback | appends samples to a shared buffer | the buffer, read on stop |
+| cpal callback | appends samples to a shared buffer | the buffer, read on stop; `UserEvent::Heard` (the pill's level) |
 | Worker | the `Transcriber`; **creating asides** | `UserEvent::Work` |
 | Model download | the `.part` file | `UserEvent::Model`, a `Condvar` for the worker |
 | Sending (per aside) | a plan's steps, the pasteboard | `UserEvent::Delivered` |
-| Sessions | `sessions::discover` every 10 s and on demand | `UserEvent::Sessions` |
-| Config watcher | `config.toml`'s mtime every 2 s | `UserEvent::ConfigFileChanged` |
+| Sessions | `sessions::discover` when asked (asides opening, the window coming forward, an aside sent) and as one ends (kqueue) | `UserEvent::Sessions` |
+| Config watcher | `config.toml`, as it changes (FSEvents) | `UserEvent::ConfigFileChanged` |
 | Wispr Flow watcher | `flow.sqlite`, when it changes | `UserEvent::Wispr` |
 | Agent finder (launch) | the login shell's installed agents | `UserEvent::Agents` |
 | ScreenCaptureKit | screenshots → frames | `UserEvent::Captured` |
@@ -171,7 +172,9 @@ Until `onboarded`, the app opens the window on setup at launch (`--window`, page
 change `config.toml` as the settings do, and ask the app through links: `asides://permission`
 (macOS's prompt; Automation with `AEDeterminePermissionToAutomateTarget`, the app started first),
 `asides://setup` (the step reached, to go on after a restart; `done` ends it). While the window is
-open, the app looks at the permissions every 1.5 s, off the main thread, into `state.permissions`.
+open, the app looks at the permissions again, off the main thread, into `state.permissions`, when an
+app comes to the front (back from System Settings, or a prompt answered) or Accessibility changes
+for an app: macOS says nothing more.
 
 ### Updating
 
@@ -189,31 +192,34 @@ notes it was handed (`Status::handed_over`) until they're seen (`whats_new_seen`
 Break these only on purpose, and update this list.
 
 1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates.
-2. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted).
-3. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
+2. **Nothing polls.** Everything waits on what happens (input, notifications, FSEvents through
+   `watch.rs`, kqueue, a process ending, a channel) or sleeps until the exact time something is
+   due. A timer only where nothing says, and the code says why (the update check).
+3. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted).
+4. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
    file renamed over the old), an edit in History (only a message `markdown::check_message`
    passes), deletion, or pruning.
-4. **An aside is typed in as the user would**: nothing installed in or changed for the agents.
-5. **Never into a session the user didn't choose.** Dev hooks send to the history unless `--to`.
-6. **Transcripts are verbatim**: no prompt, vocabulary or post-processing (a prompt silently dropped
+5. **An aside is typed in as the user would**: nothing installed in or changed for the agents.
+6. **Never into a session the user didn't choose.** Dev hooks send to the history unless `--to`.
+7. **Transcripts are verbatim**: no prompt, vocabulary or post-processing (a prompt silently dropped
    words in testing).
-7. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together.
-8. **Launch Services launches the app**, never a terminal (or the terminal gets the microphone
+8. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together.
+9. **Launch Services launches the app**, never a terminal (or the terminal gets the microphone
    permission, and the app dies with it).
-9. **Binary names differ by more than case** (case-insensitive APFS).
-10. **Stable signing identity, hardened runtime**: permissions follow the identity; every capability
+10. **Binary names differ by more than case** (case-insensitive APFS).
+11. **Stable signing identity, hardened runtime**: permissions follow the identity; every capability
     needs an entitlement.
-11. **No new permissions without discussion.** Today: Microphone, Screen Recording, Accessibility
+12. **No new permissions without discussion.** Today: Microphone, Screen Recording, Accessibility
     (optional), Automation for Terminal and Ghostty. Not Input Monitoring.
-12. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so).
-13. **The overlay needs no permission**: the app captures and identifies. Its stdout carries only
+13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so).
+14. **The overlay needs no permission**: the app captures and identifies. Its stdout carries only
     protocol lines.
-14. **Measuring logic stays in `asides-core`**, shared by the overlay, `asides measure` and
+15. **Measuring logic stays in `asides-core`**, shared by the overlay, `asides measure` and
     `measure_image`.
-15. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
+16. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
     offscreen), following `style.rs`.
-16. **Each aside goes to one place**: a session, a new session, or the history.
-17. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
+17. **Each aside goes to one place**: a session, a new session, or the history.
+18. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
     only once it has quit. Copies that aren't notarized never update themselves.
 
 ## Persistent state

@@ -22,7 +22,6 @@ mod worker;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -68,9 +67,8 @@ use crate::worker::{AsideJob, CapturedImage, Job, Outcome, TranscribeJob};
 
 /// A press shorter than this on an annotation's microphone toggles it; longer, it talks until let go.
 const TAP_MAX: Duration = Duration::from_millis(350);
-const TICK: Duration = Duration::from_millis(250);
-/// How often the pill's microphone hears how loud it is, while asides is open and listening.
-const LEVEL_TICK: Duration = Duration::from_millis(50);
+/// How much louder or quieter the microphone must hear for the pill's to show it.
+const LEVEL_STEP: f32 = 0.01;
 const FLASH: Duration = Duration::from_secs(2);
 const ERROR_ICON: Duration = Duration::from_secs(6);
 /// Recordings shorter than this (without images) are treated as accidental and dropped.
@@ -83,8 +81,6 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 const FOLDERS: usize = 8;
 /// How long the folders found are good for.
 const FOLDERS_FRESH: Duration = Duration::from_secs(60);
-/// How often the permissions are looked at while the asides window is open (setup shows them).
-const PERMISSIONS_TICK: Duration = Duration::from_millis(1500);
 
 enum UserEvent {
     HotKey(GlobalHotKeyEvent),
@@ -112,6 +108,11 @@ enum UserEvent {
     Update(UpdateReply),
     /// What macOS lets asides do now (and the microphone).
     Permissions(Permissions, Mic),
+    /// What macOS lets asides do may have changed: an app came to the front (back from System
+    /// Settings, or a prompt answered), or Accessibility was turned on or off for an app.
+    PermissionsMayHaveChanged,
+    /// The microphone heard more (the pill's fills with how loud).
+    Heard,
 }
 
 struct Recording {
@@ -207,7 +208,11 @@ struct App {
     /// The user declined to put the `asides` command on the PATH (published, so it's asked once).
     command_link_declined: bool,
     /// Set to stop watching Wispr Flow's history.
-    wispr: Option<Arc<AtomicBool>>,
+    wispr: Option<watch::Wispr>,
+    /// The settings file, watched: edited by hand, asides picks it up.
+    config_watch: Option<asides_core::watch::Watch>,
+    /// How loud the pill's microphone last showed.
+    level_shown: f32,
     /// A freeze under way: when it began, the screens and windows (until the capture arrives).
     capturing: Option<Capturing>,
     /// Screen Recording is allowed. Asking takes 11 ms each time, so it's asked until it is, and
@@ -242,9 +247,8 @@ struct App {
     restart: Option<bool>,
     /// The newest version whose What's New the user saw.
     whats_new_seen: String,
-    /// What macOS lets asides do, as last looked at, when, and whether a look is under way.
+    /// What macOS lets asides do, as last looked at, and whether a look is under way.
     permissions: Permissions,
-    permissions_at: Option<Instant>,
     checking_permissions: bool,
     /// The user went through setup or skipped it, and how far it got.
     onboarded: bool,
@@ -348,6 +352,8 @@ impl App {
             last_aside: previous.last_aside,
             command_link_declined: previous.command_link_declined,
             wispr: None,
+            config_watch: None,
+            level_shown: 0.0,
             capturing: None,
             screen_permitted: false,
             overlay: None,
@@ -367,7 +373,6 @@ impl App {
             restart: None,
             whats_new_seen,
             permissions: previous.permissions,
-            permissions_at: None,
             checking_permissions: false,
             onboarded: previous.onboarded,
             setup_step: previous.setup_step,
@@ -394,9 +399,13 @@ impl App {
         }
         self.watch_config();
         let (asked, requests) = std::sync::mpsc::channel();
-        self.find_sessions = Some(asked);
+        self.find_sessions = Some(asked.clone());
         let proxy = self.proxy.clone();
-        watch::sessions(requests, move |found| proxy.send_event(UserEvent::Sessions(found)).is_ok());
+        watch::sessions(requests, asked, move |found| proxy.send_event(UserEvent::Sessions(found)).is_ok());
+        let proxy = self.proxy.clone();
+        macos::on_permission_changes(move || {
+            let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
+        });
         self.look_for_agents();
         self.sync_wispr();
         self.prune_history();
@@ -449,6 +458,13 @@ impl App {
                 self.refresh();
                 self.publish();
             }
+            // While the window is open, what macOS allows shows there (setup's checks).
+            UserEvent::PermissionsMayHaveChanged => {
+                if self.window_open() {
+                    self.check_permissions();
+                }
+            }
+            UserEvent::Heard => self.show_level(),
             UserEvent::ConfigFileChanged => self.reload_config(),
             UserEvent::Wispr(Ok(dictation)) => self.add_dictation(dictation),
             UserEvent::Wispr(Err(message)) => self.fail(message),
@@ -496,7 +512,6 @@ impl App {
                     }
                 }
                 self.checking_permissions = false;
-                self.permissions_at = Some(Instant::now());
                 self.screen_permitted |= permissions.screen;
                 let changed = mic != self.mic
                     || Permissions { checked_ms: 0, ..permissions.clone() }
@@ -531,6 +546,7 @@ impl App {
                 "done" => (self.onboarded, self.setup_step) = (true, None),
                 _ => self.setup_step = Some(step),
             },
+            Link::Sessions { .. } => self.ask_for_sessions(),
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                 #[cfg(feature = "dev-hooks")]
@@ -875,7 +891,11 @@ impl App {
         if self.models.state(&self.config.model).is_none() {
             self.models.download(&self.config.model);
         }
-        let recorder = match audio::Recorder::start(&self.config.input_device) {
+        let proxy = self.proxy.clone();
+        let heard = move || {
+            let _ = proxy.send_event(UserEvent::Heard);
+        };
+        let recorder = match audio::Recorder::start(&self.config.input_device, heard) {
             Ok(recorder) => recorder,
             Err(err) => return self.fail(format!("{err:#}")),
         };
@@ -1442,9 +1462,8 @@ impl App {
         if source.is_some() == self.wispr.is_some() {
             return;
         }
-        if let Some(stop) = self.wispr.take() {
-            stop.store(true, Ordering::Relaxed);
-        }
+        // Dropped, it's no longer watched.
+        self.wispr = None;
         if let Some(db) = source {
             let proxy = self.proxy.clone();
             self.wispr = Some(watch::wispr_flow(db, move |found| proxy.send_event(UserEvent::Wispr(found)).is_ok()));
@@ -1484,19 +1503,23 @@ impl App {
         self.publish();
     }
 
+    /// Something shown is due to change (`next_wakeup`): a flash ends, the recording's next second,
+    /// the error mark goes.
     fn tick(&mut self) {
         if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.until) {
             self.flash = None;
         }
-        // While the window is open, what macOS allows shows there (setup's checks).
-        if self.window_open() && self.permissions_at.is_none_or(|at| at.elapsed() >= PERMISSIONS_TICK) {
-            self.check_permissions();
-        }
-        // The pill's microphone fills with what it hears.
-        if let (Some(recording), Some(overlay)) = (&self.recording, &mut self.overlay) {
-            overlay.send(&OverlayCommand::Level { level: recording.recorder.level() });
-        }
         self.refresh();
+    }
+
+    /// The pill's microphone fills with what it hears, as it hears it.
+    fn show_level(&mut self) {
+        let (Some(recording), Some(overlay)) = (&self.recording, &mut self.overlay) else { return };
+        let level = recording.recorder.level();
+        if (level - self.level_shown).abs() >= LEVEL_STEP {
+            self.level_shown = level;
+            overlay.send(&OverlayCommand::Level { level });
+        }
     }
 
     /// Shows `mark` between the brackets for a moment, and `status` atop the menu.
@@ -1504,16 +1527,17 @@ impl App {
         self.flash = Some(Flash { until: Instant::now() + how_long, mark, status: status.into() });
     }
 
+    /// When what the menu bar shows changes next: the recording's clock ticks over, a flash ends,
+    /// the error mark goes. Everything else changes as something happens.
     fn next_wakeup(&self) -> Option<Instant> {
         let now = Instant::now();
-        let error_icon = self.error.as_ref().is_some_and(|(at, _)| now < *at + ERROR_ICON);
-        if self.recording.is_some() && self.overlay.is_some() {
-            return Some(now + LEVEL_TICK);
-        }
-        if self.recording.is_some() || self.flash.is_some() || error_icon {
-            return Some(now + TICK);
-        }
-        self.window.is_some().then_some(now + PERMISSIONS_TICK)
+        let second = self.recording.as_ref().map(|r| {
+            let elapsed = r.started_at.elapsed().as_secs();
+            r.started_at + Duration::from_secs(elapsed + 1)
+        });
+        let flash = self.flash.as_ref().map(|f| f.until);
+        let error = self.error.as_ref().map(|(at, _)| *at + ERROR_ICON);
+        [second, flash, error].into_iter().flatten().filter(|at| *at > now).min()
     }
 
     fn refresh(&mut self) {
@@ -1692,11 +1716,14 @@ impl App {
             }
             Permission::Automation(app) => {
                 let Some(bundle) = deliver::automated_bundle(&app) else { return };
-                // macOS waits for the answer; the next look at the permissions finds it.
-                std::thread::spawn(move || macos::ask_automation(bundle));
+                // macOS waits for the answer; then the permissions are looked at again.
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    macos::ask_automation(bundle);
+                    let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
+                });
             }
         }
-        self.permissions_at = None;
     }
 
     /// The asides window is open (a process that's gone is forgotten).
@@ -1851,23 +1878,16 @@ impl App {
         self.publish();
     }
 
-    fn watch_config(&self) {
+    /// The settings file edited (by hand, or by the asides window): asides picks it up.
+    fn watch_config(&mut self) {
         let proxy = self.proxy.clone();
-        let path = paths::config_path();
-        std::thread::spawn(move || {
-            let modified = || std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-            let mut last = modified();
-            loop {
-                std::thread::sleep(Duration::from_secs(2));
-                let now = modified();
-                if now != last {
-                    last = now;
-                    if proxy.send_event(UserEvent::ConfigFileChanged).is_err() {
-                        return;
-                    }
-                }
-            }
+        let watched = asides_core::watch::file(&paths::config_path(), move || {
+            let _ = proxy.send_event(UserEvent::ConfigFileChanged);
         });
+        match watched {
+            Ok(watch) => self.config_watch = Some(watch),
+            Err(err) => eprintln!("asides: not watching the settings: {err}"),
+        }
     }
 
     #[cfg(feature = "dev-hooks")]

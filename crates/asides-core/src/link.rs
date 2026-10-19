@@ -54,6 +54,10 @@ pub enum Link {
         step: String,
         request: Option<String>,
     },
+    /// Looks for the agent sessions running again (the asides window coming forward).
+    Sessions {
+        request: Option<String>,
+    },
     /// Development hook: process `wav` as if it had just been recorded (outside asides, an aside of
     /// its own, sent to session `to`, or kept in the history only).
     Simulate {
@@ -82,7 +86,7 @@ impl Link {
         {
             let mut q = url.query_pairs_mut();
             match self {
-                Link::Open { .. } | Link::Window { .. } | Link::Quit => {}
+                Link::Open { .. } | Link::Window { .. } | Link::Sessions { .. } | Link::Quit => {}
                 Link::Send { id, to, .. } => {
                     q.append_pair("id", id);
                     if let Some(to) = to {
@@ -156,6 +160,7 @@ impl Link {
             "quit" => Some(Link::Quit),
             "permission" => Some(Link::Permission { name: Permission::parse(&get("name")?)?, request }),
             "setup" => Some(Link::Setup { step: nonempty("step")?, request }),
+            "sessions" => Some(Link::Sessions { request }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
                 image: get("image").map(PathBuf::from),
@@ -185,6 +190,7 @@ impl Link {
             Link::Quit => "quit",
             Link::Permission { .. } => "permission",
             Link::Setup { .. } => "setup",
+            Link::Sessions { .. } => "sessions",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
         }
@@ -201,6 +207,7 @@ impl Link {
             | Link::Update { request, .. }
             | Link::Permission { request, .. }
             | Link::Setup { request, .. }
+            | Link::Sessions { request }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
             Link::Quit => None,
@@ -237,6 +244,7 @@ mod tests {
         round_trip(Link::Permission { name: Permission::Automation("Ghostty".into()), request: None });
         round_trip(Link::Permission { name: Permission::Screen, request: Some("r4".into()) });
         round_trip(Link::Setup { step: "voice".into(), request: None });
+        round_trip(Link::Sessions { request: Some("r5".into()) });
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
             image: Some("/tmp/i.png".into()),
