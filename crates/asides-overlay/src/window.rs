@@ -32,9 +32,9 @@ use chrono::{Local, TimeZone};
 use futures::StreamExt;
 use gpui::{
     AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, Render, ScrollHandle,
-    SharedString, TitlebarOptions, Window, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowOptions,
-    actions, div, img, point, prelude::*, px, size,
+    ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, PromptButton, PromptLevel,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowOptions, actions, div, img, point, prelude::*, px, size,
 };
 
 actions!(
@@ -1354,12 +1354,7 @@ impl AsidesWindow {
                     .into_any_element(),
             );
         }
-        // Each aside fades in as it's picked, and as it's switched to Edit and back.
-        let detail = self.selected().cloned().map(|aside| {
-            let editing = self.editing.as_deref() == Some(aside.id.as_str());
-            let shown = gpui::ElementId::Name(format!("aside-{}-{editing}", aside.id).into());
-            fade_in(div().size_full().flex().flex_col().child(self.aside_detail(&aside, cx)), shown, 0.)
-        });
+        let detail = self.selected().cloned().map(|aside| self.aside_detail(&aside, cx));
         let chosen = self.selected.as_ref().and_then(|id| self.asides.iter().position(|a| &a.id == id));
         div()
             .size_full()
@@ -1511,7 +1506,6 @@ impl AsidesWindow {
         actions.push(
             button("send", "Send", t)
                 .accent()
-                .icon("send")
                 .disabled(target.is_none())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     let (link, doing) = match target.clone() {
@@ -1554,13 +1548,30 @@ impl AsidesWindow {
         let deleted = aside.clone();
         actions.push(
             icon_button("delete", "trash", "Delete", t)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    match history::delete(&deleted) {
-                        Ok(()) => this.toast("Deleted"),
-                        Err(err) => this.toast(format!("Could not delete it: {err}")),
-                    }
-                    this.reload();
-                    cx.notify();
+                .on_click(cx.listener(move |_, _, window, cx| {
+                    // Asked first: gone from History, it can't come back.
+                    let answer = window.prompt(
+                        PromptLevel::Warning,
+                        "Delete this aside?",
+                        Some("Its message and screenshots go from History. This can't be undone."),
+                        &[PromptButton::Ok("Delete".into()), PromptButton::Cancel("Cancel".into())],
+                        cx,
+                    );
+                    let deleted = deleted.clone();
+                    cx.spawn(async move |this, cx| {
+                        if answer.await != Ok(0) {
+                            return;
+                        }
+                        let _ = this.update(cx, |this, cx| {
+                            match history::delete(&deleted) {
+                                Ok(()) => this.toast("Deleted"),
+                                Err(err) => this.toast(format!("Could not delete it: {err}")),
+                            }
+                            this.reload();
+                            cx.notify();
+                        });
+                    })
+                    .detach();
                 }))
                 .into_any_element(),
         );
@@ -1589,40 +1600,46 @@ impl AsidesWindow {
         let body = aside_body(t, aside, column);
         let unsaved = self.unsaved(aside, cx).is_some();
         let leading = self.mode_switch(aside, false, unsaved, cx);
+        // What the aside says fades in as it's picked; the strip of actions above it stays.
+        let shown = gpui::ElementId::Name(format!("aside-{}", aside.id).into());
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(toolbar_row(Some(leading), actions))
-            .child(scrolled(
-                div().id("aside").size_full().overflow_y_scroll().track_scroll(&self.aside_scroll).child(
-                    div().w_full().flex().justify_center().px(px(28.)).pb(px(32.)).child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .max_w(px(Metrics::FORM + 60.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(16.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .child(
-                                        div()
-                                            .text_size(px(Type::DISPLAY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(aside.created().format("%A %-d %B, %H:%M").to_string()),
-                                    )
-                                    .children(deliveries),
-                            )
-                            .children(body),
+            .child(fade_in(
+                div().flex_1().min_h_0().flex().flex_col().child(scrolled(
+                    div().id("aside").size_full().overflow_y_scroll().track_scroll(&self.aside_scroll).child(
+                        div().w_full().flex().justify_center().px(px(28.)).pb(px(32.)).child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .max_w(px(Metrics::FORM + 60.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(16.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(3.))
+                                        .child(
+                                            div()
+                                                .text_size(px(Type::DISPLAY))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child(aside.created().format("%A %-d %B, %H:%M").to_string()),
+                                        )
+                                        .children(deliveries),
+                                )
+                                .children(body),
+                        ),
                     ),
-                ),
-                "aside-bar".into(),
-                &self.aside_scroll,
-                t,
+                    "aside-bar".into(),
+                    &self.aside_scroll,
+                    t,
+                )),
+                shown,
+                0.,
             ))
             .into_any_element()
     }
@@ -1693,12 +1710,14 @@ impl AsidesWindow {
             (true, false) => footnote("As saved.", t).into_any_element(),
         };
         let leading = self.mode_switch(aside, true, changed, cx);
+        // The editor fades in as the aside goes to Edit; the strip of actions above it stays.
+        let shown = gpui::ElementId::Name(format!("aside-{}-edit", aside.id).into());
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(toolbar_row(Some(leading), actions))
-            .child(
+            .child(fade_in(
                 div().flex_1().min_h_0().flex().justify_center().px(px(28.)).pb(px(24.)).child(
                     // The Markdown fills the column, down to what's said of it.
                     div()
@@ -1718,7 +1737,9 @@ impl AsidesWindow {
                         .child(draft)
                         .child(status),
                 ),
-            )
+                shown,
+                0.,
+            ))
             .into_any_element()
     }
 
