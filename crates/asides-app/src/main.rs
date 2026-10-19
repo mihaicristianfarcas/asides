@@ -1290,6 +1290,8 @@ impl App {
                 }
                 self.stand_by();
                 self.refresh();
+                // The CLI and the window stop saying it's open.
+                self.publish();
             }
         }
     }
