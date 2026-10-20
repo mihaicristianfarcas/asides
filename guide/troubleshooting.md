@@ -30,7 +30,7 @@ multilingual one ([Settings](settings.md)).
 **Distances stop at the wrong place.** Lower the tolerance (`-`) to see faint borders, raise it
 (`=`, or `T`) to look through borders and shadows.
 
-**A shortcut does nothing.** Another app may use it: pick another in Settings → General. macOS refuses
+**A shortcut does nothing.** Another app may use it: pick another in Settings → Keys. macOS refuses
 shortcuts whose only modifiers are Option, or Option and Shift.
 
 **"Updates are off."** The reason follows: a copy built from source (not notarized), or one that

@@ -133,8 +133,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.
 - [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,
-  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect;
-  Help's clips play smoothly and loop, keys shown as set; light and dark.
+  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect
+  (a key already in use names its other action); Help's clips play smoothly and loop, keys shown as
+  set; light and dark.
 - [ ] **Wispr Flow**: a dictation while frozen joins the aside; elsewhere, nothing.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.

@@ -16,7 +16,7 @@ use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
 use asides_core::agents::AgentKind;
-use asides_core::config::{Config, OverlayKeys, join_args, parse_languages, pretty_shortcut, split_args};
+use asides_core::config::{Config, OverlayKeys, Shortcuts, join_args, parse_languages, pretty_shortcut, split_args};
 use asides_core::deliver;
 use asides_core::history::{self, Aside};
 use asides_core::inspect::{Detail, Intent, Units};
@@ -186,12 +186,48 @@ enum Need {
 /// What a key press records, while one is being recorded.
 #[derive(Clone, Copy, PartialEq)]
 enum Recording {
-    /// A global shortcut.
-    Asides,
-    Freeze,
+    /// A global shortcut (its name in the settings).
+    Shortcut(&'static str),
     /// One of the frozen screen's keys (its name in the settings).
     Key(&'static str),
 }
+
+impl Recording {
+    /// Its setting's text in `config`.
+    fn current(self, config: &Config) -> String {
+        match self {
+            Recording::Shortcut(name) => config.shortcuts.get(name),
+            Recording::Key(name) => config.measure.keys.get(name),
+        }
+        .cloned()
+        .unwrap_or_default()
+    }
+
+    fn setting(self, config: &mut Config) -> Option<&mut String> {
+        match self {
+            Recording::Shortcut(name) => config.shortcuts.get_mut(name),
+            Recording::Key(name) => config.measure.keys.get_mut(name),
+        }
+    }
+
+    /// The chords its setting's `text` holds.
+    fn chords(self, text: &str) -> Vec<Chord> {
+        match self {
+            Recording::Shortcut(_) => keys::global(text).into_iter().collect(),
+            Recording::Key(_) => keys::parse(text),
+        }
+    }
+}
+
+/// The shortcuts over any app, as the Keys page names them (by their names in the settings).
+const SHORTCUTS: [(&str, &str, &str); 2] = [
+    ("asides", "Open asides, and send", "Freezes the screen; pressed again, sends what you made."),
+    (
+        "freeze",
+        "Frozen or live",
+        "Switches between the frozen screen and the live one; with asides closed, opens it live.",
+    ),
+];
 
 /// The frozen screen's keys, as the Keys page groups and names them (by their names in the
 /// settings, `OverlayKeys::NAMES`).
@@ -606,9 +642,8 @@ impl AsidesWindow {
         // Development: a shortcut or key recording, or a field focused, when it opens (to try them
         // with posted keys).
         this.recording = match std::env::var("ASIDES_WINDOW_FOCUS").as_deref() {
-            Ok("asides") => Some(Recording::Asides),
-            Ok("freeze") => Some(Recording::Freeze),
-            Ok(name) => OverlayKeys::NAMES.into_iter().find(|n| *n == name).map(Recording::Key),
+            Ok(name) => (SHORTCUTS.iter().map(|(n, ..)| *n).find(|n| *n == name).map(Recording::Shortcut))
+                .or_else(|| OverlayKeys::NAMES.into_iter().find(|n| *n == name).map(Recording::Key)),
             Err(_) => None,
         };
         if let Ok(id) = std::env::var("ASIDES_WINDOW_ASIDE") {
@@ -816,32 +851,43 @@ impl AsidesWindow {
     /// The keys pressed while recording, for what's recording.
     fn record(&mut self, key: &str, mods: Mods, cx: &mut Context<Self>) {
         let (Some(recording), Some(chord)) = (self.recording.take(), Chord::pressed(key, mods)) else { return };
-        match recording {
-            Recording::Asides | Recording::Freeze => match chord.to_global() {
-                Some(text) => self.change(|c| match recording {
-                    Recording::Asides => c.shortcuts.asides = text,
-                    _ => c.shortcuts.freeze = text,
-                }),
-                None => self.toast("A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone."),
-            },
-            Recording::Key(name) => {
-                let keys = &self.config.measure.keys;
-                let other = OverlayKeys::NAMES
-                    .into_iter()
-                    .filter(|n| *n != name)
-                    .find(|n| keys.get(n).is_some_and(|k| keys::parse(k).contains(&chord)));
-                let text = chord.to_config();
-                self.change(|c| {
-                    if let Some(keys) = c.measure.keys.get_mut(name) {
-                        *keys = text;
-                    }
-                });
-                if let Some(other) = other {
-                    self.toast(format!("{} also does: {}", chord.label(), key_name(other)));
-                }
+        let text = match recording {
+            Recording::Shortcut(_) => chord.to_global(),
+            Recording::Key(_) => Some(chord.to_config()),
+        };
+        let Some(text) = text else {
+            self.toast("A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone.");
+            return cx.notify();
+        };
+        let other = self.also_does(&chord, recording);
+        self.change(|c| {
+            if let Some(setting) = recording.setting(c) {
+                *setting = text;
             }
+        });
+        if let Some(other) = other {
+            self.toast(format!("{} also does: {other}", chord.label()));
         }
         cx.notify();
+    }
+
+    /// What else `chord` does, besides what's recording: the other shortcut, or one of the frozen
+    /// screen's keys (a shortcut takes it from the frozen screen too).
+    fn also_does(&self, chord: &Chord, recording: Recording) -> Option<&'static str> {
+        let c = &self.config;
+        let shortcut = SHORTCUTS
+            .iter()
+            .copied()
+            .filter(|(name, ..)| recording != Recording::Shortcut(name))
+            .find(|(name, ..)| c.shortcuts.get(name).and_then(|s| keys::global(s)).as_ref() == Some(chord))
+            .map(|(_, label, _)| label);
+        shortcut.or_else(|| {
+            OverlayKeys::NAMES
+                .into_iter()
+                .filter(|name| recording != Recording::Key(name))
+                .find(|name| c.measure.keys.get(name).is_some_and(|k| keys::parse(k).contains(chord)))
+                .map(key_name)
+        })
     }
 
     /// Keycaps for `labels` that a click records anew, as `recording`.
@@ -2592,8 +2638,8 @@ impl AsidesWindow {
         let t = self.theme;
         let shortcut = |s: &str| if s.trim().is_empty() { Vec::new() } else { vec![pretty_shortcut(s)] };
         let c = self.config.shortcuts.clone();
-        let open = self.recorder("setup-record-asides", shortcut(&c.asides), Recording::Asides, cx);
-        let freeze = self.recorder("setup-record-freeze", shortcut(&c.freeze), Recording::Freeze, cx);
+        let open = self.recorder("setup-record-asides", shortcut(&c.asides), Recording::Shortcut("asides"), cx);
+        let freeze = self.recorder("setup-record-freeze", shortcut(&c.freeze), Recording::Shortcut("freeze"), cx);
         div()
             .flex()
             .flex_col()
@@ -2800,40 +2846,35 @@ impl AsidesWindow {
 
     fn keys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
-        let defaults = OverlayKeys::default();
-        let mut sections: Vec<AnyElement> = Vec::new();
-        for (group, keys) in KEY_GROUPS {
-            let rows_of: Vec<AnyElement> = keys
+        let (shortcuts, keys) = (Shortcuts::default(), OverlayKeys::default());
+        let over_any_app: Vec<AnyElement> = SHORTCUTS
+            .iter()
+            .map(|&(name, label, detail)| {
+                let default = shortcuts.get(name).cloned().unwrap_or_default();
+                self.key_row(label, Some(detail), Recording::Shortcut(name), default, cx)
+            })
+            .collect();
+        let mut sections = vec![
+            section("Over any app", t)
+                .child(rows(over_any_app, t))
+                .child(footnote("The keys below work on the frozen screen.", t))
+                .into_any_element(),
+        ];
+        for (group, names) in KEY_GROUPS {
+            let rows_of: Vec<AnyElement> = names
                 .iter()
                 .map(|&(name, label)| {
-                    let current = self.config.measure.keys.get(name).cloned().unwrap_or_default();
-                    let labels = keys::parse(&current).iter().map(Chord::label).collect();
-                    let recorder = self.recorder(name, labels, Recording::Key(name), cx);
-                    // Changed: a way back to what it was.
-                    let default = defaults.get(name).cloned().unwrap_or_default();
-                    let reset = (keys::parse(&current) != keys::parse(&default)).then(|| {
-                        icon_button(SharedString::from(format!("reset-{name}")), "undo", "As it was", t).on_click(
-                            cx.listener(move |this, _, _, cx| {
-                                let default = default.clone();
-                                this.change(|c| {
-                                    if let Some(keys) = c.measure.keys.get_mut(name) {
-                                        *keys = default;
-                                    }
-                                });
-                                cx.notify();
-                            }),
-                        )
-                    });
-                    setting(label, None, div().flex().items_center().gap(px(4.)).children(reset).child(recorder), t)
+                    let default = keys.get(name).cloned().unwrap_or_default();
+                    self.key_row(label, None, Recording::Key(name), default, cx)
                 })
                 .collect();
             sections.push(section(group, t).child(rows(rows_of, t)).into_any_element());
         }
-        let changed = OverlayKeys::NAMES.iter().any(|n| self.config.measure.keys.get(n) != defaults.get(n));
+        let changed = self.config.shortcuts != shortcuts || self.config.measure.keys != keys;
         let reset_all = changed.then(|| {
             button("reset-keys", "All as they were", t)
                 .on_click(cx.listener(|this, _, _, cx| {
-                    this.change(|c| c.measure.keys = OverlayKeys::default());
+                    this.change(|c| (c.shortcuts, c.measure.keys) = (Shortcuts::default(), OverlayKeys::default()));
                     cx.notify();
                 }))
                 .into_any_element()
@@ -2846,17 +2887,62 @@ impl AsidesWindow {
                 .flex()
                 .flex_col()
                 .gap(px(20.))
-                .child(page_header("Keys", Some("On the frozen screen. Click one, then press the keys.".into()), t))
-                .children(sections)
-                .children(reset_all.map(|b| div().flex().justify_end().child(b))),
+                // Changed: all of them back, beside the title.
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(16.))
+                        .child(div().flex_1().min_w_0().child(page_header(
+                            "Keys",
+                            Some("Click one, then press the keys.".into()),
+                            t,
+                        )))
+                        .children(reset_all),
+                )
+                .children(sections),
         )
+    }
+
+    /// One of the Keys page's rows: what `recording` records, its keys, and, changed, a way back to
+    /// `default`.
+    fn key_row(
+        &mut self,
+        label: &'static str,
+        detail: Option<&str>,
+        recording: Recording,
+        default: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = self.theme;
+        let current = recording.current(&self.config);
+        let (id, labels) = match recording {
+            Recording::Shortcut(name) if current.trim().is_empty() => (name, Vec::new()),
+            Recording::Shortcut(name) => (name, vec![pretty_shortcut(&current)]),
+            Recording::Key(name) => (name, keys::parse(&current).iter().map(Chord::label).collect()),
+        };
+        let recorder = self.recorder(id, labels, recording, cx);
+        let reset = (recording.chords(&current) != recording.chords(&default)).then(|| {
+            icon_button(SharedString::from(format!("reset-{id}")), "undo", "As it was", t).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    let default = default.clone();
+                    this.change(|c| {
+                        if let Some(setting) = recording.setting(c) {
+                            *setting = default;
+                        }
+                    });
+                    cx.notify();
+                },
+            ))
+        });
+        setting(label, detail, div().flex().items_center().gap(px(4.)).children(reset).child(recorder), t)
     }
 
     // --- Settings ---
 
     fn general(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
-        let c = &self.config;
         let keep = [7, 30, 90, 0];
         let keep_labels = ["7 days", "30 days", "90 days", "Always"];
         let pick_keep = self.setter(cx, move |c, i: usize| c.history_days = keep[i]);
@@ -2864,9 +2950,6 @@ impl AsidesWindow {
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
         let auto_update = self.setter(cx, |c, on| c.auto_update = on);
-        let shortcut = |s: &str| if s.trim().is_empty() { Vec::new() } else { vec![pretty_shortcut(s)] };
-        let open = self.recorder("record-asides", shortcut(&c.shortcuts.asides), Recording::Asides, cx);
-        let freeze = self.recorder("record-freeze", shortcut(&c.shortcuts.freeze), Recording::Freeze, cx);
         let mut permissions = vec![
             self.permission_row(Need::Microphone, cx),
             self.permission_row(Need::Screen, cx),
@@ -2892,27 +2975,6 @@ impl AsidesWindow {
                 .flex_col()
                 .gap(px(20.))
                 .child(page_header("General", Some("asides picks up changes at once.".into()), t))
-                .child(
-                    section("Shortcuts", t)
-                        .child(rows(
-                            [
-                                setting(
-                                    "Open asides, and send",
-                                    Some("Freezes the screen; pressed again, sends what you made."),
-                                    open,
-                                    t,
-                                ),
-                                setting(
-                                    "Frozen or live",
-                                    Some("Switches between the frozen screen and the live one; with asides closed, opens it live."),
-                                    freeze,
-                                    t,
-                                ),
-                            ],
-                            t,
-                        ))
-                        .child(footnote("Click one, then press the keys. The frozen screen's are under Keys.", t)),
-                )
                 .child(
                     section("History", t).child(rows(
                         [
@@ -3188,8 +3250,8 @@ impl AsidesWindow {
         });
         let padding = self
             .setter(cx, |c, step: i32| c.measure.padding = (c.measure.padding + 8.0 * step as f64).clamp(0.0, 200.0));
-        let details = [Detail::Compact, Detail::Standard, Detail::Detailed, Detail::Forensic];
         let identify = self.setter(cx, |c, on| c.measure.identify_elements = on);
+        let details = [Detail::Compact, Detail::Standard, Detail::Detailed, Detail::Forensic];
         let pick_detail = self.setter(cx, move |c, i: usize| c.annotation_detail = details[i]);
         let pick_units = self.setter(cx, |c, i: usize| c.measure.units = if i == 0 { Units::Pt } else { Units::Px });
         page(

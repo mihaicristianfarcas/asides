@@ -21,6 +21,31 @@ pub struct Mods {
     pub ctrl: bool,
 }
 
+/// Keys `global-hotkey` names otherwise than the settings do (letters, digits and F-keys aside).
+const GLOBAL_NAMES: &[(&str, &str)] = &[
+    ("space", "Space"),
+    ("enter", "Enter"),
+    ("escape", "Escape"),
+    ("tab", "Tab"),
+    ("backspace", "Backspace"),
+    ("delete", "Delete"),
+    ("left", "ArrowLeft"),
+    ("right", "ArrowRight"),
+    ("up", "ArrowUp"),
+    ("down", "ArrowDown"),
+    ("=", "Equal"),
+    ("-", "Minus"),
+    ("/", "Slash"),
+    ("\\", "Backslash"),
+    (",", "Comma"),
+    (".", "Period"),
+    (";", "Semicolon"),
+    ("'", "Quote"),
+    ("[", "BracketLeft"),
+    ("]", "BracketRight"),
+    ("`", "Backquote"),
+];
+
 /// US-layout symbols and what Shift makes of them.
 const SHIFTED: &[(&str, &str)] = &[
     ("=", "+"),
@@ -65,11 +90,18 @@ fn parse_chord(text: &str) -> Option<Chord> {
     if text.is_empty() {
         return None;
     }
-    let mut chord = Chord::default();
     let parts: Vec<&str> = if text == "+" { vec!["+"] } else { text.split('+').collect() };
     let (key, mods) = parts.split_last()?;
     // `shift++`: the last part is empty, the key is "+".
     let key = if key.is_empty() && text.ends_with("++") { "+" } else { key };
+    let mut chord = modified(mods)?;
+    chord.key = normalize(key);
+    (!chord.key.is_empty()).then_some(chord)
+}
+
+/// A chord with the modifiers named (`cmd`, `shift`, …), its key still to set.
+fn modified(mods: &[&str]) -> Option<Chord> {
+    let mut chord = Chord::default();
     for m in mods {
         match m.trim().to_lowercase().as_str() {
             "cmd" | "command" | "super" | "meta" => chord.cmd = true,
@@ -80,7 +112,23 @@ fn parse_chord(text: &str) -> Option<Chord> {
             _ => return None,
         }
     }
-    chord.key = normalize(key);
+    Some(chord)
+}
+
+/// A global shortcut as the settings write it (`ctrl+alt+Space`, `global-hotkey`'s names), as a
+/// chord: to compare with the frozen screen's keys.
+pub fn global(text: &str) -> Option<Chord> {
+    let parts: Vec<&str> = text.split('+').map(str::trim).collect();
+    let (key, mods) = parts.split_last()?;
+    let mut chord = modified(mods)?;
+    let lower = key.to_lowercase();
+    chord.key = match GLOBAL_NAMES.iter().find(|(_, name)| name.eq_ignore_ascii_case(key)) {
+        Some((plain, _)) => plain.to_string(),
+        None => match lower.strip_prefix("key").or_else(|| lower.strip_prefix("digit")) {
+            Some(k) if k.len() == 1 => k.to_string(),
+            _ => lower,
+        },
+    };
     (!chord.key.is_empty()).then_some(chord)
 }
 
@@ -173,32 +221,7 @@ impl Chord {
             k if k.len() == 1 && k.chars().all(|c| c.is_ascii_lowercase()) => format!("Key{}", k.to_uppercase()),
             k if k.len() == 1 && k.chars().all(|c| c.is_ascii_digit()) => format!("Digit{k}"),
             k if k.starts_with('f') && k[1..].parse::<u8>().is_ok_and(|n| (1..=20).contains(&n)) => k.to_uppercase(),
-            "space" => "Space".into(),
-            "enter" => "Enter".into(),
-            "escape" => "Escape".into(),
-            "tab" => "Tab".into(),
-            "backspace" => "Backspace".into(),
-            "delete" => "Delete".into(),
-            "left" => "ArrowLeft".into(),
-            "right" => "ArrowRight".into(),
-            "up" => "ArrowUp".into(),
-            "down" => "ArrowDown".into(),
-            k => {
-                let named = [
-                    ("=", "Equal"),
-                    ("-", "Minus"),
-                    ("/", "Slash"),
-                    ("\\", "Backslash"),
-                    (",", "Comma"),
-                    (".", "Period"),
-                    (";", "Semicolon"),
-                    ("'", "Quote"),
-                    ("[", "BracketLeft"),
-                    ("]", "BracketRight"),
-                    ("`", "Backquote"),
-                ];
-                named.iter().find(|(symbol, _)| *symbol == k)?.1.to_string()
-            }
+            k => GLOBAL_NAMES.iter().find(|(plain, _)| *plain == k)?.1.to_string(),
         };
         let mods = [(self.ctrl, "ctrl+"), (self.alt, "alt+"), (self.shift, "shift+"), (self.cmd, "cmd+")];
         Some(mods.iter().filter(|(on, _)| *on).map(|(_, m)| *m).collect::<String>() + &key)
@@ -266,5 +289,21 @@ mod tests {
         assert_eq!(chord("/", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+Slash"));
         // ⌥ alone: macOS refuses it.
         assert_eq!(chord("p", mods(false, false, true)).to_global(), None);
+    }
+
+    #[test]
+    fn reads_global_shortcuts_back() {
+        let shift_cmd = mods(true, true, false);
+        assert_eq!(global("cmd+shift+KeyA"), Chord::pressed("a", shift_cmd));
+        assert_eq!(global("shift + command + KeyP"), Chord::pressed("p", shift_cmd));
+        assert_eq!(
+            global("ctrl+alt+Space"),
+            Chord::pressed("space", Mods { ctrl: true, alt: true, ..Mods::default() })
+        );
+        for key in ["a", "1", "f5", "space", "delete", "backspace", "left", "/", "=", "`", ","] {
+            let chord = Chord::pressed(key, Mods { ctrl: true, ..Mods::default() }).unwrap();
+            assert_eq!(global(&chord.to_global().unwrap()), Some(chord), "{key}");
+        }
+        assert_eq!(global("hyper+KeyA"), None);
     }
 }
