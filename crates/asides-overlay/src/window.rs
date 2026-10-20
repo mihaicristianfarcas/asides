@@ -2075,8 +2075,9 @@ impl AsidesWindow {
                 .child(topic(
                     "Say more about one pin",
                     format!(
-                        "Click a pin's number to open its card. Type there, or hold {talk} to talk about that pin \
-                         alone. ⌘1 to ⌘4 say what it is: a fix, a change, a question, an approval."
+                        "Click a pin's number to open its card (with the microphone off, each new pin opens it). \
+                         Type there, or hold {talk} to talk about that pin alone. ⌘1 to ⌘4 say what it is: a fix, a \
+                         change, a question, an approval. Its pencil and ruler pick Draw and Measure."
                     ),
                     Some(card),
                 ))

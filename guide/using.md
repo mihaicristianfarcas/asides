@@ -24,12 +24,12 @@ works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) 
 ## Talking
 
 The microphone starts as asides opens (a setting). Click it to mute; while muted, hold `Space` to
-talk.
+talk, and each new pin opens its card, to type in.
 
 To talk about one pin, click its number to open its card and hold `Space` there (or press its
 microphone): that goes into the pin. The card also takes typed feedback and a kind (fix, change,
 question, approve: `⌘1`–`⌘4`; with no card open, they set the last pin's), shown in the pin's
-color. `⏎` or `Esc` closes it.
+color. Its pencil and ruler pick Draw and Measure (their keys type there). `⏎` or `Esc` closes it.
 
 ## Where it goes
 

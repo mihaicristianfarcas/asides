@@ -848,8 +848,12 @@ impl Overlay {
         if self.needs_model() {
             return;
         }
-        let listening = self.recording.is_some() && self.recording_for.is_none();
-        io::emit(&Event::Mic { on: !listening });
+        io::emit(&Event::Mic { on: !self.listening() });
+    }
+
+    /// The pill's microphone is on: what's said goes in the aside (not in one pin's card).
+    fn listening(&self) -> bool {
+        self.recording.is_some() && self.recording_for.is_none()
     }
 
     /// Measure's modifiers. With ⌃ down, they're part of one of asides' shortcuts (⌃⌥P, ⌃⌥Space),
@@ -939,8 +943,13 @@ impl Overlay {
     fn placed(&mut self, placed: Placed, window: &mut Window, cx: &mut Context<Self>) {
         match placed {
             // A pin is enough: what the user says goes with it. A click on its number opens its card,
-            // to type.
-            Placed::Annotation { screen, index } => self.look_up(screen, index),
+            // to type. With the microphone off, the user writes instead: the card opens at once.
+            Placed::Annotation { screen, index } => {
+                self.look_up(screen, index);
+                if !self.listening() {
+                    self.open_card(screen, index, window, cx);
+                }
+            }
             Placed::Edit { screen, index } => self.open_card(screen, index, window, cx),
             Placed::Moved { screen, index } => self.look_up_move(screen, index),
             Placed::Shot { screen, rect } => self.take_shot(screen, rect),
@@ -2955,7 +2964,7 @@ fn dragged(overlay: &Entity<Overlay>) -> impl IntoElement {
 /// The pill's microphone: listening (a soft red, filling with how loud it hears) or not (crossed
 /// out); a click turns it on or off, and without a voice model, gets one. Always the same size.
 fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
-    let listening = o.recording.is_some() && o.recording_for.is_none();
+    let listening = o.listening();
     let (press, tip) = (overlay.clone(), overlay.clone());
     let name: SharedString = match (o.spec.model.ready, listening) {
         (false, _) => format!("Download the voice model ({})", o.spec.model.label).into(),
@@ -3239,6 +3248,39 @@ impl ScreenView {
                         .bg(color(style::intent_color(intent), 1.0)),
                 )
         });
+        // Draw and Measure, a click away: in the card, their keys type.
+        let tools = [Tool::Draw, Tool::Measure].map(|tool| {
+            let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
+            let on = o.session.tool == tool;
+            let name: SharedString = format!("{} ({})", tool.label(), o.keys.label(Cmd::Tool(tool))).into();
+            div()
+                .id(SharedString::from(format!("card-{}", tool_icon(tool))))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(28.))
+                .rounded(px(7.))
+                .cursor_pointer()
+                .when(on, |d| d.bg(color(0xffffff, 0.14)))
+                .when(!on, |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
+                .on_hover(move |hovered, _, cx| {
+                    let name = name.clone();
+                    tip.update(cx, |o, cx| {
+                        o.card_tip = hovered.then_some(name);
+                        cx.notify();
+                    });
+                })
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    pick.update(cx, |o, cx| {
+                        o.card_tip = None;
+                        o.close_card(window, cx);
+                        o.session.set_tool(tool);
+                        cx.notify();
+                    });
+                })
+                .child(icon(tool_icon(tool), gpui::white()))
+        });
         let surface = frozen_glass(&self.overlay, card.screen, (ox, oy), 12.)
             .id("card")
             .occlude()
@@ -3261,6 +3303,7 @@ impl ScreenView {
                     .gap(px(6.))
                     .child(div().flex_1().child(card.input.clone()))
                     .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(dots))
+                    .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(tools))
                     .child(talk_button(&self.overlay, o, "card-talk", false))
                     .children(trash),
             )

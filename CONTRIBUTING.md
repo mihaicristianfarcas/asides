@@ -119,7 +119,8 @@ Run what your change touches, and say in the pull request what you tried.
   name opens its list (it closes as the pointer leaves), showing sessions (unreachable dimmed), New
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves
   it and it stays; `M`, `D`, `S` switch tools.
-- [ ] **Mic**: click mutes and unmutes; muted, Space held talks; the setting off opens muted.
+- [ ] **Mic**: click mutes and unmutes; muted, Space held talks, and each new pin opens its card;
+  the setting off opens muted. The card's pencil and ruler pick Draw and Measure.
 - [ ] **Live**: `⌃⌥P` leaves the pill only, unmoved, and the app takes keys and clicks; again
   freezes (no pill in the screenshot); `⌃⌥Space` sends from live; closed, `⌃⌥P` opens live.
 - [ ] **Glass**: every surface shows what's behind it blurred, over light and dark; setup reads
