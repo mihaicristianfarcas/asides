@@ -122,7 +122,8 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Mic**: click mutes and unmutes; muted, Space held talks; the setting off opens muted.
 - [ ] **Live**: `⌃⌥P` leaves the pill only, unmoved, and the app takes keys and clicks; again
   freezes (no pill in the screenshot); `⌃⌥Space` sends from live; closed, `⌃⌥P` opens live.
-- [ ] **Glass**: every surface shows what's behind it blurred, over light and dark.
+- [ ] **Glass**: every surface shows what's behind it blurred, over light and dark; setup reads
+  clearly over a page of text.
 - [ ] **Sending**, each of Claude Code, Codex, OpenCode in each of Terminal, Ghostty, Diri: the
   Automation prompt the first time; the message with screenshots attached where taken (none with
   nothing marked); queued while the agent works; the clipboard restored; a gone session reported,

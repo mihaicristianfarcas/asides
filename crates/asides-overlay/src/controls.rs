@@ -451,6 +451,9 @@ pub struct Theme {
     /// (what's read) is the densest; the sidebar lets more of the desktop through.
     pub background: Hsla,
     pub sidebar: Hsla,
+    /// Setup, read through at first launch: near solid, as over a page of text behind the window,
+    /// the glass let its lines show through the words.
+    pub reading: Hsla,
     /// Menus and tooltips.
     pub floating: Hsla,
     pub floating_stroke: Hsla,
@@ -487,6 +490,7 @@ impl Theme {
             quaternary: white(0.26),
             background: hex(0x1d1c1a, 0.82),
             sidebar: hex(0x262422, 0.6),
+            reading: hex(0x1d1c1a, 0.96),
             floating: hex(0x33312e, 1.0),
             floating_stroke: white(0.09),
             hairline: white(0.07),
@@ -516,6 +520,7 @@ impl Theme {
             quaternary: black(0.26),
             background: hex(0xffffff, 0.86),
             sidebar: hex(0xf5f4f2, 0.74),
+            reading: hex(0xffffff, 0.96),
             floating: hex(0xffffff, 1.0),
             floating_stroke: black(0.10),
             hairline: black(0.08),
