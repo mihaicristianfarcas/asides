@@ -210,6 +210,146 @@ impl Fade {
     }
 }
 
+/// A width easing to another (`FADE` long), a step at a time: what grows in or shrinks away beside
+/// others, which move along with it. It changes only when stepped, for its window to take the new
+/// size as it's drawn.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Grow {
+    drawn: f32,
+    from: f32,
+    to: f32,
+    since: Option<Instant>,
+}
+
+impl Grow {
+    /// At `width`, going nowhere.
+    pub fn at(width: f32) -> Grow {
+        Grow { drawn: width, from: width, to: width, since: None }
+    }
+
+    /// Heads for `to`, from the width drawn now.
+    pub fn set(&mut self, to: f32) {
+        if !self.heads_for(to) {
+            *self = Grow { drawn: self.drawn, from: self.drawn, to, since: Some(Instant::now()) };
+        }
+    }
+
+    pub fn heads_for(&self, to: f32) -> bool {
+        (self.to - to).abs() < 0.01
+    }
+
+    /// The width to draw now; whether it changed.
+    pub fn step(&mut self) -> bool {
+        let Some(since) = self.since else { return false };
+        let t = since.elapsed().as_secs_f32() / FADE.as_secs_f32();
+        let before = self.drawn;
+        if t >= 1.0 {
+            (self.drawn, self.since) = (self.to, None);
+        } else {
+            self.drawn = self.from + (self.to - self.from) * ease(t);
+        }
+        self.drawn != before
+    }
+
+    pub fn moving(&self) -> bool {
+        self.since.is_some()
+    }
+
+    pub fn drawn(&self) -> f32 {
+        self.drawn
+    }
+
+    /// How much of it shows, 0 to 1: growing in from nothing or shrinking away to nothing, as wide
+    /// as it's drawn of the most it takes; otherwise all of it.
+    pub fn shown(&self) -> f32 {
+        let most = self.from.max(self.to);
+        if self.from.min(self.to) > 0.0 {
+            1.0
+        } else if most > 0.0 {
+            self.drawn / most
+        } else {
+            0.0
+        }
+    }
+}
+
+/// A place in a row whose width changes smoothly (`Grow`), what's after it moving along: what it
+/// shows, its width as drawn (none before it's measured: as wide as it takes), and the width it
+/// takes, measured as it's drawn. Something else shows at once, at the width drawn until it's
+/// measured, then the width eases to its own; with nothing to show, it shrinks away. It changes
+/// only when stepped, for its window to take the row's new width as it's drawn.
+#[derive(Clone, Debug)]
+pub struct Slot<T> {
+    shows: Option<T>,
+    width: Option<Grow>,
+    natural: Option<f32>,
+}
+
+impl<T: Clone + PartialEq> Slot<T> {
+    /// Showing `shows`, as wide as it takes.
+    pub fn new(shows: T) -> Slot<T> {
+        Slot { shows: Some(shows), width: None, natural: None }
+    }
+
+    /// Showing nothing: what comes grows in.
+    pub fn empty() -> Slot<T> {
+        Slot { shows: None, width: Some(Grow::default()), natural: None }
+    }
+
+    pub fn shows(&self) -> Option<&T> {
+        self.shows.as_ref()
+    }
+
+    /// Drawn, what it shows takes `width`.
+    pub fn measured(&mut self, width: f32) {
+        self.natural = Some(width);
+        self.width.get_or_insert(Grow::at(width));
+    }
+
+    /// Its width as drawn, on a screen's pixels (`scale` of them to a point); none: as wide as what
+    /// it shows takes.
+    pub fn width(&self, scale: f32) -> Option<f32> {
+        self.width.map(|g| (g.drawn() * scale).round() / scale)
+    }
+
+    /// How much of what it shows shows, growing in or shrinking away (`Grow::shown`).
+    pub fn shown(&self) -> f32 {
+        self.width.map_or(1.0, |g| g.shown())
+    }
+
+    /// The width it heads for, to show `wanted`: none until that's measured.
+    fn target(&self, wanted: Option<&T>) -> Option<f32> {
+        if wanted.is_some() { self.natural } else { Some(0.0) }
+    }
+
+    /// Still to change, to show `wanted`: what it shows, or its width.
+    pub fn moving(&self, wanted: Option<&T>) -> bool {
+        let heading = |g: &Grow| g.moving() || self.target(wanted).is_some_and(|to| !g.heads_for(to));
+        wanted != self.shows.as_ref() || self.width.as_ref().is_some_and(heading)
+    }
+
+    /// A step on, to show `wanted`: how much wider it's drawn (on a screen's pixels, as `width`),
+    /// when anything changed.
+    pub fn step(&mut self, wanted: Option<&T>, scale: f32) -> Option<f32> {
+        let before = self.width(scale).unwrap_or_default();
+        let mut changed = false;
+        if wanted.is_some() && wanted != self.shows.as_ref() {
+            (self.shows, self.natural, changed) = (wanted.cloned(), None, true);
+        }
+        let to = self.target(wanted);
+        if let Some(g) = &mut self.width {
+            if let Some(to) = to {
+                g.set(to);
+            }
+            changed |= g.step();
+            if wanted.is_none() && self.shows.is_some() && !g.moving() {
+                (self.shows, changed) = (None, true);
+            }
+        }
+        changed.then(|| self.width(scale).unwrap_or_default() - before)
+    }
+}
+
 /// A scroll area's bar, beside it (in a parent with `relative()`, after it): a thin thumb as long as
 /// the part that shows, when there's more than shows. Dragged, it scrolls; a click beside it jumps
 /// there.
@@ -1141,4 +1281,72 @@ pub fn toolbar_row(leading: Option<AnyElement>, trailing: Vec<AnyElement>) -> Di
         .gap(px(6.))
         .child(div().min_w_0().flex().items_center().children(leading))
         .child(div().flex_none().flex().items_center().gap(px(6.)).children(trailing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grows_a_step_at_a_time() {
+        let mut grow = Grow::default();
+        grow.set(90.0);
+        assert_eq!((grow.drawn(), grow.shown()), (0.0, 0.0));
+        // Halfway, and done: it changes only when stepped.
+        grow.since = Some(Instant::now() - FADE / 2);
+        assert!(grow.step() && grow.drawn() > 45.0 && grow.drawn() < 90.0);
+        assert_eq!(grow.shown(), grow.drawn() / 90.0);
+        grow.since = Some(Instant::now() - FADE);
+        assert!(grow.step() && !grow.moving());
+        assert_eq!((grow.drawn(), grow.shown()), (90.0, 1.0));
+        // From one width to another, it shows all along; shrinking away, less and less.
+        grow.set(60.0);
+        assert_eq!(grow.shown(), 1.0);
+        grow.set(0.0);
+        grow.since = Some(Instant::now() - FADE / 2);
+        grow.step();
+        assert!(grow.shown() > 0.0 && grow.shown() < 1.0);
+        assert!(grow.heads_for(0.0) && !grow.heads_for(60.0));
+    }
+
+    /// Ends the step in progress, as if it had taken its time.
+    fn done<T>(slot: &mut Slot<T>) {
+        if let Some(g) = &mut slot.width {
+            g.since = g.since.map(|_| Instant::now() - FADE);
+        }
+    }
+
+    #[test]
+    fn slots_ease_to_what_they_show() {
+        // A name, as wide as it takes until it's measured; then another at that width until it's
+        // measured too, easing to its own.
+        let mut name = Slot::new("shop");
+        assert_eq!((name.width(2.0), name.moving(Some(&"shop"))), (None, false));
+        name.measured(100.0);
+        assert_eq!(name.width(2.0), Some(100.0));
+        assert!(name.moving(Some(&"payments")));
+        assert_eq!(name.step(Some(&"payments"), 2.0), Some(0.0));
+        assert_eq!((name.shows(), name.width(2.0)), (Some(&"payments"), Some(100.0)));
+        name.measured(160.3);
+        name.step(Some(&"payments"), 2.0);
+        done(&mut name);
+        assert_eq!(name.step(Some(&"payments"), 2.0), Some(60.5));
+        assert_eq!((name.width(2.0), name.shown()), (Some(160.5), 1.0));
+        assert!(!name.moving(Some(&"payments")));
+
+        // A tool grows in from nothing, and shrinks away showing the last one.
+        let mut tool = Slot::empty();
+        assert!(tool.moving(Some(&"Measure")));
+        tool.step(Some(&"Measure"), 2.0);
+        assert_eq!((tool.width(2.0), tool.shown()), (Some(0.0), 0.0));
+        tool.measured(90.0);
+        tool.step(Some(&"Measure"), 2.0);
+        done(&mut tool);
+        assert_eq!(tool.step(Some(&"Measure"), 2.0), Some(90.0));
+        tool.step(None, 2.0);
+        assert_eq!(tool.shows(), Some(&"Measure"));
+        done(&mut tool);
+        assert_eq!(tool.step(None, 2.0), Some(-90.0));
+        assert_eq!((tool.shows(), tool.moving(None)), (None, false));
+    }
 }

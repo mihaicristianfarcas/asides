@@ -265,6 +265,17 @@ mod tests {
         run_steps(&deliver::plan(&session, &aside.parts(), &dirijor()).unwrap()).unwrap();
     }
 
+    /// Starts Claude Code in Diri with a first message, as the app does, in a folder of your own:
+    /// `ASIDES_START_IN=<scratch repo> cargo test -p asides-app starts_in_diri -- --ignored`. It
+    /// answers in one word.
+    #[test]
+    #[ignore]
+    fn starts_in_diri() {
+        let dir = PathBuf::from(std::env::var("ASIDES_START_IN").unwrap());
+        let message = "Reply with one word, received, and run no tools.";
+        start_session("Diri", AgentKind::Claude, &dir, message, &[], &[std::env::temp_dir()]).unwrap();
+    }
+
     #[test]
     fn finds_programs_on_a_path() {
         let tmp = tempfile::tempdir().unwrap();

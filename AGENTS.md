@@ -325,6 +325,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - The terminal device's access time (`/dev/ttys003`) moves when the agent reads input: the session
   typed into last.
 - Claude Code asks to trust a folder it hasn't seen: a new session in a scratch folder waits there.
+- Claude Code's `--add-dir` takes several folders and took a new session's first message for one
+  more (it started empty, with no error): the prompt goes after `--` (Codex's too).
 - A terminal app started from inside an agent's session hands its markers to every shell: start
   test terminals from the Dock (or strip them), and quit them after.
 - The Automation prompt holds an AppleScript until answered, failing after 2 minutes: run it off

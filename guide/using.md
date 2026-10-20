@@ -48,9 +48,12 @@ through them slowly enough to read), or point at the name for the list (click it
 | Key | Tool |
 |---|---|
 | `A` | **Annotate** (the default): click pins an element, drag pins an area. To quote a typo, select the text before freezing, then click it. |
-| `M` | **Measure**, like PixelSnap (below). Click the tool's name on the pill to go back to Annotate. |
+| `M` | **Measure**, like PixelSnap (below). |
 | `D` | **Draw**: drag to circle or underline, `⇧`-drag for an arrow. |
 | `S`, `⌘S` | **Shot**: drag over part of the screen. It's copied and added to the aside. |
+
+A tool's key again, or a click on its name on the pill, puts it down: back to Annotate (from Shot,
+to the tool before it).
 
 Measure:
 

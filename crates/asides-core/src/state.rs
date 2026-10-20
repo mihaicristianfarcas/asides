@@ -41,8 +41,8 @@ pub struct AppState {
     pub command_link_declined: bool,
     /// asides showed its keys once, the first time a screen was frozen.
     pub overlay_tips_seen: bool,
-    /// Where the user put asides' pill: its center, as a fraction of the screen's width and height
-    /// (`None`: at the top, in the middle).
+    /// Where the user put asides' pill: its top-left corner, as a fraction of the screen's width and
+    /// height (`None`: at the top, in the middle).
     pub pill_at: Option<(f64, f64)>,
     /// asides' own updates: the one found, its download, how the last check went, What's New.
     pub update: crate::update::Status,

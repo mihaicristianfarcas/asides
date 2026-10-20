@@ -355,6 +355,16 @@ impl Session {
         self.drag = None;
     }
 
+    /// Picks `tool`, or puts it down when it's the tool already: back to Annotate, or from Shot to
+    /// the tool before it (as after a screenshot).
+    pub fn toggle_tool(&mut self, tool: Tool) {
+        self.set_tool(match tool {
+            _ if tool != self.tool => tool,
+            Tool::Shot => self.previous_tool,
+            _ => Tool::Annotate,
+        });
+    }
+
     /// The pixel of the frame under a point (clamped to the frame).
     fn pixel(state: &ScreenState, x: f64, y: f64) -> (u32, u32) {
         let s = state.screen.scale;
@@ -1539,6 +1549,26 @@ mod tests {
         assert_eq!(notes, [Note { time: 0.0, text, annotation: Some((2, vec![])) }]);
         s.clear();
         assert!(s.is_empty() && s.inspections().is_empty());
+    }
+
+    #[test]
+    fn a_tools_key_again_puts_it_down() {
+        let mut s = session();
+        s.set_tool(Tool::Annotate);
+        for tool in [Tool::Measure, Tool::Draw] {
+            s.toggle_tool(tool);
+            assert_eq!(s.tool, tool);
+            s.toggle_tool(tool);
+            assert_eq!(s.tool, Tool::Annotate);
+        }
+        s.toggle_tool(Tool::Annotate);
+        assert_eq!(s.tool, Tool::Annotate);
+        // Shot goes back to the tool before it, as after a screenshot.
+        s.toggle_tool(Tool::Measure);
+        s.toggle_tool(Tool::Shot);
+        assert_eq!(s.tool, Tool::Shot);
+        s.toggle_tool(Tool::Shot);
+        assert_eq!(s.tool, Tool::Measure);
     }
 
     #[test]

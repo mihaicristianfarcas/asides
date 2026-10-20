@@ -374,7 +374,7 @@ mod tests {
             launch_script(AgentKind::Claude, Path::new("/r/my shop"), "It's broken", &[], "l1", &[PathBuf::from("/h")]);
         assert!(script.contains("cd '/r/my shop' || exit 1"), "{script}");
         assert!(script.contains("export ASIDES_LAUNCH='l1'"), "{script}");
-        assert!(script.ends_with("exec 'claude' '--add-dir' '/h' 'It'\\''s broken'\n"), "{script}");
+        assert!(script.ends_with("exec 'claude' '--add-dir' '/h' '--' 'It'\\''s broken'\n"), "{script}");
         assert_eq!(launch_line(Path::new("/tmp/a b.sh")), "'/tmp/a b.sh'");
         let ghostty = open_terminal_script(&Host::Ghostty, Path::new("/r"), "'/t/x.sh'").unwrap();
         assert!(ghostty.contains("set initial input of c to \"'/t/x.sh'\" & linefeed"), "{ghostty}");
