@@ -14,7 +14,7 @@ window's sidebar, shows how to use asides, with clips of it.
 | Click | Pin the element under the pointer. Drag to pin an area. |
 | Drag a pin's number | Move what it's on: a copy goes where you drop it, with an arrow, and the pin says where to. |
 | Talk | Each pin's number lands after the word you said as you placed it (`this [1] a different color`). |
-| `⌃⌥Space`, `⏎` or ✓ | Send. A moment later it's in your agent's chat, with each freeze's screenshot. |
+| `⌃⌥Space`, `⏎` or ✓ | Send. A moment later it's in your agent's chat: what you said, with a screenshot around what you marked (none if you marked nothing). |
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 
@@ -24,20 +24,20 @@ works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) 
 ## Talking
 
 The microphone starts as asides opens (a setting). Click it to mute; while muted, hold `Space` to
-talk.
+talk, and each new pin opens its card, to type in.
 
 To talk about one pin, click its number to open its card and hold `Space` there (or press its
 microphone): that goes into the pin. The card also takes typed feedback and a kind (fix, change,
 question, approve: `⌘1`–`⌘4`; with no card open, they set the last pin's), shown in the pin's
-color. `⏎` or `Esc` closes it.
+color. Its pencil and ruler pick Draw and Measure (their keys type there). `⏎` or `Esc` closes it.
 
 ## Where it goes
 
 The pill names the agent session you typed into last. Press `Tab` for the next one (held, it goes
 through them slowly enough to read), or point at the name for the list (click it to keep it open):
 
-- **Sessions**: every agent running in a terminal. Those in apps asides can't type into (Warp,
-  iTerm, VS Code…) are dimmed.
+- **Sessions**: every agent running in a terminal, by the title its agent gave it. Those in apps
+  asides can't type into (Warp, iTerm, VS Code…) are dimmed.
 - **New session in…**: an agent and a folder (a recent project, or **Choose Folder…**). Sending
   starts the agent there, in Terminal, Ghostty or Diri (Settings), with the aside as its first
   message.
@@ -69,7 +69,8 @@ Measure:
 | `R` | Bring back the last session's guides and held measurements. |
 
 Anywhere: right-click for a menu, `⌫` removes what's under the pointer (or the last thing), `X`
-clears everything, `⇧Tab` hides it all, `⌥⏎` sends with the whole screen.
+clears everything, `⇧Tab` hides it all, `⌥⏎` sends with the whole screen (even with nothing
+marked).
 
 ## What the agent gets
 
@@ -89,7 +90,8 @@ The gap under the title is bigger than the one above the fields, and this [1] sh
 **Intent:** change
 ```
 
-Each screenshot goes where its freeze began; a pin's details follow the paragraph it was said in.
+Each screenshot goes where its freeze began, around what was marked on it; a pin's details follow
+the paragraph it was said in.
 
 How much each pin says is a setting: **Compact**, **Standard**, **Detailed** (position, size) or
 **Forensic** (colors, padding, accessibility role).

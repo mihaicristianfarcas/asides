@@ -7,13 +7,19 @@
 //! Ghostty set `TERM_PROGRAM`; Diri sets `DIRIJOR_SESSION_ID` (and no `TERM_PROGRAM`, so a terminal's
 //! own wins over one inherited from Diri). The session the user last typed into is the one whose
 //! terminal device was last read from: its access time, which is how `w` tells idle time.
+//!
+//! A session is named as its agent titles it from what was said in it (or as the user renamed it):
+//! Claude Code in its transcript, Codex in its thread index, OpenCode in its database.
 
 use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::agents::{AgentKind, LAUNCH_VAR};
 
@@ -77,7 +83,8 @@ pub struct AgentSession {
     /// target.
     #[serde(default)]
     pub last_input: Option<SystemTime>,
-    /// What the agent calls the session, when it says (Claude Code's `asides-6b`).
+    /// What the agent calls the session, when it says: the title it gave it from what was said
+    /// ("Fix the login redirect"), or Claude Code's name for it until then (`asides-6b`).
     #[serde(default)]
     pub name: Option<String>,
     /// asides started it (with [`LAUNCH_VAR`]): the id of that launch.
@@ -297,13 +304,47 @@ pub fn discover() -> Vec<AgentSession> {
     let dirs = parse_lsof_cwd(&run("/usr/sbin/lsof", &["-a", "-d", "cwd", "-Fpn", "-p", &list]));
     for s in &mut sessions {
         s.dir = dirs.get(&s.pid).cloned().unwrap_or_default();
-        if s.agent == AgentKind::Claude {
-            s.name = claude_name(s.pid);
-        }
     }
     sessions.retain(|s| !s.dir.as_os_str().is_empty());
+    // Codex's and OpenCode's sessions are told by when they began.
+    let started = match sessions.iter().any(|s| matches!(s.agent, AgentKind::Codex | AgentKind::OpenCode)) {
+        true => parse_started(&run("/bin/ps", &["-o", "pid=,etime=", "-p", &list]), SystemTime::now()),
+        false => HashMap::new(),
+    };
+    if let Some(home) = std::env::home_dir() {
+        let args: HashMap<i32, &[String]> = procs.iter().map(|p| (p.pid, &p.args[..])).collect();
+        let names: Vec<Option<String>> = sessions
+            .iter()
+            .map(|s| name(&home, s, &sessions, started.get(&s.pid).copied(), args.get(&s.pid).copied().unwrap_or(&[])))
+            .collect();
+        for (s, name) in sessions.iter_mut().zip(names) {
+            s.name = name;
+        }
+    }
     read_input_times(&mut sessions);
     sessions
+}
+
+/// Parses `ps -o pid=,etime=`: when each process started (it has run for `[[dd-]hh:]mm:ss`).
+pub fn parse_started(output: &str, now: SystemTime) -> HashMap<i32, SystemTime> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let pid = words.next()?.parse().ok()?;
+            let elapsed = words.next()?;
+            let (days, clock) = match elapsed.split_once('-') {
+                Some((days, clock)) => (days.parse::<u64>().ok()?, clock),
+                None => (0, elapsed),
+            };
+            let parts: Vec<u64> = clock.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+            if !(2..=3).contains(&parts.len()) {
+                return None;
+            }
+            let seconds = parts.iter().fold(0, |sum, p| sum * 60 + p);
+            Some((pid, now.checked_sub(Duration::from_secs(days * 86_400 + seconds))?))
+        })
+        .collect()
 }
 
 /// Reads when each session's terminal last got input (its device's access time) again: which one
@@ -374,12 +415,182 @@ pub fn known_folders(home: &Path, sessions: &[AgentSession], recent: &[PathBuf],
     folders
 }
 
-/// The name Claude Code gives its session (`~/.claude/sessions/<pid>.json`).
-fn claude_name(pid: i32) -> Option<String> {
-    let home = std::env::var_os("HOME")?;
-    let file = Path::new(&home).join(".claude/sessions").join(format!("{pid}.json"));
-    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
-    value.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).map(String::from)
+/// What `session`'s agent calls it ([`AgentSession::name`]). Codex and OpenCode don't say which of
+/// their processes runs which session, only the folder it began in: the newest begun there since the
+/// process `started`, while it's its agent's only process there.
+fn name(
+    home: &Path,
+    session: &AgentSession,
+    all: &[AgentSession],
+    started: Option<SystemTime>,
+    args: &[String],
+) -> Option<String> {
+    let alone = || all.iter().filter(|s| s.agent == session.agent && s.dir == session.dir).count() == 1;
+    match session.agent {
+        AgentKind::Claude => claude_name(home, session.pid),
+        AgentKind::Codex if alone() => codex_name(home, &session.dir, started, args),
+        AgentKind::OpenCode if alone() => opencode_name(home, &session.dir, started?),
+        _ => None,
+    }
+}
+
+/// A string in `value`, trimmed, unless it's empty.
+fn string(value: &Value, key: &str) -> Option<String> {
+    value.get(key)?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// Claude Code's name for its session `pid` (`~/.claude/sessions/<pid>.json` says which it is): the
+/// last title in its transcript, or its own name for it until there's one (`asides-6b`).
+fn claude_name(home: &Path, pid: i32) -> Option<String> {
+    let file = home.join(".claude/sessions").join(format!("{pid}.json"));
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    let title = string(&value, "sessionId")
+        .zip(string(&value, "cwd"))
+        .and_then(|(id, cwd)| claude_transcript(home, &cwd, &id))
+        .and_then(|transcript| transcript_title(&transcript));
+    title.or_else(|| string(&value, "name"))
+}
+
+/// Claude Code's transcript of session `id`: in the folder of the project it began in (`cwd`, every
+/// character but letters and digits a `-`), or else of any project.
+fn claude_transcript(home: &Path, cwd: &str, id: &str) -> Option<PathBuf> {
+    let (projects, file) = (home.join(".claude/projects"), format!("{id}.jsonl"));
+    let project: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let direct = projects.join(project).join(&file);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    std::fs::read_dir(&projects).ok()?.flatten().map(|e| e.path().join(&file)).find(|p| p.is_file())
+}
+
+/// How far from its end a transcript is first read for a title: Claude Code writes it again as each
+/// turn ends, and one turn can write megabytes. Read this much at a time, from the end.
+const TITLE_REACH: u64 = 32 << 20;
+const TITLE_CHUNK: u64 = 1 << 20;
+
+/// A transcript's length when last read, and its title then.
+type Seen = (u64, Option<String>);
+
+/// Each transcript, as last read: only what's added is read again.
+static TRANSCRIPTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, Seen>>> = std::sync::LazyLock::new(Mutex::default);
+
+/// The last title in a Claude Code transcript: what the user renamed the session to
+/// (`custom-title`), or what Claude Code titled it from what was said (`ai-title`).
+fn transcript_title(path: &Path) -> Option<String> {
+    let len = std::fs::metadata(path).ok()?.len();
+    let known = TRANSCRIPTS.lock().unwrap().get(path).cloned();
+    let (from, before) = match known {
+        Some((read, title)) if read == len => return title,
+        Some((read, title)) if read < len => (read, title),
+        // New, or shorter (written again).
+        _ => (len.saturating_sub(TITLE_REACH), None),
+    };
+    let title = last_title(path, from, len).or(before);
+    TRANSCRIPTS.lock().unwrap().insert(path.to_path_buf(), (len, title.clone()));
+    title
+}
+
+/// The last title written between `from` and `to` in a transcript, read backward.
+fn last_title(path: &Path, from: u64, to: u64) -> Option<String> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let (mut end, mut cut) = (to, Vec::new());
+    while end > from {
+        let start = end.saturating_sub(TITLE_CHUNK).max(from);
+        let mut chunk = vec![0; (end - start) as usize];
+        file.seek(SeekFrom::Start(start)).ok()?;
+        file.read_exact(&mut chunk).ok()?;
+        chunk.append(&mut cut);
+        // A line cut at the chunk's start is read with the chunk before it.
+        let whole = match start == from {
+            true => 0,
+            false => chunk.iter().position(|&b| b == b'\n').map_or(chunk.len(), |i| i + 1),
+        };
+        if let Some(title) = title_in(&String::from_utf8_lossy(&chunk[whole..])) {
+            return Some(title);
+        }
+        chunk.truncate(whole);
+        (cut, end) = (chunk, start);
+    }
+    None
+}
+
+/// The last title in `text`, lines of a transcript.
+fn title_in(text: &str) -> Option<String> {
+    const KINDS: [(&str, &str); 2] = [(r#""type":"custom-title""#, "customTitle"), (r#""type":"ai-title""#, "aiTitle")];
+    let mut end = text.len();
+    loop {
+        let (at, key) = KINDS.iter().filter_map(|(kind, key)| Some((text[..end].rfind(kind)?, *key))).max()?;
+        let start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        let stop = text[at..].find('\n').map_or(text.len(), |i| at + i);
+        if let Some(title) = serde_json::from_str(&text[start..stop]).ok().and_then(|v: Value| string(&v, key)) {
+            return Some(title);
+        }
+        end = start;
+    }
+}
+
+/// The name Codex gave the thread a session of its runs (`~/.codex/session_index.jsonl`): the one
+/// it resumed (`codex resume <id>`), or the newest begun in its folder from the terminal since it
+/// started.
+fn codex_name(home: &Path, dir: &Path, started: Option<SystemTime>, args: &[String]) -> Option<String> {
+    let uuid = |a: &&String| a.len() == 36 && a.chars().all(|c| c == '-' || c.is_ascii_hexdigit());
+    let resumed = args.iter().skip_while(|a| *a != "resume").nth(1).filter(uuid).cloned();
+    let id = match resumed {
+        Some(id) => id,
+        None => codex_thread(&home.join(".codex/sessions"), dir, started?)?,
+    };
+    let index = std::fs::read_to_string(home.join(".codex/session_index.jsonl")).ok()?;
+    index.lines().rev().filter(|line| line.contains(&id)).find_map(|line| {
+        let value: Value = serde_json::from_str(line).ok()?;
+        (string(&value, "id")? == id).then(|| string(&value, "thread_name")).flatten()
+    })
+}
+
+/// The newest thread begun in `dir` from Codex's terminal since `since`: each thread's rollout, in
+/// `<year>/<month>/<day>/` under `sessions`, says where it began and from what.
+fn codex_thread(sessions: &Path, dir: &Path, since: SystemTime) -> Option<String> {
+    let since = since.checked_sub(Duration::from_secs(2))?;
+    let listed = |dir: &Path| {
+        let mut entries: Vec<PathBuf> =
+            std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        entries.sort_by(|a, b| b.cmp(a));
+        entries
+    };
+    let changed = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let created = |path: &Path| std::fs::metadata(path).and_then(|m| m.created()).ok();
+    // Newest first: a day's folder changes as a thread begins in it, so the days before didn't.
+    let days = listed(sessions).into_iter().flat_map(|year| listed(&year)).flat_map(|month| listed(&month));
+    let mut rollouts: Vec<(SystemTime, PathBuf)> = days
+        .take_while(|day| changed(day).is_some_and(|at| at >= since))
+        .flat_map(|day| listed(&day))
+        .filter(|file| file.extension().is_some_and(|e| e == "jsonl"))
+        .filter_map(|file| Some((created(&file).filter(|at| *at >= since)?, file)))
+        .collect();
+    rollouts.sort_by_key(|(created, _)| std::cmp::Reverse(*created));
+    rollouts.into_iter().find_map(|(_, file)| {
+        let mut first = String::new();
+        std::io::BufReader::new(std::fs::File::open(file).ok()?).read_line(&mut first).ok()?;
+        let value: Value = serde_json::from_str(&first).ok()?;
+        let meta = value.get("payload")?;
+        let terminal = matches!(meta.get("originator")?.as_str()?, "codex-tui" | "codex_cli_rs");
+        (terminal && Path::new(meta.get("cwd")?.as_str()?) == dir).then(|| string(meta, "id")).flatten()
+    })
+}
+
+/// The title OpenCode gave the session a process of its runs (its database): the newest begun in
+/// its folder since the process started, once it has one.
+fn opencode_name(home: &Path, dir: &Path, started: SystemTime) -> Option<String> {
+    let db = home.join(".local/share/opencode/opencode.db");
+    let since = started.checked_sub(Duration::from_secs(2))?.duration_since(UNIX_EPOCH).ok()?.as_millis();
+    let dir = dir.to_str()?.replace('\'', "''");
+    let sql = format!(
+        "SELECT title FROM session WHERE directory = '{dir}' AND parent_id IS NULL AND time_created >= {since} \
+         ORDER BY time_updated DESC LIMIT 1"
+    );
+    let rows = db.is_file().then(|| crate::wispr::sqlite(&db, &sql).ok()).flatten()?;
+    let title = rows.first()?.get("title")?.as_str()?.trim();
+    // Until it's titled, a session is named for when it began.
+    (!title.is_empty() && !title.starts_with("New session - ")).then(|| title.to_string())
 }
 
 #[cfg(test)]
@@ -492,6 +703,87 @@ mod tests {
         for session in discover() {
             println!("{session:?} → {}", session.label());
         }
+    }
+
+    #[test]
+    fn names_a_claude_code_session_by_its_title() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        std::fs::create_dir_all(home.join(".claude/sessions")).unwrap();
+        std::fs::write(
+            home.join(".claude/sessions/4242.json"),
+            r#"{"pid":4242,"sessionId":"abc-1","cwd":"/Users/me/Developer/my.shop","name":"my-shop-c2"}"#,
+        )
+        .unwrap();
+        assert_eq!(claude_name(home, 4242).as_deref(), Some("my-shop-c2"), "no transcript yet: its own name");
+        let project = home.join(".claude/projects/-Users-me-Developer-my-shop");
+        std::fs::create_dir_all(&project).unwrap();
+        let transcript = project.join("abc-1.jsonl");
+        let line = |kind: &str, title: &str| match kind {
+            "ai" => format!("{{\"type\":\"ai-title\",\"aiTitle\":\"{title}\",\"sessionId\":\"abc-1\"}}\n"),
+            _ => format!("{{\"type\":\"custom-title\",\"customTitle\":\"{title}\",\"sessionId\":\"abc-1\"}}\n"),
+        };
+        // A message quoting a title line isn't one (its quotes are escaped).
+        let quoted = r#"{"type":"user","message":{"content":"{\"type\":\"ai-title\",\"aiTitle\":\"Quoted\"}"}}"#;
+        let mut text = line("ai", "Fix the login redirect");
+        text.push_str(&format!("{quoted}\n"));
+        std::fs::write(&transcript, &text).unwrap();
+        assert_eq!(claude_name(home, 4242).as_deref(), Some("Fix the login redirect"));
+        // A turn writing more than is read at a time, then a new title: only what was added is read.
+        let long = format!("{{\"type\":\"assistant\",\"text\":\"{}\"}}\n", "x".repeat(TITLE_CHUNK as usize + 10));
+        text.push_str(&long);
+        std::fs::write(&transcript, &text).unwrap();
+        assert_eq!(transcript_title(&transcript).as_deref(), Some("Fix the login redirect"), "kept while it works");
+        text.push_str(&line("custom", "Login"));
+        text.push_str(&long);
+        std::fs::write(&transcript, &text).unwrap();
+        assert_eq!(transcript_title(&transcript).as_deref(), Some("Login"), "renamed");
+        // Read for the first time, across chunks.
+        let copy = project.join("abc-2.jsonl");
+        std::fs::write(&copy, &text).unwrap();
+        assert_eq!(last_title(&copy, 0, text.len() as u64).as_deref(), Some("Login"));
+    }
+
+    #[test]
+    fn names_a_codex_session_by_its_thread() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let started = SystemTime::now() - Duration::from_secs(60);
+        let day = home.join(".codex/sessions/2026/10/20");
+        std::fs::create_dir_all(&day).unwrap();
+        let rollout = |id: &str, cwd: &str, originator: &str| {
+            let meta = format!(
+                r#"{{"type":"session_meta","payload":{{"id":"{id}","cwd":"{cwd}","originator":"{originator}"}}}}"#
+            );
+            std::fs::write(day.join(format!("rollout-2026-10-20T11-03-43-{id}.jsonl")), meta + "\n").unwrap();
+        };
+        let (shop, other) = ("01a15856-7354-78b2-8744-88bf9ff30ea8", "01a15856-0000-78b2-8744-88bf9ff30ea8");
+        rollout(shop, "/r/shop", "codex-tui");
+        rollout(other, "/r/shop", "codex_exec");
+        std::fs::write(
+            home.join(".codex/session_index.jsonl"),
+            format!(
+                "{{\"id\":\"{shop}\",\"thread_name\":\"Reply okay\"}}\n{{\"id\":\"{other}\",\"thread_name\":\"Exec\"}}\n"
+            ),
+        )
+        .unwrap();
+        let dir = Path::new("/r/shop");
+        assert_eq!(codex_name(home, dir, Some(started), &[]).as_deref(), Some("Reply okay"), "not codex exec's");
+        assert_eq!(codex_name(home, Path::new("/r/blog"), Some(started), &[]), None);
+        // Begun before the session started: not its thread.
+        let later = SystemTime::now() + Duration::from_secs(60);
+        assert_eq!(codex_name(home, dir, Some(later), &[]), None);
+        let resume = ["codex", "resume", other].map(String::from);
+        assert_eq!(codex_name(home, dir, Some(later), &resume).as_deref(), Some("Exec"), "the thread resumed");
+    }
+
+    #[test]
+    fn parses_how_long_processes_have_run() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let started = parse_started("  98681      05:12\n  12 01:00:00\n 7 2-03:04:05\n 8 junk\n", now);
+        let ago = |pid: i32| now.duration_since(started[&pid]).unwrap().as_secs();
+        assert_eq!((ago(98681), ago(12), ago(7)), (312, 3600, 2 * 86_400 + 3 * 3600 + 4 * 60 + 5));
+        assert_eq!(started.len(), 3);
     }
 
     #[test]

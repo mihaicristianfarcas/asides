@@ -83,7 +83,7 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
             Action::Wait(seconds) => std::thread::sleep(std::time::Duration::from_secs_f64(seconds.clamp(0.0, 60.0))),
             Action::Live if !live => {
                 let freeze = (freezes, frozen_at);
-                items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze, false)?);
+                items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze)?);
                 (live, freezes) = (true, freezes + 1);
                 shots.clear();
             }
@@ -102,9 +102,8 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
         }
     }
     if !live {
-        let alone = items.is_empty();
         let freeze = (freezes, frozen_at);
-        items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze, alone)?);
+        items.extend(finish::items(&session, &exporter, spec, dir, false, &shots, 0, freeze)?);
     }
     finish::write(dir, &finish::outcome(items, session.saved(), spec.targets.chosen.clone()))?;
     io::emit(&Event::Finished);

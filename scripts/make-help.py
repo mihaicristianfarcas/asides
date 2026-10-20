@@ -119,7 +119,8 @@ RUNS = {
         *CLOSE,
     ]),
     "tools": ("safari", [
-        {"wait": 600}, {"move": REST}, {"key": "m", "wait": 200}, {"move": FIELD, "wait": 300},
+        # Listening, as asides opens by default: muted, the circle drawn would open its card.
+        {"wait": 600}, {"recording": 5}, {"move": REST}, {"key": "m", "wait": 200}, {"move": FIELD, "wait": 300},
         {"capture": "tools-0.png"},
         *drag(FIELD_DRAG, held="tools-1.png"),
         {"key": "d", "wait": 200}, *drag(CIRCLE), {"move": REST, "wait": 300}, {"capture": "tools-2.png"},

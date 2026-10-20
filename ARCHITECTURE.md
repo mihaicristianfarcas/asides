@@ -151,7 +151,8 @@ the pill names the session typed into last from its first frame.
    (`Session::refrozen`).
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).
-5. **Send** (`finish`): the overlay renders each freeze's screenshot (`export.rs`) and Markdown
+5. **Send** (`finish`): the overlay renders each freeze's screenshot, around what's on it
+   (`export.rs`; none with nothing on it, unless `⌥⏎` asks for the whole screen), and Markdown
    (`inspect`) into `result.json`. The app joins the takes (`takes::join`), places every item and
    Wispr Flow dictation at its moment, and queues one `Job::Aside`. `cancelled` sends nothing.
 6. **Worker** (`keep`): resample, transcribe (no prompt; each word timed), compose
@@ -254,7 +255,8 @@ Break these only on purpose, and update this list.
   agent in any app, with nothing installed.
 - **A history, not notes in the repo**: asides aren't tied to a repo, and nothing needs ignoring.
 - **The pill, not a toolbar**: the default path must beat a screenshot. Annotate is the default,
-  pins open no card, everything else is a key away.
+  pins open no card (unless the microphone is off: then the user types), everything else is a key
+  away.
 - **Press, not hold**: holding `⌃⌥` while clicking makes right-clicks and changes measuring.
 - **English model by default, downloaded on request**: smaller, never mistakes the language, and
   asides works without one. On 54 synthetic clips (`compares_models`), `small.en` had a 0.8% word

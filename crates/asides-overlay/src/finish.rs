@@ -9,10 +9,11 @@ use asides_core::overlay::{Saved, Session, markdown};
 use crate::export::{self, Exporter};
 use crate::style;
 
-/// What one freeze adds to the aside: each screen with something on it, as an image (with where
-/// and in what units it was measured) at the moment it froze, then each measurement and annotation
-/// at the moment it was made, and the screenshots taken when they were taken. With nothing on it
-/// and `alone`, the screen under the pointer, like a screenshot. Images are named after the freeze
+/// What one freeze adds to the aside: each screen with something on it, as an image around what's
+/// on it (all of it when `whole`) at the moment it froze, with where and in what units it was
+/// measured, then each measurement and annotation at the moment it was made, and the screenshots
+/// taken when they were taken. With nothing on it, nothing (what was said goes alone), unless the
+/// whole screen was asked for: the one under the pointer. Images are named after the freeze
 /// (`snapshot`: which, and when, in seconds into the session), so a session's freezes don't
 /// overwrite each other's.
 #[allow(clippy::too_many_arguments)]
@@ -25,7 +26,6 @@ pub fn items(
     shots: &[(f32, String)],
     cursor_screen: usize,
     (snapshot, frozen_at): (usize, f32),
-    alone: bool,
 ) -> anyhow::Result<Vec<Item>> {
     let mut items = Vec::new();
     let inspections = session.inspections();
@@ -39,7 +39,7 @@ pub fn items(
         items.push(Item { time, image: Some(name), text, ..Item::default() });
         Ok(())
     };
-    if inspections.is_empty() && shots.is_empty() && alone {
+    if inspections.is_empty() && shots.is_empty() && whole {
         image(cursor_screen.min(session.screens.len().saturating_sub(1)), None, frozen_at, &mut items)?;
     }
     let accent = style::rgb_hex(style::parse_color(&spec.color));

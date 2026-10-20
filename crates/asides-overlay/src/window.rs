@@ -1116,6 +1116,7 @@ impl Render for AsidesWindow {
         let shown = gpui::ElementId::Name(format!("page-{}-{step}", self.page as usize).into());
         let content = fade_in(div().size_full().flex().flex_col().child(content), shown, 0.);
         let sidebar = (self.page != Page::Setup).then(|| self.sidebar(cx));
+        let surface = if self.page == Page::Setup { t.reading } else { t.background };
         div()
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
@@ -1161,7 +1162,7 @@ impl Render for AsidesWindow {
             .text_color(t.primary)
             .text_size(px(Type::BODY))
             .children(sidebar)
-            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(t.background).child(content))
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(surface).child(content))
             .children(self.toast.as_ref().map(|(text, _)| {
                 div().absolute().bottom(px(18.)).left_0().right_0().flex().justify_center().child(fade_in(
                     floating(t)
@@ -2074,8 +2075,9 @@ impl AsidesWindow {
                 .child(topic(
                     "Say more about one pin",
                     format!(
-                        "Click a pin's number to open its card. Type there, or hold {talk} to talk about that pin \
-                         alone. ⌘1 to ⌘4 say what it is: a fix, a change, a question, an approval."
+                        "Click a pin's number to open its card (with the microphone off, each new pin opens it). \
+                         Type there, or hold {talk} to talk about that pin alone. ⌘1 to ⌘4 say what it is: a fix, a \
+                         change, a question, an approval. Its pencil and ruler pick Draw and Measure."
                     ),
                     Some(card),
                 ))
