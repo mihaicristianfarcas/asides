@@ -127,7 +127,7 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Sending**, each of Claude Code, Codex, OpenCode in each of Terminal, Ghostty, Diri: the
   Automation prompt the first time; the message with screenshots attached where taken (none with
   nothing marked); queued while the agent works; the clipboard restored; a gone session reported,
-  the aside in History.
+  the aside in History. The pill names each session as its agent titled it.
 - [ ] **New session in…** in Terminal, Ghostty and Diri, in bash, zsh and fish.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.

@@ -36,8 +36,8 @@ color. `⏎` or `Esc` closes it.
 The pill names the agent session you typed into last. Press `Tab` for the next one (held, it goes
 through them slowly enough to read), or point at the name for the list (click it to keep it open):
 
-- **Sessions**: every agent running in a terminal. Those in apps asides can't type into (Warp,
-  iTerm, VS Code…) are dimmed.
+- **Sessions**: every agent running in a terminal, by the title its agent gave it. Those in apps
+  asides can't type into (Warp, iTerm, VS Code…) are dimmed.
 - **New session in…**: an agent and a folder (a recent project, or **Choose Folder…**). Sending
   starts the agent there, in Terminal, Ghostty or Diri (Settings), with the aside as its first
   message.

@@ -180,8 +180,8 @@ fn parse_timestamp(value: &Value) -> Option<DateTime<Utc>> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").ok().map(|at| at.and_utc())
 }
 
-/// Runs one read-only query; rows come back as JSON objects.
-fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
+/// Runs one read-only query on a database another app writes; rows come back as JSON objects.
+pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
     let out = Command::new(SQLITE3)
         .args(["-readonly", "-json", "-cmd", ".timeout 3000"])
         .arg(db)
