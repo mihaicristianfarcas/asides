@@ -342,6 +342,25 @@ impl Default for Shortcuts {
     }
 }
 
+impl Shortcuts {
+    /// The shortcut named `name` in the settings (`asides`, `freeze`).
+    pub fn get(&self, name: &str) -> Option<&String> {
+        match name {
+            "asides" => Some(&self.asides),
+            "freeze" => Some(&self.freeze),
+            _ => None,
+        }
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut String> {
+        match name {
+            "asides" => Some(&mut self.asides),
+            "freeze" => Some(&mut self.freeze),
+            _ => None,
+        }
+    }
+}
+
 impl Config {
     /// Reads the config, falling back to defaults for a missing file or missing keys.
     pub fn load(path: &Path) -> io::Result<Config> {

@@ -1,10 +1,10 @@
 # Using asides
 
 The first time asides opens, setup shows how it works, then asks where new sessions open
-(Terminal, Ghostty or Diri, and the agent), what macOS must allow, the voice model and the
-shortcuts. Skip it for the defaults: asides asks for each permission and the model when it first
-needs them. General → **Set Up Again** goes through it again. **Help**, at the bottom of the asides
-window's sidebar, shows how to use asides, with clips of it.
+(Terminal, Ghostty or Diri, and the agent), how much each pin says, what macOS must allow, the
+voice model and the shortcuts. Skip it for the defaults: asides asks for each permission and the
+model when it first needs them. General → **Set Up Again** goes through it again. **Help**, at the
+bottom of the asides window's sidebar, shows how to use asides, with clips of it.
 
 ## Freeze, pin, talk, send
 
@@ -93,8 +93,9 @@ The gap under the title is bigger than the one above the fields, and this [1] sh
 Each screenshot goes where its freeze began, around what was marked on it; a pin's details follow
 the paragraph it was said in.
 
-How much each pin says is a setting: **Compact**, **Standard**, **Detailed** (position, size) or
-**Forensic** (colors, padding, accessibility role).
+How much each pin says (setup asks; Settings → Pins changes it): **Compact** (a line each),
+**Standard**, **Detailed** (position, size, the text around it) or **Forensic** (colors, padding,
+accessibility role).
 
 ## The asides window
 
@@ -106,8 +107,8 @@ closes it, `⌘Q` quits asides.
   Finder, delete it, or **Edit** its Markdown (`⌘S` saves it once nothing in it is wrong: each
   problem is listed by line). asides are kept in `~/.asides/history` for 30 days by default.
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
-- **General**, **Keys**, **Voice**, **Pins**: every [setting](settings.md). Click a shortcut or a
-  key, then press the new one.
+- **General**, **Keys** (the shortcuts, and the frozen screen's keys), **Voice**, **Pins**: every
+  [setting](settings.md). Click a shortcut or a key, then press the new one.
 - **Help** (`⌘?`): how to use asides, step by step, with clips of it.
 
 The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds and

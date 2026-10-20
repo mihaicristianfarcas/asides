@@ -107,8 +107,9 @@ Run what your change touches, and say in the pull request what you tried.
 
 - [ ] **First launch** (`onboarded` false in `state.json`; after `tccutil reset Microphone
   io.github.mihaicristianfarcas.asides`): setup opens; each **Allow…** shows macOS's prompt naming
-  asides, then **Allowed**; the download shows its progress; **Skip** leaves the defaults and
-  nothing downloads; reopened mid-way, it goes on at the step it was at.
+  asides, then **Allowed**; the download shows its progress; the Pins step's choice shows in
+  Settings → Pins; **Skip** leaves the defaults and nothing downloads; reopened mid-way, it goes on
+  at the step it was at.
 - [ ] **Menu bar**: the mark alone (dot recording, dots busy, `[n]` sent, `!` error); the menu has
   the status, Open asides, Open Live, Copy the Last Aside, three switches, History…, Settings…, Quit.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,
@@ -133,8 +134,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.
 - [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,
-  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect;
-  Help's clips play smoothly and loop, keys shown as set; light and dark.
+  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect
+  (a key already in use names its other action); Help's clips play smoothly and loop, keys shown as
+  set; light and dark.
 - [ ] **Wispr Flow**: a dictation while frozen joins the aside; elsewhere, nothing.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.

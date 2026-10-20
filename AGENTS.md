@@ -257,6 +257,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   the window under the point (from the window list taken before opening).
 - Errors in the menu bar are hidden under the overlay: `App::fail` also sends a `notice`.
 - The notch is in the menu bar (safe area 38 pt, menu bar 39): keep drawing below it.
+- The pill's place is kept by its top middle: kept by its corner, recentered as its width eased, it
+  crept right each time a long session name gave way to a short one.
 - A shortcut's ⌃⌥ reached Measure as ⌥: with ⌃ down, Measure takes no modifiers.
 - `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
   accessibility. `native::choose_folder` puts it above the frozen screens.

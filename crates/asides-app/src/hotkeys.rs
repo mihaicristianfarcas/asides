@@ -66,5 +66,9 @@ mod tests {
             let text = Chord::pressed(key, mods).and_then(|c| c.to_global()).unwrap();
             assert!(HotKey::from_str(&text).is_ok(), "{text}");
         }
+        let defaults = Shortcuts::default();
+        for text in [&defaults.asides, &defaults.freeze] {
+            assert!(HotKey::from_str(text).is_ok(), "{text}");
+        }
     }
 }
