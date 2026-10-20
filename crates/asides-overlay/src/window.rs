@@ -108,13 +108,14 @@ impl Page {
     }
 }
 
-/// Setup's steps, in order: what asides does, how it works, where sessions open, what macOS must
-/// allow, the voice model, the shortcuts, and done.
+/// Setup's steps, in order: what asides does, how it works, where sessions open, what each pin
+/// says, what macOS must allow, the voice model, the shortcuts, and done.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SetupStep {
     Welcome,
     Basics,
     Sessions,
+    Pins,
     Permissions,
     Voice,
     Shortcuts,
@@ -122,10 +123,11 @@ enum SetupStep {
 }
 
 impl SetupStep {
-    const ALL: [SetupStep; 7] = [
+    const ALL: [SetupStep; 8] = [
         SetupStep::Welcome,
         SetupStep::Basics,
         SetupStep::Sessions,
+        SetupStep::Pins,
         SetupStep::Permissions,
         SetupStep::Voice,
         SetupStep::Shortcuts,
@@ -138,6 +140,7 @@ impl SetupStep {
             SetupStep::Welcome => "welcome",
             SetupStep::Basics => "basics",
             SetupStep::Sessions => "sessions",
+            SetupStep::Pins => "pins",
             SetupStep::Permissions => "permissions",
             SetupStep::Voice => "voice",
             SetupStep::Shortcuts => "shortcuts",
@@ -154,6 +157,7 @@ impl SetupStep {
         match self {
             SetupStep::Basics => "How it works",
             SetupStep::Sessions => "Sessions",
+            SetupStep::Pins => "Pins",
             SetupStep::Permissions => "Permissions",
             SetupStep::Voice => "Voice",
             SetupStep::Shortcuts => "Shortcuts",
@@ -228,6 +232,24 @@ const SHORTCUTS: [(&str, &str, &str); 2] = [
         "Switches between the frozen screen and the live one; with asides closed, opens it live.",
     ),
 ];
+
+/// How much each pin says, as setup and Pins offer it: its name, and what goes in it.
+const DETAILS: [(Detail, &str, &str); 4] = [
+    (Detail::Compact, "Compact", "A line each: what it's on, and what you typed or said."),
+    (
+        Detail::Standard,
+        "Standard",
+        "What it's on, its app and page, where it is (a CSS-like location in browsers), and what you typed or \
+         said. The default.",
+    ),
+    (Detail::Detailed, "Detailed", "Standard, with its position and size, and the text around it."),
+    (Detail::Forensic, "Forensic", "Detailed, with its colors, padding, and accessibility role and identifier."),
+];
+
+/// `detail`'s name and what goes in it.
+fn detail_text(detail: Detail) -> (&'static str, &'static str) {
+    DETAILS.iter().find(|(d, ..)| *d == detail).map_or(("", ""), |&(_, name, what)| (name, what))
+}
 
 /// The frozen screen's keys, as the Keys page groups and names them (by their names in the
 /// settings, `OverlayKeys::NAMES`).
@@ -2188,6 +2210,7 @@ impl AsidesWindow {
         let body = match step {
             SetupStep::Basics => self.setup_basics(cx),
             SetupStep::Sessions => self.setup_sessions(cx),
+            SetupStep::Pins => self.setup_pins(cx),
             SetupStep::Permissions => self.setup_permissions(cx),
             SetupStep::Voice => self.setup_voice(window, cx),
             SetupStep::Shortcuts => self.setup_shortcuts(cx),
@@ -2317,9 +2340,9 @@ impl AsidesWindow {
             .child(
                 div().pt(px(6.)).max_w(px(420.)).child(
                     footnote(
-                        "A minute: how it works, where sessions open, what macOS must allow, and the voice model. \
-                         Skipped, asides asks for each when it first needs it; everything is in Settings and Help \
-                         later.",
+                        "A minute: how it works, where sessions open, what each pin says, what macOS must allow, and \
+                         the voice model. Skipped, asides asks for each when it first needs it; everything is in \
+                         Settings and Help later.",
                         t,
                     )
                     .text_center(),
@@ -2423,6 +2446,43 @@ impl AsidesWindow {
                         t,
                     ))
                     .child(footnote(running, t)),
+            )
+            .into_any_element()
+    }
+
+    /// What each pin says in the aside: how much, each choice with what goes in it.
+    fn setup_pins(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let chosen = self.config.annotation_detail;
+        let choices: Vec<AnyElement> = DETAILS
+            .iter()
+            .map(|&(detail, name, what)| {
+                let pick = self.setter(cx, move |c, _: ()| c.annotation_detail = detail);
+                choice_row(
+                    SharedString::from(format!("setup-detail-{name}")),
+                    t,
+                    "annotate",
+                    name,
+                    what,
+                    detail == chosen,
+                )
+                .on_click(move |_, window, cx| pick((), window, cx))
+                .into_any_element()
+            })
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(
+                "What each pin says",
+                Some("Each pin you place goes in the aside, after what you said as you placed it.".into()),
+                t,
+            ))
+            .child(
+                section("How much it tells your agent", t)
+                    .child(rows(choices, t))
+                    .child(footnote("Settings → Pins changes it later.", t)),
             )
             .into_any_element()
     }
@@ -2699,6 +2759,7 @@ impl AsidesWindow {
             None => true,
         };
         let agent = self.config.agents.default_agent().name();
+        let (pins, what) = detail_text(self.config.annotation_detail);
         let open = pretty_shortcut(&self.config.shortcuts.asides);
         div()
             .flex()
@@ -2727,6 +2788,7 @@ impl AsidesWindow {
                         format!("New sessions: {agent} in {terminal}"),
                         if typing { "Ready".into() } else { "macOS asks the first time asides types there".into() },
                     ),
+                    item(true, format!("Each pin: {pins}"), what.into()),
                 ],
                 t,
             ))
@@ -3038,7 +3100,7 @@ impl AsidesWindow {
                     section("Setup", t).child(rows(
                         [setting(
                             "Set up asides again",
-                            Some("How it works, where sessions open, the permissions, the voice model and the shortcuts, step by step."),
+                            Some("How it works, where sessions open, what each pin says, the permissions, the voice model and the shortcuts, step by step."),
                             set_up,
                             t,
                         )],
@@ -3251,8 +3313,7 @@ impl AsidesWindow {
         let padding = self
             .setter(cx, |c, step: i32| c.measure.padding = (c.measure.padding + 8.0 * step as f64).clamp(0.0, 200.0));
         let identify = self.setter(cx, |c, on| c.measure.identify_elements = on);
-        let details = [Detail::Compact, Detail::Standard, Detail::Detailed, Detail::Forensic];
-        let pick_detail = self.setter(cx, move |c, i: usize| c.annotation_detail = details[i]);
+        let pick_detail = self.setter(cx, |c, i: usize| c.annotation_detail = DETAILS[i].0);
         let pick_units = self.setter(cx, |c, i: usize| c.measure.units = if i == 0 { Units::Pt } else { Units::Px });
         page(
             "pins",
@@ -3277,11 +3338,11 @@ impl AsidesWindow {
                         ),
                         setting(
                             "How much each pin says",
-                            None,
+                            Some(detail_text(c.annotation_detail).1),
                             segmented(
                                 "detail",
-                                ["Compact", "Standard", "Detailed", "Forensic"],
-                                details.iter().position(|d| *d == c.annotation_detail),
+                                DETAILS.map(|(_, name, _)| name),
+                                DETAILS.iter().position(|(d, ..)| *d == c.annotation_detail),
                                 t,
                             )
                             .on_select(pick_detail),
