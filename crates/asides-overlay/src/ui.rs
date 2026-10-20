@@ -1170,6 +1170,10 @@ impl Overlay {
             if cmd == Cmd::Target && e.is_held && soon {
                 return;
             }
+            // Held, a tool's key would put the tool down and pick it up again.
+            if matches!(cmd, Cmd::Tool(_)) && e.is_held {
+                return;
+            }
             self.help = self.help && cmd == Cmd::Help;
             match cmd {
                 Cmd::Close => self.close_by_key(cx),
@@ -1206,7 +1210,7 @@ impl Overlay {
     fn command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
         let s = &mut self.session;
         match cmd {
-            Cmd::Tool(tool) => s.set_tool(tool),
+            Cmd::Tool(tool) => s.toggle_tool(tool),
             Cmd::HoldH => drop(s.hold_axis(Axis::X)),
             Cmd::HoldV => drop(s.hold_axis(Axis::Y)),
             // A horizontal guide is a line across, placed by its y.
@@ -2398,10 +2402,12 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     ])];
     if !o.live && session.tool != Tool::Annotate {
         let tool = session.tool;
+        let back = if tool == Tool::Shot { session.previous_tool } else { Tool::Annotate };
         let name = format!(
-            "{}: a click here, or {}, goes back to Annotate",
+            "{}: a click here, or {}, goes back to {}",
             tool.label(),
-            o.keys.label(Cmd::Tool(Tool::Annotate))
+            o.keys.label(Cmd::Tool(tool)),
+            back.label()
         );
         items.push(button(
             "tool",
@@ -2414,7 +2420,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .child(icon(tool_icon(tool), Emphasis::On.ink()))
                 .child(tool.label())
                 .into_any_element(),
-            Box::new(|o, _, _| o.session.set_tool(Tool::Annotate)),
+            Box::new(move |o, _, _| o.session.toggle_tool(tool)),
         ));
     }
     items.push(sep());
