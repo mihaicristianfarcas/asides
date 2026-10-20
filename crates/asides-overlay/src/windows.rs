@@ -234,14 +234,15 @@ fn take_spare(overlay: &Entity<Overlay>, i: usize, spare: Spare, cx: &mut App) -
 }
 
 /// Where the pill goes on `screen`, `w` × `h` (its frame, in points from the screen's top left):
-/// where the user put it, or at the top in the middle; always on the screen (in the development
+/// where the user put it (`at`: its top middle, so it grows and shrinks about its middle and stays
+/// put whatever it shows), or at the top in the middle; always on the screen (in the development
 /// window, on its part), below the menu bar and the notch.
 fn pill_place(screen: &SpecScreen, windowed: Option<PtRect>, at: Option<(f64, f64)>, (w, h): (f64, f64)) -> PtRect {
     let f = screen.frame;
     let area = windowed.unwrap_or(PtRect::new(0.0, 0.0, f.width, f.height));
     let top = screen.menu_bar.max(area.y);
     let (x, y) = match at {
-        Some((fx, fy)) => (fx * f.width, fy * f.height),
+        Some((fx, fy)) => (fx * f.width - w / 2.0, fy * f.height),
         None => (area.x + (area.width - w) / 2.0, top + PILL_TOP),
     };
     let x = x.clamp(area.x, (area.x + area.width - w).max(area.x)).round();
@@ -757,7 +758,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         o.toolbar_window.as_ref().map(|t| {
             let screens = spec.screens.clone();
             let place = (o.toolbar_at, o.toolbar_screen, o.pill_rect);
-            let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades, o.pill_moving());
+            let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades);
             (t.view, pill, whole.unwrap_or(pill), shapes, moved, place, screens, spec.windowed, sides)
         })
     })?;
@@ -766,7 +767,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         pill,
         whole,
         shapes,
-        (moving, grabbed, fades, easing),
+        (moving, grabbed, fades),
         (mut at, mut index, last),
         screens,
         windowed,
@@ -780,36 +781,26 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
     let (mut moved, mut let_go) = (false, grabbed && moving.is_none());
     if let Some((gx, gy)) = moving {
         if native::mouse_pressed() {
-            // Its top-left corner, on the screen under the pointer.
+            // Its top middle, on the screen under the pointer.
             let (mx, my) = native::mouse();
             if let Some(i) = screens.iter().position(|s| {
                 let r = s.frame;
                 mx >= r.x && mx < r.x + r.width && my >= r.y && my <= r.y + r.height
             }) {
                 let r = screens[i].frame;
-                (at, index, moved) =
-                    (Some(((mx - gx - r.x) / r.width, (r.y + r.height - my - gy) / r.height)), i, true);
+                let middle = mx - gx + pill.0 / 2.0 - r.x;
+                (at, index, moved) = (Some((middle / r.width, (r.y + r.height - my - gy) / r.height)), i, true);
             }
         } else {
             let_go = true;
         }
     }
     let Some(screen) = screens.get(index) else { return Ok(Followed::default()) };
-    // Put somewhere by the user, it grows and shrinks about its middle too, as where asides puts it:
-    // the top-left corner that's kept moves (kept again once its width settles). Only as its width
-    // eases: drawn the first time, the pill isn't as wide as guessed.
-    let mut recentered = false;
-    if let (Some((fx, fy)), Some((i, last)), Some(_), false) = (at, last, width, grabbed)
-        && i == index
-        && (pill.0 - last.width).abs() >= 0.01
-    {
-        (at, recentered) = (Some((fx - (pill.0 - last.width) / 2.0 / screen.frame.width, fy)), true);
-    }
     let place = pill_place(screen, windowed, at, pill);
     let (f, left, up) = toolbar_frame(screen, windowed, place, whole);
     // Where it shows is where it's kept: let go past an edge, it comes back there next time too.
     if moved {
-        at = Some((place.x / screen.frame.width, place.y / screen.frame.height));
+        at = Some(((place.x + place.width / 2.0) / screen.frame.width, place.y / screen.frame.height));
     }
     let same = |a: PtRect, b: PtRect| {
         (a.x - b.x).abs() < 0.5
@@ -839,13 +830,8 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
                 o.glass_shapes = Some((shapes, (f.width, f.height)));
             }
             o.glass_fades = fades;
-            if moved || recentered {
+            if moved {
                 (o.toolbar_at, o.toolbar_screen) = (at, index);
-            }
-            o.recentered |= recentered;
-            if o.recentered && !easing {
-                o.recentered = false;
-                o.placed_toolbar();
             }
             if let_go {
                 (o.moving_toolbar, o.let_go) = (None, false);
@@ -859,4 +845,43 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
     })?;
     let redraw = if resized || changed { vec![view] } else { Vec::new() };
     Ok(Followed { changed, redraw })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use asides_core::inspect::Screen;
+
+    fn screen() -> SpecScreen {
+        SpecScreen {
+            display: 1,
+            screen: Screen { name: None, width: 1512.0, height: 982.0, scale: 2.0 },
+            origin: (0.0, 0.0),
+            frame: PtRect::new(0.0, 0.0, 1512.0, 982.0),
+            pixels: String::new(),
+            width: 3024,
+            height: 1964,
+            place: None,
+            menu_bar: 38.0,
+        }
+    }
+
+    #[test]
+    fn keeps_the_pill_where_it_was_put_whatever_its_width() {
+        let s = screen();
+        let middle = |p: PtRect| p.x + p.width / 2.0;
+        // A long session's name, then History: the same middle, so it doesn't creep.
+        let at = Some((0.3, 0.2));
+        let (wide, narrow) = (pill_place(&s, None, at, (420.0, 44.0)), pill_place(&s, None, at, (260.0, 44.0)));
+        assert_eq!((middle(wide), wide.y), (454.0, 196.0));
+        assert_eq!((middle(narrow), narrow.y), (454.0, 196.0));
+        // Where it shows is where it's kept: kept so, it shows there again.
+        let kept = Some((middle(wide) / 1512.0, wide.y / 982.0));
+        assert_eq!(pill_place(&s, None, kept, (420.0, 44.0)), wide);
+        // Past an edge, it stays on the screen.
+        assert_eq!(pill_place(&s, None, Some((0.99, 0.2)), (420.0, 44.0)).x, 1512.0 - 420.0);
+        // Never put anywhere: at the top in the middle, below the menu bar.
+        let first = pill_place(&s, None, None, (300.0, 44.0));
+        assert_eq!((middle(first), first.y), (756.0, 38.0 + PILL_TOP));
+    }
 }

@@ -257,9 +257,6 @@ pub struct Overlay {
     target_switched: Option<Instant>,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
-    /// Put somewhere by the user, the pill's kept corner moved as its width eased: kept again once
-    /// the width settles (`windows::follow_toolbar`).
-    pub recentered: bool,
     /// On the pill, where the aside goes (Tab, the list) and the tool (none for Annotate, or
     /// live; the gap before it included): their widths ease to what they show, the pill's with
     /// them. Each step shows as the pill's window follows (`take_next`), which takes the pill's
@@ -324,7 +321,7 @@ pub struct Overlay {
     pub toolbar_screen: usize,
     /// Which windows show: the pill's alone (`Some(true)`, live) or over the screens' (`Some(false)`).
     pub shown: Option<bool>,
-    /// Where the user put the pill (its top-left corner, as a fraction of the screen).
+    /// Where the user put the pill (its top middle, as a fraction of the screen).
     pub toolbar_at: Option<(f64, f64)>,
     /// In the pill's window, as last drawn: the pill with its list, the pill, the list. Its window
     /// fits them, and macOS blurs what's behind the pill and the list (`windows::follow_toolbar`):
@@ -423,7 +420,6 @@ impl Overlay {
             toast_shown: None,
             target_switched: None,
             following: false,
-            recentered: false,
             label: Slot::new(spec.targets.label(spec.targets.chosen.as_ref()).into()),
             badge: Slot::empty(),
             help: spec.tips && !spec.live,
