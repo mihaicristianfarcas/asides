@@ -27,7 +27,7 @@ use gpui::{
     quad, size, svg, transparent_black,
 };
 
-use crate::controls::{Fade, Glide, fade_in};
+use crate::controls::{Fade, Glide, Slot, fade_in};
 use crate::export::{self, Exporter};
 use crate::input::TextInput;
 use crate::{finish, glass, io, style};
@@ -257,13 +257,16 @@ pub struct Overlay {
     target_switched: Option<Instant>,
     /// The pill's window is asked to follow the pill at once (`windows::follow_now`).
     pub following: bool,
-    /// Where the aside goes, as the pill shows it. Another (Tab, the list) is first drawn unseen
-    /// beside it, to know its width (`label_widths`: the one shown, the one to come): the pill's
-    /// window then takes the pill's new width (`pill_next`) as it draws it, in one go. Drawn first
-    /// in the old window, a longer name was cut off for a frame, and a shorter one moved.
-    pill_label: SharedString,
-    pub label_widths: (Option<f32>, Option<f32>),
-    pill_next: Option<f64>,
+    /// Put somewhere by the user, the pill's kept corner moved as its width eased: kept again once
+    /// the width settles (`windows::follow_toolbar`).
+    pub recentered: bool,
+    /// On the pill, where the aside goes (Tab, the list) and the tool (none for Annotate, or
+    /// live; the gap before it included): their widths ease to what they show, the pill's with
+    /// them. Each step shows as the pill's window follows (`take_next`), which takes the pill's
+    /// width as it's drawn: drawn first in the old window, a longer name was cut off for a frame,
+    /// and the glass showed past a shorter one.
+    pub label: Slot<SharedString>,
+    pub badge: Slot<Tool>,
     /// The keys under the pill: shown (`?`, its button, the first freeze), or while the pointer is
     /// on its button; fading in and out.
     help: bool,
@@ -420,9 +423,9 @@ impl Overlay {
             toast_shown: None,
             target_switched: None,
             following: false,
-            pill_label: spec.targets.label(spec.targets.chosen.as_ref()).into(),
-            label_widths: (None, None),
-            pill_next: None,
+            recentered: false,
+            label: Slot::new(spec.targets.label(spec.targets.chosen.as_ref()).into()),
+            badge: Slot::empty(),
             help: spec.tips && !spec.live,
             help_hover: false,
             keys_sheet: Fade::default(),
@@ -660,22 +663,15 @@ impl Overlay {
         cx.notify();
     }
 
-    /// The pill, just drawn (`bounds`, in its window): what goes with it waits for this. With a new
-    /// name to come, its width with it.
+    /// The pill, just drawn (`bounds`, in its window): what goes with it waits for this.
     pub fn drawn_pill(&mut self, bounds: Bounds<Pixels>) {
         self.pill_bounds = Some(bounds);
-        if self.target_label() != self.pill_label && self.pill_next.is_none() {
-            // The pill's width with the name to come, both drawn just now.
-            let (shown, next) = self.label_widths;
-            let width = f64::from(f32::from(bounds.size.width));
-            self.pill_next = Some(width + f64::from(next.unwrap_or_default() - shown.unwrap_or_default()));
-        }
     }
 
     /// The pill and what's under it, just drawn (`bounds`, in its window): whether its window must
-    /// follow at once (`windows::follow_now`). A new name to show, the pill or what's under it drawn
-    /// at a size the window isn't, the list or the keys fading (the glass behind them fades too), or a
-    /// toast waits.
+    /// follow at once (`windows::follow_now`). A name or a tool to show, or their widths to ease,
+    /// the pill or what's under it drawn at a size the window isn't, the list or the keys fading
+    /// (the glass behind them fades too), or a toast waits.
     pub fn drawn_toolbar(&mut self, bounds: Bounds<Pixels>) -> bool {
         self.toolbar_bounds = Some(bounds);
         let p = |v: Pixels| f64::from(f32::from(v));
@@ -684,8 +680,22 @@ impl Overlay {
             (w - size(bounds.size.width)).abs() < 0.5 && (h - size(bounds.size.height)).abs() < 0.5
         });
         let fading = (self.list.shown(), self.keys_sheet.shown()) != self.glass_fades;
-        let relabel = self.target_label() != self.pill_label;
-        (relabel || !self.pill_fits() || !fits || fading || self.toast_waits) && self.shown.is_some()
+        (self.pill_moving() || !self.pill_fits() || !fits || fading || self.toast_waits) && self.shown.is_some()
+    }
+
+    /// The tool whose name the pill shows: none for Annotate, or live.
+    fn badge_wanted(&self) -> Option<Tool> {
+        (!self.live && self.session.tool != Tool::Annotate).then_some(self.session.tool)
+    }
+
+    /// The name or the tool on the pill is still to change, or their widths to ease.
+    pub fn pill_moving(&self) -> bool {
+        self.label.moving(Some(&self.target_label())) || self.badge.moving(self.badge_wanted().as_ref())
+    }
+
+    /// The pill's screen's pixels to a point: the pill is drawn on them.
+    pub fn pill_scale(&self) -> f32 {
+        self.spec.screens.get(self.toolbar_screen).map_or(2.0, |s| s.screen.scale) as f32
     }
 
     /// Where the aside goes, as its name reads.
@@ -693,13 +703,17 @@ impl Overlay {
         self.spec.targets.label(self.target.as_ref()).into()
     }
 
-    /// The name to come shows now, and the pill's width with it (for its window to take as it's
-    /// drawn).
-    pub fn take_next_label(&mut self, cx: &mut Context<Self>) -> Option<f64> {
-        let width = self.pill_next.take()?;
-        (self.pill_label, self.label_widths) = (self.target_label(), (None, None));
+    /// The name and the tool on the pill, a step on, show now, and the pill's width with them (for
+    /// its window to take as it's drawn).
+    pub fn take_next(&mut self, cx: &mut Context<Self>) -> Option<f64> {
+        let (label, badge, scale) = (self.target_label(), self.badge_wanted(), self.pill_scale());
+        let grew = [self.label.step(Some(&label), scale), self.badge.step(badge.as_ref(), scale)];
+        if grew.iter().all(Option::is_none) {
+            return None;
+        }
         cx.notify();
-        Some(width)
+        let drawn = self.pill_bounds.map(|b| f64::from(f32::from(b.size.width)))?;
+        Some(drawn + grew.iter().flatten().map(|&g| f64::from(g)).sum::<f64>())
     }
 
     /// The pill's window fits the pill as last drawn, and what goes with it is placed for it.
@@ -2368,40 +2382,36 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         })
         .child(icon("help", if help { Emphasis::On.ink() } else { plain }))
         .into_any_element();
-    let mut items: Vec<AnyElement> = vec![group(vec![
+    // What a `Slot` shows, as wide as it's drawn (clipped while it grows, faded while it grows in or
+    // shrinks away), noting the width it takes.
+    let scale = o.pill_scale();
+    let slot = |width: Option<f32>, shown: f32, content: Div, measure: fn(&mut Overlay, f32)| {
+        let o4 = overlay.clone();
+        div().flex().flex_none().when_some(width, |d, w| d.w(px(w)).overflow_hidden()).opacity(shown).child(
+            content
+                .relative()
+                .flex_none()
+                .child(measured(move |b, cx| o4.update(cx, |o, _| measure(o, f32::from(b.size.width))))),
+        )
+    };
+    let first = group(vec![
         help_button,
         mic_button(overlay, o),
         button(
             "target",
             format!("Where it goes ({} switches)", o.keys.label(Cmd::Target)),
             target,
-            div()
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .relative()
-                .child(div().relative().max_w(px(240.)).truncate().child(o.pill_label.clone()).child({
-                    let o4 = overlay.clone();
-                    measured(move |b, cx| o4.update(cx, |o, _| o.label_widths.0 = Some(f32::from(b.size.width))))
-                }))
-                // The name to come, unseen, to know its width before it shows (`Overlay::pill_label`):
-                // in a row of the most it takes (absolute, it would take only the name's room).
-                .children((o.target_label() != o.pill_label).then(|| {
-                    let o5 = overlay.clone();
-                    div().absolute().top_0().left_0().w(px(240.)).flex().opacity(0.).child(
-                        div().relative().flex_none().max_w(px(240.)).truncate().child(o.target_label()).child(
-                            measured(move |b, cx| {
-                                o5.update(cx, |o, _| o.label_widths.1 = Some(f32::from(b.size.width)))
-                            }),
-                        ),
-                    )
-                }))
-                .into_any_element(),
+            slot(
+                o.label.width(scale),
+                o.label.shown(),
+                div().max_w(px(240.)).truncate().children(o.label.shows().cloned()),
+                |o, width| o.label.measured(width),
+            )
+            .into_any_element(),
             Box::new(|o, _, _| o.click_list()),
         ),
-    ])];
-    if !o.live && session.tool != Tool::Annotate {
-        let tool = session.tool;
+    ]);
+    let badge = o.badge.shows().copied().map(|tool| {
         let back = if tool == Tool::Shot { session.previous_tool } else { Tool::Annotate };
         let name = format!(
             "{}: a click here, or {}, goes back to {}",
@@ -2409,7 +2419,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             o.keys.label(Cmd::Tool(tool)),
             back.label()
         );
-        items.push(button(
+        let badge = button(
             "tool",
             name,
             Emphasis::On,
@@ -2420,9 +2430,20 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .child(icon(tool_icon(tool), Emphasis::On.ink()))
                 .child(tool.label())
                 .into_any_element(),
-            Box::new(move |o, _, _| o.session.toggle_tool(tool)),
-        ));
-    }
+            // Shrinking away, it's already put down.
+            Box::new(move |o, _, _| {
+                if o.session.tool == tool {
+                    o.session.toggle_tool(tool)
+                }
+            }),
+        );
+        slot(o.badge.width(scale), o.badge.shown(), div().flex().pl(px(PILL_GAP)).child(badge), |o, width| {
+            o.badge.measured(width)
+        })
+    });
+    // The tool goes by the first buttons, the gap before it its own, for it to grow in from
+    // nothing.
+    let mut items: Vec<AnyElement> = vec![div().flex().items_center().child(first).children(badge).into_any_element()];
     items.push(sep());
     items.push(group(vec![
         button(
@@ -2887,7 +2908,7 @@ fn toolbar_panel(
                     });
                 })
                 // Grabbed anywhere but its buttons; they fill it, their corners inside its own.
-                .child(div().flex().items_center().gap(px(2.)).p(px(4.)).children(items))
+                .child(div().flex().items_center().gap(px(PILL_GAP)).p(px(4.)).children(items))
                 .child(measured(move |bounds, cx| measure_pill.update(cx, |o, _| o.drawn_pill(bounds)))),
         )
         .children(list)
@@ -3042,6 +3063,8 @@ impl ToolbarView {
 
 /// Room around the pill in its window, for its edges' antialiasing.
 pub const TOOLBAR_MARGIN: f64 = 1.0;
+/// Between the pill's buttons.
+const PILL_GAP: f32 = 2.0;
 /// The pill's list: its width, the most its rows take before they scroll, and the gap above it.
 pub const LIST_WIDTH: f64 = 360.0;
 /// The keys under the pill: their width.
@@ -3054,8 +3077,8 @@ const LIST_FOLDERS: usize = 5;
 impl Render for ToolbarView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let o = self.overlay.read(cx);
-        // Fading, it's drawn every frame.
-        if o.list.moving() || o.keys_sheet.moving() || !o.level.settled() {
+        // Fading or growing, it's drawn every frame.
+        if o.list.moving() || o.keys_sheet.moving() || !o.level.settled() || o.pill_moving() {
             window.request_animation_frame();
         }
         // As big as the pill and its list: its window fits them. Until it does, the pill stays in

@@ -448,8 +448,9 @@ fn prepare_toolbar(overlay: &Entity<Overlay>, toolbar: usize, cx: &mut AsyncApp)
 /// a new size (where the aside goes changed), or a toast waits for it. What goes with it on the
 /// frozen screen (`ScreenView::notes`) is drawn now too, so they change together.
 pub fn follow_now(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
-    // A new name for where the aside goes shows as the window takes the pill's new width: the
-    // window is resized and drawn, the glass and what goes with the pill too, in one transaction.
+    // A new name for where the aside goes, and each step of the tool's name growing in or
+    // shrinking away, shows as the window takes the pill's new width: the window is resized and
+    // drawn, the glass and what goes with the pill too, in one transaction.
     native::transaction(|| follow_now_inside(overlay, cx));
 }
 
@@ -459,7 +460,7 @@ pub fn follow_now(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
 fn follow_now_inside(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
     let settled = cx.update(|cx| {
         overlay.update(cx, |o, cx| {
-            let width = o.take_next_label(cx);
+            let width = o.take_next(cx);
             let waited = std::mem::take(&mut o.toast_waits);
             if waited {
                 // The new toast takes the last one's place, in the same frame as the pill.
@@ -724,7 +725,7 @@ pub fn deadline(o: &Overlay) -> Option<Instant> {
 /// The pill's window: the pill where it goes (`pill_place`), under the pointer while it's moved,
 /// and the window as big as the pill and its list as drawn (`toolbar_frame`). macOS blurs what's
 /// behind them only (`native::set_glass`). With `width`, the pill's width about to be drawn (a new
-/// name), not as last drawn. Whether what goes with the pill moved, and whether to draw it again.
+/// name, the tool's name a step on), not as last drawn. Whether what goes with the pill moved, and whether to draw it again.
 fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f64>) -> anyhow::Result<Followed> {
     let state = cx.update(|cx| {
         let o = overlay.read(cx);
@@ -756,7 +757,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         o.toolbar_window.as_ref().map(|t| {
             let screens = spec.screens.clone();
             let place = (o.toolbar_at, o.toolbar_screen, o.pill_rect);
-            let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades);
+            let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades, o.pill_moving());
             (t.view, pill, whole.unwrap_or(pill), shapes, moved, place, screens, spec.windowed, sides)
         })
     })?;
@@ -765,7 +766,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         pill,
         whole,
         shapes,
-        (moving, grabbed, fades),
+        (moving, grabbed, fades, easing),
         (mut at, mut index, last),
         screens,
         windowed,
@@ -794,6 +795,16 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         }
     }
     let Some(screen) = screens.get(index) else { return Ok(Followed::default()) };
+    // Put somewhere by the user, it grows and shrinks about its middle too, as where asides puts it:
+    // the top-left corner that's kept moves (kept again once its width settles). Only as its width
+    // eases: drawn the first time, the pill isn't as wide as guessed.
+    let mut recentered = false;
+    if let (Some((fx, fy)), Some((i, last)), Some(_), false) = (at, last, width, grabbed)
+        && i == index
+        && (pill.0 - last.width).abs() >= 0.01
+    {
+        (at, recentered) = (Some((fx - (pill.0 - last.width) / 2.0 / screen.frame.width, fy)), true);
+    }
     let place = pill_place(screen, windowed, at, pill);
     let (f, left, up) = toolbar_frame(screen, windowed, place, whole);
     // Where it shows is where it's kept: let go past an edge, it comes back there next time too.
@@ -828,8 +839,13 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
                 o.glass_shapes = Some((shapes, (f.width, f.height)));
             }
             o.glass_fades = fades;
-            if moved {
+            if moved || recentered {
                 (o.toolbar_at, o.toolbar_screen) = (at, index);
+            }
+            o.recentered |= recentered;
+            if o.recentered && !easing {
+                o.recentered = false;
+                o.placed_toolbar();
             }
             if let_go {
                 (o.moving_toolbar, o.let_go) = (None, false);
