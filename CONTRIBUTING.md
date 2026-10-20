@@ -124,8 +124,9 @@ Run what your change touches, and say in the pull request what you tried.
   freezes (no pill in the screenshot); `⌃⌥Space` sends from live; closed, `⌃⌥P` opens live.
 - [ ] **Glass**: every surface shows what's behind it blurred, over light and dark.
 - [ ] **Sending**, each of Claude Code, Codex, OpenCode in each of Terminal, Ghostty, Diri: the
-  Automation prompt the first time; the message with screenshots attached where taken; queued
-  while the agent works; the clipboard restored; a gone session reported, the aside in History.
+  Automation prompt the first time; the message with screenshots attached where taken (none with
+  nothing marked); queued while the agent works; the clipboard restored; a gone session reported,
+  the aside in History.
 - [ ] **New session in…** in Terminal, Ghostty and Diri, in bash, zsh and fish.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.

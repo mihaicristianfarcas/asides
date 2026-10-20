@@ -1370,7 +1370,7 @@ impl App {
         if takes.is_empty() {
             // Nothing said: what was made, in order.
             if outcome.items.is_empty() && dictations.is_empty() {
-                return;
+                return self.flash(FLASH, Mark::Dash, "Nothing pinned, drawn or said; nothing was sent");
             }
             let (pictures, mut texts, pins) = inspection_parts(outcome, images, |time| time);
             texts.extend(dictations);

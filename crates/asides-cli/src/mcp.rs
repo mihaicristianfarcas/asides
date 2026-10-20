@@ -22,8 +22,8 @@ const MAX_INLINE_IMAGE: u64 = 3_750_000;
 const MAX_INLINE_IMAGES: usize = 6;
 
 const INSTRUCTIONS: &str = "asides lets the user freeze their screen, click what's wrong (numbered pins on elements and \
-    areas), measure, draw and say why; asides then types it into this chat as their message, with each freeze's \
-    screenshot. Each aside is also kept in their history (~/.asides/history). get_aside reads one again (the newest by \
+    areas), measure, draw and say why; asides then types it into this chat as their message, with a screenshot of \
+    what they marked. Each aside is also kept in their history (~/.asides/history). get_aside reads one again (the newest by \
     default) with its screenshots; list_asides lists recent ones. Transcripts are verbatim speech-to-text: expect \
     misheard words, especially names of projects and libraries. measure_image measures a screenshot (distances \
     between edges, an object's bounds and padding).";

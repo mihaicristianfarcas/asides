@@ -579,16 +579,16 @@ impl Overlay {
     /// The last freeze, kept for the aside if it isn't yet.
     pub fn keep_last(&mut self) {
         if let Some(keeping) = self.keeping.take()
-            && let Err(err) = self.keep(keeping, false, false)
+            && let Err(err) = self.keep(keeping, false)
         {
             eprintln!("could not keep the frozen screen: {err:#}");
         }
     }
 
-    /// What was done on a freeze, kept for the aside (`alone`: the screen even with nothing on it;
-    /// `whole`: all of it, not just around what's there).
-    fn keep(&mut self, k: Keeping, alone: bool, whole: bool) -> anyhow::Result<()> {
-        if k.session.inspections().is_empty() && k.shots.is_empty() && !alone {
+    /// What was done on a freeze, kept for the aside: only that, unless `whole`, all of the screen
+    /// (even with nothing on it).
+    fn keep(&mut self, k: Keeping, whole: bool) -> anyhow::Result<()> {
+        if k.session.inspections().is_empty() && k.shots.is_empty() && !whole {
             return Ok(());
         }
         let exporter = k.exporter.unwrap_or_else(|| {
@@ -596,8 +596,7 @@ impl Overlay {
             Exporter::new(&frames, style::parse_color(&self.spec.color))
         });
         let freeze = (k.freeze, k.frozen_at);
-        let items =
-            finish::items(&k.session, &exporter, &self.spec, &self.dir, whole, &k.shots, k.screen, freeze, alone)?;
+        let items = finish::items(&k.session, &exporter, &self.spec, &self.dir, whole, &k.shots, k.screen, freeze)?;
         self.kept.extend(items);
         Ok(())
     }
@@ -1353,13 +1352,12 @@ impl Overlay {
             io::emit(&Event::Talk { down: false, annotation: None });
         }
         self.keep_last();
-        // A frozen screen with nothing on it, and nothing before: the screen, like a screenshot.
+        // Only what was done on the frozen screen: with nothing on it, what was said goes alone.
         let kept = match self.live {
             true => Ok(()),
             false => {
-                let alone = self.kept.is_empty();
                 let keeping = self.this_freeze();
-                self.keep(keeping, alone, whole)
+                self.keep(keeping, whole)
             }
         };
         let outcome = finish::outcome(std::mem::take(&mut self.kept), self.saved.clone(), self.target.clone());
