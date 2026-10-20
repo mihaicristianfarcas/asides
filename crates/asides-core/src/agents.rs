@@ -165,7 +165,9 @@ impl AgentKind {
             AgentKind::OpenCode => words.extend(["--prompt".into(), prompt.into()]),
             // `-i` runs it, then stays interactive.
             AgentKind::Gemini | AgentKind::Qwen | AgentKind::Copilot => words.extend(["-i".into(), prompt.into()]),
-            AgentKind::Claude | AgentKind::Codex => words.push(prompt.into()),
+            // After `--`: an option taking several values before it (Claude Code's `--add-dir`,
+            // Codex's `--image`) took the prompt for one more, and the session started empty.
+            AgentKind::Claude | AgentKind::Codex => words.extend(["--".into(), prompt.into()]),
         }
         words
     }
@@ -263,8 +265,9 @@ mod tests {
     fn builds_command_lines_with_the_first_message() {
         assert_eq!(
             AgentKind::Claude.command("Fix it", &["--model".into(), "opus".into()]),
-            ["claude", "--model", "opus", "Fix it"]
+            ["claude", "--model", "opus", "--", "Fix it"]
         );
+        assert_eq!(AgentKind::Codex.command("-v is wrong", &[]), ["codex", "--", "-v is wrong"]);
         assert_eq!(AgentKind::OpenCode.command("Fix it", &[]), ["opencode", "--prompt", "Fix it"]);
         assert_eq!(AgentKind::Gemini.command("Fix it", &[]), ["gemini", "-i", "Fix it"]);
     }
