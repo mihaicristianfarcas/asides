@@ -41,7 +41,7 @@ use asides_core::models::ModelSpec;
 use asides_core::overlay::Saved;
 use asides_core::paths;
 use asides_core::sessions::{self, AgentSession};
-use asides_core::state::{self as app_state, AppState, Permission, Permissions};
+use asides_core::state::{self as app_state, AppState, LoginItem, Permission, Permissions};
 use asides_core::takes;
 use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
@@ -106,8 +106,8 @@ enum UserEvent {
     Overlay(u32, OverlayMessage),
     /// What the updater found, downloaded or couldn't do.
     Update(UpdateReply),
-    /// What macOS lets asides do now (and the microphone).
-    Permissions(Permissions, Mic),
+    /// What macOS lets asides do now (and the microphone), and whether it opens at login.
+    Permissions(Permissions, Mic, LoginItem),
     /// What macOS lets asides do may have changed: an app came to the front (back from System
     /// Settings, or a prompt answered), or Accessibility was turned on or off for an app.
     PermissionsMayHaveChanged,
@@ -250,6 +250,8 @@ struct App {
     /// What macOS lets asides do, as last looked at, and whether a look is under way.
     permissions: Permissions,
     checking_permissions: bool,
+    /// Whether asides opens at login, as macOS last said (looked at with the permissions).
+    open_at_login: LoginItem,
     /// The user went through setup or skipped it, and how far it got.
     onboarded: bool,
     setup_step: Option<String>,
@@ -374,6 +376,7 @@ impl App {
             whats_new_seen,
             permissions: previous.permissions,
             checking_permissions: false,
+            open_at_login: LoginItem::Unknown,
             onboarded: previous.onboarded,
             setup_step: previous.setup_step,
             quit_when_idle: false,
@@ -511,7 +514,7 @@ impl App {
             }
             UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
             UserEvent::Update(reply) => self.on_update(reply),
-            UserEvent::Permissions(mut permissions, mic) => {
+            UserEvent::Permissions(mut permissions, mic, open_at_login) => {
                 // macOS answers only for an app that runs: one that quit keeps its last answer.
                 for (app, status) in &mut permissions.automation {
                     if let Some(known) = self.permissions.automation(app).filter(|s| *s == "granted" || *s == "denied")
@@ -523,9 +526,10 @@ impl App {
                 self.checking_permissions = false;
                 self.screen_permitted |= permissions.screen;
                 let changed = mic != self.mic
+                    || open_at_login != self.open_at_login
                     || Permissions { checked_ms: 0, ..permissions.clone() }
                         != Permissions { checked_ms: 0, ..self.permissions.clone() };
-                (self.permissions, self.mic) = (permissions, mic);
+                (self.permissions, self.mic, self.open_at_login) = (permissions, mic, open_at_login);
                 if changed {
                     self.refresh();
                     self.publish();
@@ -555,6 +559,7 @@ impl App {
                 "done" => (self.onboarded, self.setup_step) = (true, None),
                 _ => self.setup_step = Some(step),
             },
+            Link::Login { open, .. } => self.set_open_at_login(open),
             Link::Sessions { .. } => self.ask_for_sessions(),
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
@@ -1661,6 +1666,7 @@ impl App {
             update: self.updates.status.clone(),
             whats_new_seen: Some(self.whats_new_seen.clone()),
             permissions: self.permissions.clone(),
+            open_at_login: self.open_at_login,
             onboarded: self.onboarded,
             setup_step: self.setup_step.clone(),
             updated_ms: history::now_ms(),
@@ -1694,8 +1700,8 @@ impl App {
         });
     }
 
-    /// Looks at what macOS lets asides do (off the main thread: Screen Recording takes 11 ms, and
-    /// Apple events wait on the app asked about).
+    /// Looks at what macOS lets asides do, and whether it opens at login (off the main thread:
+    /// Screen Recording takes 11 ms, and Apple events wait on the app asked about).
     fn check_permissions(&mut self) {
         if std::mem::replace(&mut self.checking_permissions, true) {
             return;
@@ -1714,8 +1720,20 @@ impl App {
                 automation,
                 checked_ms: history::now_ms(),
             };
-            let _ = proxy.send_event(UserEvent::Permissions(permissions, macos::mic_status()));
+            let _ = proxy.send_event(UserEvent::Permissions(permissions, macos::mic_status(), macos::login_item()));
         });
+    }
+
+    /// Opens asides at login, or stops (General's and setup's switch). Turned off in System
+    /// Settings, it can be turned on only there: they open.
+    fn set_open_at_login(&mut self, open: bool) {
+        match macos::set_open_at_login(open) {
+            Ok(LoginItem::NeedsApproval) if open => macos::open_login_items(),
+            Ok(_) => {}
+            Err(message) => self.fail(format!("Could not change opening at login: {message}")),
+        }
+        self.open_at_login = macos::login_item();
+        self.publish();
     }
 
     /// Asks macOS for a permission (setup's buttons): its prompt the first time, then its settings.

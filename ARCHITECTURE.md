@@ -93,7 +93,7 @@ crates/
     overlay.rs        driving asides-overlay; the standby process
     elements.rs       what's under a pin: window list and accessibility tree
     stt.rs            model downloads, whisper-rs, language choice
-    macos.rs          microphone permission, sounds, frontmost app, the command link
+    macos.rs          microphone permission, sounds, frontmost app, the command link, opening at login
     update.rs         the updater (check, download, verify), the swap script, Flow (its states)
 packaging/            Info.plist, icon, entitlements, Cloudflare Workers (download/, site/)
 scripts/              e2e, fixtures, signing, release, dmg, website images, icon
@@ -180,10 +180,11 @@ Until `onboarded`, the app opens the window on setup at launch (`--window`, page
 how asides works first (the basics' clip, as Help does). Its steps change `config.toml` as the
 settings do, and ask the app through links: `asides://permission`
 (macOS's prompt; Automation with `AEDeterminePermissionToAutomateTarget`, the app started first),
-`asides://setup` (the step reached, to go on after a restart; `done` ends it). While the window is
-open, the app looks at the permissions again, off the main thread, into `state.permissions`, when an
-app comes to the front (back from System Settings, or a prompt answered) or Accessibility changes
-for an app: macOS says nothing more.
+`asides://setup` (the step reached, to go on after a restart; `done` ends it), `asides://login`
+(opening at login, as General's switch does). While the window is open, the app looks at the
+permissions and opening at login again, off the main thread, into `state.permissions` and
+`state.open_at_login`, when an app comes to the front (back from System Settings, or a prompt
+answered) or Accessibility changes for an app: macOS says nothing more.
 
 ### Updating
 
@@ -237,7 +238,7 @@ Break these only on purpose, and update this list.
 |---|---|---|
 | `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
-| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, setup |
+| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, opening at login, setup |
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |
@@ -288,5 +289,8 @@ Break these only on purpose, and update this list.
 - **Updates trust Apple, as Diri's do**: Developer ID and notarization, checked on the download,
   instead of Sparkle and a signing key of our own to keep. The feed is a release asset, so
   publishing a release publishes the update.
+- **Opening at login is macOS's**, not a setting: `SMAppService`'s main app, which System Settings
+  → General → Login Items changes too. The app asks macOS and publishes what it says; a copy in
+  `config.toml` would drift from it. Turned off there, only there can it be turned on again.
 - **Wispr Flow through its database**, read with `/usr/bin/sqlite3`, columns discovered at run
   time.
