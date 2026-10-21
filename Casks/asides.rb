@@ -1,8 +1,8 @@
 # This repository is also a Homebrew tap. scripts/release.sh updates the version and checksum;
 # commit the change after the release is published on GitHub.
 cask "asides" do
-  version "1.0.3"
-  sha256 "08cbf75f40388ecc9c44839050b8327787303582d29f9f80ffd5052622376ffe"
+  version "1.0.4"
+  sha256 "69442ab3c8a3b1ef14e85c959edf601f4ed5f580dee46ce1ab4b163cb2a3fbf5"
 
   url "https://github.com/mihaicristianfarcas/asides/releases/download/v#{version}/asides-#{version}.zip"
   name "asides"
