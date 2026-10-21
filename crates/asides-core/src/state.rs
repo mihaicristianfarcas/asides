@@ -50,6 +50,8 @@ pub struct AppState {
     pub whats_new_seen: Option<String>,
     /// What macOS lets asides do, besides the microphone (`microphone`), as last looked at.
     pub permissions: Permissions,
+    /// Whether asides opens at login, as macOS last said (looked at with the permissions).
+    pub open_at_login: LoginItem,
     /// The user went through setup (or skipped it): the window no longer opens on it at launch.
     pub onboarded: bool,
     /// How far setup got (its step), to go on from there after asides restarts (Screen Recording
@@ -78,6 +80,20 @@ impl Permissions {
     pub fn automation(&self, app: &str) -> Option<&str> {
         self.automation.iter().find(|(a, _)| a.eq_ignore_ascii_case(app)).map(|(_, s)| s.as_str())
     }
+}
+
+/// Whether asides opens at login: macOS's Login Items, which System Settings → General → Login
+/// Items changes too, so it's never kept in the settings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginItem {
+    /// Not looked at yet.
+    #[default]
+    Unknown,
+    Off,
+    On,
+    /// Turned off in System Settings: only there can it be turned on again.
+    NeedsApproval,
 }
 
 /// A permission asides can ask for (setup's buttons).
@@ -157,6 +173,7 @@ mod tests {
                 automation: vec![("Terminal".into(), "granted".into())],
                 ..Default::default()
             },
+            open_at_login: LoginItem::NeedsApproval,
             onboarded: true,
             setup_step: Some("voice".into()),
             ..Default::default()
@@ -182,6 +199,7 @@ mod tests {
         fs::write(&path, r#"{"pid": 1, "status": "idle", "bound_dir": "/x", "agent_sends": []}"#).unwrap();
         let state = AppState::read(&path).unwrap();
         assert_eq!((state.pid, state.recent_dirs), (1, Vec::<PathBuf>::new()));
+        assert_eq!(state.open_at_login, LoginItem::Unknown);
     }
 
     #[test]

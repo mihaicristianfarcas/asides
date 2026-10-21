@@ -110,6 +110,10 @@ Run what your change touches, and say in the pull request what you tried.
   asides, then **Allowed**; the download shows its progress; the Pins step's choice shows in
   Settings → Pins; **Skip** leaves the defaults and nothing downloads; reopened mid-way, it goes on
   at the step it was at.
+- [ ] **Open at login**: General's switch and setup's (Shortcuts step) add asides to System Settings
+  → General → Login Items (macOS notifies) and take it out; changed there, the switch follows when
+  you come back; turned off there, the row offers **Open System Settings…**; after logging out and
+  in, asides is in the menu bar.
 - [ ] **Menu bar**: the mark alone (dot recording, dots busy, `[n]` sent, `!` error); the menu has
   the status, Open asides, Open Live, Copy the Last Aside, three switches, History…, Settings…, Quit.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,

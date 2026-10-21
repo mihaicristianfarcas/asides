@@ -1,7 +1,9 @@
 # Settings
 
 All of them are in the asides window, and in
-`~/Library/Application Support/asides/config.toml`, applied as soon as you save. The defaults:
+`~/Library/Application Support/asides/config.toml`, applied as soon as you save. Open at login
+(General) is macOS's, not in the file: System Settings → General → Login Items changes it too. The
+defaults:
 
 ```toml
 mic_on_open = true              # listen as soon as asides opens

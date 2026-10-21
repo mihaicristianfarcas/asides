@@ -1,5 +1,5 @@
 //! Small AppKit/AVFoundation helpers: sounds, the microphone and Automation permissions, apps in
-//! front, the command link.
+//! front, the command link, opening at login.
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use std::ptr::NonNull;
 
+use asides_core::state::LoginItem;
 use block2::RcBlock;
 use objc2::runtime::Bool;
 use objc2_app_kit::{
@@ -17,6 +18,7 @@ use objc2_app_kit::{
 };
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
 use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSString};
+use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mic {
@@ -137,6 +139,34 @@ pub fn ask_automation(bundle: &str) -> Automation {
         unsafe { center.removeObserver(observer.as_ref()) };
     }
     automation(bundle, true)
+}
+
+/// Whether asides opens at login (macOS's Login Items: this copy, where it is).
+pub fn login_item() -> LoginItem {
+    match unsafe { SMAppService::mainAppService().status() } {
+        SMAppServiceStatus::Enabled => LoginItem::On,
+        SMAppServiceStatus::RequiresApproval => LoginItem::NeedsApproval,
+        _ => LoginItem::Off,
+    }
+}
+
+/// Opens asides at login, or stops; macOS notifies the user and lists it in System Settings →
+/// General → Login Items. Turned off there, it stays so (`NeedsApproval`): only there can it be
+/// turned on again. Returns how it is now.
+pub fn set_open_at_login(open: bool) -> Result<LoginItem, String> {
+    let service = unsafe { SMAppService::mainAppService() };
+    // Registering twice, or unregistering what isn't, is an error.
+    let done = match (open, login_item()) {
+        (true, LoginItem::Off | LoginItem::Unknown) => unsafe { service.registerAndReturnError() },
+        (false, LoginItem::On | LoginItem::NeedsApproval) => unsafe { service.unregisterAndReturnError() },
+        _ => Ok(()),
+    };
+    done.map(|()| login_item()).map_err(|err| err.localizedDescription().to_string())
+}
+
+/// System Settings → General → Login Items.
+pub fn open_login_items() {
+    unsafe { SMAppService::openSystemSettingsLoginItems() };
 }
 
 /// Calls `changed` when what macOS lets asides do may have changed: an app came to the front (back

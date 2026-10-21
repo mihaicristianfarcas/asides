@@ -26,7 +26,7 @@ use asides_core::markdown::Part;
 use asides_core::models::{MODELS, ModelSpec};
 use asides_core::paths::{self, tilde};
 use asides_core::sessions::{self, AgentSession};
-use asides_core::state::{AppState, Permission};
+use asides_core::state::{AppState, LoginItem, Permission};
 use asides_core::update::{self, Block, Notes, Phase, Span, Step};
 use chrono::{Local, TimeZone};
 use futures::StreamExt;
@@ -2604,6 +2604,33 @@ impl AsidesWindow {
             .into_any_element()
     }
 
+    /// Opening at login, as macOS has it: a switch (the app tells macOS), or, turned off in System
+    /// Settings, a button that opens them (only there can it be turned on again).
+    fn login_row(&self, id: &'static str, why: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let open_at_login = self.state.open_at_login;
+        let ask = |open: bool| send_link(&Link::Login { open, request: None });
+        if open_at_login == LoginItem::NeedsApproval {
+            let open = button(SharedString::from(format!("{id}-settings")), "Open System Settings…", t).on_click(
+                move |_, _, _| {
+                    let _ = ask(true);
+                },
+            );
+            let why = "Turned off in System Settings → General → Login Items.";
+            return setting("Open at login", Some(why), open, t);
+        }
+        let this = cx.weak_entity();
+        let toggle = move |open: bool, _: &mut Window, cx: &mut App| {
+            let _ = ask(open);
+            // Shown at once; the app's state says how it went.
+            let _ = this.update(cx, |this, cx| {
+                this.state.open_at_login = if open { LoginItem::On } else { LoginItem::Off };
+                cx.notify();
+            });
+        };
+        setting("Open at login", Some(why), switch(id, open_at_login == LoginItem::On, t).on_toggle(toggle), t)
+    }
+
     /// The voice model (one to choose, and download), the languages, and listening.
     fn setup_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
@@ -2700,11 +2727,12 @@ impl AsidesWindow {
         let c = self.config.shortcuts.clone();
         let open = self.recorder("setup-record-asides", shortcut(&c.asides), Recording::Shortcut("asides"), cx);
         let freeze = self.recorder("setup-record-freeze", shortcut(&c.freeze), Recording::Shortcut("freeze"), cx);
+        let login = self.login_row("setup-login", "So the shortcuts work as soon as you log in.", cx);
         div()
             .flex()
             .flex_col()
             .gap(px(20.))
-            .child(page_header("Shortcuts", Some("They work over any app.".into()), t))
+            .child(page_header("Shortcuts", Some("They work over any app, while asides runs.".into()), t))
             .child(
                 section("", t)
                     .child(rows(
@@ -2726,6 +2754,7 @@ impl AsidesWindow {
                     ))
                     .child(footnote("Click one, then press the new keys. On the frozen screen, ? shows every key.", t)),
             )
+            .child(section("", t).child(rows([login], t)).child(footnote("Settings → General changes it later.", t)))
             .into_any_element()
     }
 
@@ -3022,6 +3051,7 @@ impl AsidesWindow {
                 permissions.push(self.permission_row(Need::Automation(app), cx));
             }
         }
+        let login = self.login_row("open-at-login", "asides starts in the menu bar, so its shortcuts always work.", cx);
         let set_up = button("set-up-again", "Set Up Again…", t).on_click(cx.listener(|this, _, _, cx| {
             this.setup = SetupStep::Basics;
             this.clips_since = Instant::now();
@@ -3037,6 +3067,7 @@ impl AsidesWindow {
                 .flex_col()
                 .gap(px(20.))
                 .child(page_header("General", Some("asides picks up changes at once.".into()), t))
+                .child(section("Startup", t).child(rows([login], t)))
                 .child(
                     section("History", t).child(rows(
                         [
@@ -3100,7 +3131,7 @@ impl AsidesWindow {
                     section("Setup", t).child(rows(
                         [setting(
                             "Set up asides again",
-                            Some("How it works, where sessions open, what each pin says, the permissions, the voice model and the shortcuts, step by step."),
+                            Some("How it works, where sessions open, what each pin says, the permissions, the voice model, the shortcuts and opening at login, step by step."),
                             set_up,
                             t,
                         )],

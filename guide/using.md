@@ -2,8 +2,8 @@
 
 The first time asides opens, setup shows how it works, then asks where new sessions open
 (Terminal, Ghostty or Diri, and the agent), how much each pin says, what macOS must allow, the
-voice model and the shortcuts. Skip it for the defaults: asides asks for each permission and the
-model when it first needs them. General → **Set Up Again** goes through it again. **Help**, at the
+voice model, the shortcuts, and whether asides opens at login. Skip it for the defaults: asides
+asks for each permission and the model when it first needs them, and doesn't open at login. General → **Set Up Again** goes through it again. **Help**, at the
 bottom of the asides window's sidebar, shows how to use asides, with clips of it.
 
 ## Freeze, pin, talk, send

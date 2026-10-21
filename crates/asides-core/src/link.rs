@@ -54,6 +54,11 @@ pub enum Link {
         step: String,
         request: Option<String>,
     },
+    /// Opens asides at login, or stops (General's and setup's switch).
+    Login {
+        open: bool,
+        request: Option<String>,
+    },
     /// Looks for the agent sessions running again (the asides window coming forward).
     Sessions {
         request: Option<String>,
@@ -110,6 +115,9 @@ impl Link {
                 Link::Setup { step, .. } => {
                     q.append_pair("step", step);
                 }
+                Link::Login { open, .. } => {
+                    q.append_pair("open", if *open { "true" } else { "false" });
+                }
                 Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                     q.append_pair("wav", &wav.to_string_lossy());
                     if let Some(to) = to {
@@ -160,6 +168,7 @@ impl Link {
             "quit" => Some(Link::Quit),
             "permission" => Some(Link::Permission { name: Permission::parse(&get("name")?)?, request }),
             "setup" => Some(Link::Setup { step: nonempty("step")?, request }),
+            "login" => Some(Link::Login { open: get("open")?.parse().ok()?, request }),
             "sessions" => Some(Link::Sessions { request }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
@@ -190,6 +199,7 @@ impl Link {
             Link::Quit => "quit",
             Link::Permission { .. } => "permission",
             Link::Setup { .. } => "setup",
+            Link::Login { .. } => "login",
             Link::Sessions { .. } => "sessions",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
@@ -207,6 +217,7 @@ impl Link {
             | Link::Update { request, .. }
             | Link::Permission { request, .. }
             | Link::Setup { request, .. }
+            | Link::Login { request, .. }
             | Link::Sessions { request }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
@@ -244,6 +255,8 @@ mod tests {
         round_trip(Link::Permission { name: Permission::Automation("Ghostty".into()), request: None });
         round_trip(Link::Permission { name: Permission::Screen, request: Some("r4".into()) });
         round_trip(Link::Setup { step: "voice".into(), request: None });
+        round_trip(Link::Login { open: true, request: None });
+        round_trip(Link::Login { open: false, request: Some("r6".into()) });
         round_trip(Link::Sessions { request: Some("r5".into()) });
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
@@ -269,6 +282,8 @@ mod tests {
         assert_eq!(Link::parse(&Url::parse("asides://send").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://send?id=").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://update?step=reboot").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://login").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://login?open=yes").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://new-session?id=a&agent=cursor&dir=/x").unwrap()), None);
     }
 }
