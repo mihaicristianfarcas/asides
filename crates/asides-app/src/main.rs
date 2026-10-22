@@ -58,7 +58,7 @@ use crate::capture::{Capture, ScreenInfo};
 use crate::elements::WindowInfo;
 use crate::hotkeys::{Action, Hotkeys};
 use crate::icons::{Icons, Mark};
-use crate::macos::{CommandLink, Mic};
+use crate::macos::{CommandLink, Mic, Sound};
 use crate::overlay::{Message as OverlayMessage, Overlay, Standby};
 use crate::stt::{ModelManager, ModelState};
 use crate::tray::{MenuAction, Tray, View};
@@ -684,7 +684,7 @@ impl App {
         match target {
             None | Some(Target::History) => {
                 self.flash(SENT_FLASH, Mark::Check, "Saved in History (asides window)");
-                self.sound("Glass");
+                self.sound(Sound::Sent);
             }
             Some(Target::Session { id: session }) => {
                 // Started since the last look (a few seconds ago, at most): look again.
@@ -758,7 +758,7 @@ impl App {
             None => {
                 let number = asides_today(id);
                 self.flash(SENT_FLASH, Mark::Number(number), format!("Sent #{number} to {}", delivery.to));
-                self.sound("Glass");
+                self.sound(Sound::Sent);
             }
             Some(message) => {
                 self.fail(format!("Could not send it to {}: {message}. It's in History.", delivery.to));
@@ -933,13 +933,14 @@ impl App {
         self.tell_overlay_recording();
         self.error = None;
         self.flash = None;
-        self.sound("Tink");
+        self.sound(Sound::MicOn);
         self.refresh();
         self.publish();
     }
 
     fn stop_recording(&mut self) {
         if let Some(take) = self.end_recording() {
+            self.sound(Sound::MicOff);
             self.keep_take(take);
         }
     }
@@ -974,12 +975,11 @@ impl App {
         self.add_session(vec![take], OverlayOutcome::default(), Vec::new(), Vec::new(), origin, Some(Target::History));
     }
 
-    /// Ends the recording under way: what it captured.
+    /// Ends the recording under way, without a sound (the caller says): what it captured.
     fn end_recording(&mut self) -> Option<Take> {
         let recording = self.recording.take()?;
         self.tell_overlay_recording();
         let (samples, sample_rate) = recording.recorder.finish();
-        self.sound("Pop");
         let mut texts = recording.texts;
         if let Some((place, _)) = recording.place.lock().unwrap().take() {
             texts.insert(0, (0.0, place));
@@ -1007,7 +1007,7 @@ impl App {
         let when = Instant::now().checked_sub(ago).unwrap_or_else(Instant::now);
         let offset = overlay::seconds_between(overlay.origin(), when);
         self.dictations.push((offset, dictation.text.trim().to_string()));
-        self.sound("Tink");
+        self.sound(Sound::Dictation);
     }
 
     // --- asides on screen ---
@@ -1247,9 +1247,12 @@ impl App {
                 match overlay.result() {
                     Ok((outcome, images)) => {
                         self.last_measure = outcome.saved.clone();
-                        // A recording about an annotation ends: transcribed for it.
-                        if self.recording.as_ref().is_some_and(|r| r.annotation.is_some()) {
-                            self.stop_recording();
+                        // The microphone turns off quietly: the aside's sound is "sent", once
+                        // it's there. A recording about an annotation is transcribed for it.
+                        if self.recording.as_ref().is_some_and(|r| r.annotation.is_some())
+                            && let Some(take) = self.end_recording()
+                        {
+                            self.keep_take(take);
                         }
                         // What was said in it and what was annotated, as one aside.
                         let mut takes = std::mem::take(&mut self.takes);
@@ -1279,7 +1282,7 @@ impl App {
                     self.tell_overlay_recording();
                 }
                 if talked {
-                    self.sound("Funk");
+                    self.sound(Sound::Closed);
                 }
                 self.flash(FLASH, Mark::Cross, "Closed: nothing was sent");
                 self.refresh();
@@ -1431,7 +1434,10 @@ impl App {
     /// in the history.
     fn keep_takes(&mut self) {
         let mut takes = std::mem::take(&mut self.takes);
-        takes.extend(self.end_recording());
+        if let Some(take) = self.end_recording() {
+            self.sound(Sound::MicOff);
+            takes.push(take);
+        }
         if !takes.is_empty() {
             let origin = self.overlay.as_ref().map_or_else(Instant::now, |o| o.origin());
             let dictations = std::mem::take(&mut self.dictations);
@@ -1682,14 +1688,14 @@ impl App {
             overlay.send(&OverlayCommand::Notice { text: message.clone() });
         }
         self.error = Some((Instant::now(), message));
-        self.sound("Basso");
+        self.sound(Sound::Error);
         self.refresh();
         self.publish();
     }
 
-    fn sound(&self, name: &str) {
+    fn sound(&self, sound: Sound) {
         if self.config.sounds {
-            macos::play(name);
+            macos::play(sound);
         }
     }
 

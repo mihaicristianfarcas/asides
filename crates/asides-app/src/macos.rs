@@ -1,6 +1,9 @@
 //! Small AppKit/AVFoundation helpers: sounds, the microphone and Automation permissions, apps in
 //! front, the command link, opening at login.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::ffi::c_void;
 use std::path::Path;
 use std::process::Command;
@@ -10,6 +13,8 @@ use std::ptr::NonNull;
 
 use asides_core::state::LoginItem;
 use block2::RcBlock;
+use objc2::AllocAnyThread;
+use objc2::rc::Retained;
 use objc2::runtime::Bool;
 use objc2_app_kit::{
     NSApplicationActivationOptions, NSRunningApplication, NSSound, NSWorkspace, NSWorkspaceApplicationKey,
@@ -17,7 +22,7 @@ use objc2_app_kit::{
     NSWorkspaceDidLaunchApplicationNotification,
 };
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
-use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSString};
+use objc2_foundation::{NSData, NSDistributedNotificationCenter, NSNotification, NSString};
 use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,11 +209,53 @@ pub fn on_app_left(left: impl Fn(&str) + 'static) {
     });
 }
 
-pub fn play(sound: &str) {
-    if let Some(sound) = NSSound::soundNamed(&NSString::from_str(sound)) {
-        sound.stop();
-        sound.play();
+/// asides' sounds (`sounds/`, made by `scripts/make-sounds.py`), in the binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Sound {
+    MicOn,
+    MicOff,
+    Sent,
+    /// Closed without sending what was said.
+    Closed,
+    Error,
+    /// A Wispr Flow dictation joined the aside.
+    Dictation,
+}
+
+impl Sound {
+    fn wav(self) -> &'static [u8] {
+        match self {
+            Sound::MicOn => include_bytes!("../sounds/mic-on.wav"),
+            Sound::MicOff => include_bytes!("../sounds/mic-off.wav"),
+            Sound::Sent => include_bytes!("../sounds/sent.wav"),
+            Sound::Closed => include_bytes!("../sounds/closed.wav"),
+            Sound::Error => include_bytes!("../sounds/error.wav"),
+            Sound::Dictation => include_bytes!("../sounds/dictation.wav"),
+        }
     }
+
+    fn load(self) -> Option<Retained<NSSound>> {
+        NSSound::initWithData(NSSound::alloc(), &NSData::with_bytes(self.wav()))
+    }
+}
+
+thread_local! {
+    /// Each sound, loaded the first time it plays (on the main thread, as the rest of AppKit).
+    static SOUNDS: RefCell<HashMap<Sound, Retained<NSSound>>> = RefCell::default();
+}
+
+pub fn play(sound: Sound) {
+    SOUNDS.with_borrow_mut(|loaded| {
+        let playing = match loaded.entry(sound) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => match sound.load() {
+                Some(ready) => entry.insert(ready),
+                None => return,
+            },
+        };
+        playing.stop();
+        playing.play();
+    });
 }
 
 /// How putting the `asides` command on the PATH went.
@@ -254,5 +301,18 @@ pub fn frontmost_app() -> Option<i32> {
 pub fn activate_app(pid: i32) {
     if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
         app.activateWithOptions(NSApplicationActivationOptions::empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sounds_load_and_are_short() {
+        for sound in [Sound::MicOn, Sound::MicOff, Sound::Sent, Sound::Closed, Sound::Error, Sound::Dictation] {
+            let loaded = sound.load().unwrap_or_else(|| panic!("{sound:?} doesn't load"));
+            assert!(loaded.duration() <= 1.0, "{sound:?} lasts {} s: they play many times a day", loaded.duration());
+        }
     }
 }

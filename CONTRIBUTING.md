@@ -170,6 +170,8 @@ Run what your change touches, and say in the pull request what you tried.
 - **The icon**: `swift scripts/make-icon.swift` writes `packaging/asides.icns`. The same mark is in
   `icons.rs`, `docs/favicon.svg` and `docs/index.html`: change them together, then
   `python3 scripts/make-og.py`.
+- **The sounds**: `uv run scripts/make-sounds.py` writes `crates/asides-app/sounds/`, embedded in
+  the app (`macos::Sound`). Keep each as loud as the one it replaces, starting at once, under a second.
 - **The message format**: `markdown.rs` and `inspect.rs` with their tests, the e2e expectations and
   the example in [guide/using.md](guide/using.md).
 - **A tool or key on the screen**: logic in `asides-core/src/overlay.rs` (with a test, and an

@@ -37,6 +37,7 @@ A Rust workspace:
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
 | Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns`) |
+| Sounds | `uv run scripts/make-sounds.py` (writes `crates/asides-app/sounds/`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
 
