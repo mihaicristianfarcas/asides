@@ -1,6 +1,6 @@
 """Renders guide/overlay.png, the README's picture of asides: the real overlay over the website demo's
-checkout page, with all it does: the pill recording, pins on elements and an area, a pin's card typed
-in, a measurement and an arrow.
+checkout page, with all it does: the pill recording, pins on elements and an area, an area moved by
+its number, a pin's card typed in, a measurement and a sketch.
 
 The screen is the demo's desktop from docs/index.html (rendered with Firefox), Safari alone over
 readme-wallpaper.webp (beside this script); the overlay is
@@ -71,6 +71,7 @@ card = {**page_of, "name": 'group "Order summary"', "selector": "main > aside.su
 pay = {**page_of, "name": 'button "Pay now · $72.00"', "selector": "aside.summary > button.pay",
        "frame": frame(604, 417, 124, 51)}
 city = {**page_of, "name": 'group "Delivery"', "selector": "form > div.pair", "frame": frame(85, 450, 458, 37)}
+expiry = {**page_of, "name": 'group "Payment"', "selector": "form > div.pair", "frame": frame(85, 576, 458, 37)}
 
 
 def pin(at, element):
@@ -85,6 +86,14 @@ def drag(points, **keys):
             {"up": points[-1], **keys, "wait": 200}]
 
 
+def ring(cx, cy, rx, ry):
+    """A hand-drawn ellipse around (cx, cy): a little more than once round, a little uneven."""
+    import math
+    turns = [i / 28 * 2.15 * math.pi - 0.4 for i in range(29)]
+    return [at(cx + rx * (1 + 0.04 * math.sin(3 * t)) * math.cos(t), cy + ry * (1 + 0.06 * math.cos(2 * t)) * math.sin(t))
+            for t in turns]
+
+
 replay = [
     {"wait": 500},
     {"recording": 14},
@@ -92,10 +101,14 @@ replay = [
     *pin(at(700, 430), pay),
     # An area: a drag around the city and the postcode.
     {"move": at(76, 442), "wait": 150}, *drag([at(76, 442), at(300, 470), at(552, 495)]), {"answer": city},
+    # Another around the expiry and the security code, then moved by its number: a copy where it
+    # goes, and an arrow there.
+    {"move": at(76, 568), "wait": 150}, *drag([at(76, 568), at(300, 595), at(552, 621)]), {"answer": expiry},
+    *drag([at(76, 568), at(110, 610), at(146, 668)]),
     # Measure: a drag around the email field snaps to it.
     {"key": "m", "wait": 150}, *drag([at(76, 277.5), at(210, 295), at(552, 330)]),
-    # Draw: an arrow (⇧) at the security code.
-    {"key": "d", "wait": 150}, *drag([at(560, 700), at(510, 664), at(456, 624)], shift=True),
+    # Draw: a ring around the cart.
+    {"key": "d", "wait": 150}, *drag(ring(899, 142, 44, 19)),
     {"key": "a", "wait": 200},
     # The Pay button's card, opened from its number: typed in, and a fix (⌘1).
     {"down": at(700, 430)}, {"up": at(700, 430), "wait": 250},
