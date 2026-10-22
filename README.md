@@ -4,7 +4,7 @@
 own message, with the screenshot, the elements you clicked and what you measured. Transcribed
 locally, on your Mac.
 
-![asides over a checkout page: the pill (recording, the session it goes to, send, close), two numbered pins and a measured field](guide/overlay.png)
+![asides over a checkout page: the pill recording, pins on an element and an area, a pin's card typed in, a measured field and an arrow](guide/overlay.png)
 
 ```
 ⌃⌥Space   freeze the screen (and start listening)

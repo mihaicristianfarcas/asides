@@ -214,8 +214,9 @@ def run(name, screen, replay, tmp):
         "replay": replay,
     }
     (run_dir / "session.json").write_text(json.dumps(spec, ensure_ascii=False))
+    # The overlay dark, whatever the Mac's appearance, as the clips always were.
     subprocess.run([ROOT / "target" / "debug" / "asides-overlay", run_dir], check=True, timeout=60,
-                   stdout=subprocess.DEVNULL)
+                   stdout=subprocess.DEVNULL, env={**os.environ, "ASIDES_WINDOW_APPEARANCE": "dark"})
     for png in run_dir.glob("*.png"):
         shutil.copy(png, tmp / "frames" / png.name)
 
