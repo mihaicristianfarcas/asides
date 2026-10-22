@@ -172,7 +172,8 @@ fn open(
     // The app the user is in, before the overlay's takes over.
     let previous = native::front_app();
     let replay = spec.replay.clone();
-    let overlay = cx.new(|_| Overlay::new(spec, frames, dir, commands));
+    let theme = crate::controls::Theme::of(cx.window_appearance());
+    let overlay = cx.new(|_| Overlay::new(spec, frames, dir, commands, theme));
     overlay.update(cx, |o, _| {
         o.previous_app = previous;
         (o.spares, o.spare_toolbar) = (spares, spare_toolbar);

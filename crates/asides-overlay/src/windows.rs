@@ -311,7 +311,7 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
     if let Some(spare) = spare {
         let o = overlay.clone();
         let taken = spare.handle.update(cx, |_, window, cx| {
-            window.replace_root(cx, |_, cx| ToolbarView::new(o, cx));
+            window.replace_root(cx, |window, cx| ToolbarView::new(o, window, cx));
         });
         if taken.is_ok() {
             let mut toolbar = window(spare.number, spare.view, spare.frame);
@@ -328,7 +328,7 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
         // Nothing blurred until the pill is drawn and its shapes are known (`follow_toolbar`).
         native::set_glass(view, &[]);
         o.update(cx, |o, _| (o.toolbar_screen, o.toolbar_window) = (index, Some(window(number, view, frame))));
-        cx.new(|cx| ToolbarView::new(o.clone(), cx))
+        cx.new(|cx| ToolbarView::new(o.clone(), w, cx))
     });
     match opened {
         Ok(handle) => overlay.update(cx, |o, _| {
@@ -429,7 +429,7 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
         true => native::hide(toolbar),
         false => {
             native::draw_now(&[toolbar]);
-            native::show(toolbar, false);
+            native::appear(toolbar);
         }
     }
     cx.update(|cx| overlay.update(cx, |o, _| o.pill_hidden = hide))
@@ -542,11 +542,12 @@ fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<(
         native::pointer_moved(view);
     }
     native::draw_now(&screens);
-    // Opening, the pill first: over the live screen for a moment, it looks just the same.
+    // Opening, the pill first: over the live screen for a moment, it looks just the same. It comes
+    // in (`native::appear`) over the frozen screens, which show the screen as it was.
     if opening && let Some(toolbar) = toolbar {
         prepare_toolbar(overlay, toolbar, cx)?;
         if !hidden {
-            native::show(toolbar, false);
+            native::appear(toolbar);
         }
     }
     let previous = native::front_app();
@@ -626,7 +627,7 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
     // Opened live, or hidden with everything on the frozen screen.
     if let Some(toolbar) = toolbar.filter(|_| !frozen || hidden) {
         prepare_toolbar(overlay, toolbar, cx)?;
-        native::show(toolbar, false);
+        native::appear(toolbar);
     }
     for view in screens {
         native::hide(view);

@@ -540,8 +540,15 @@ impl Theme {
         }
     }
 
+    /// The theme for the system's appearance (in development, `ASIDES_WINDOW_APPEARANCE`'s, `light`
+    /// or `dark`, whatever the system's): the asides window's and the overlay's alike.
     pub fn of(appearance: WindowAppearance) -> Theme {
-        match appearance {
+        let forced = match std::env::var("ASIDES_WINDOW_APPEARANCE").as_deref() {
+            Ok("light") => Some(WindowAppearance::Light),
+            Ok("dark") => Some(WindowAppearance::Dark),
+            _ => None,
+        };
+        match forced.unwrap_or(appearance) {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Theme::dark(),
             WindowAppearance::Light | WindowAppearance::VibrantLight => Theme::light(),
         }

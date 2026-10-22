@@ -28,12 +28,10 @@ pub const INTENT_FIX: u32 = 0xef4444;
 pub const INTENT_CHANGE: u32 = 0xf59e0b;
 pub const INTENT_QUESTION: u32 = 0x8b5cf6;
 pub const INTENT_APPROVE: u32 = 0x14b8a6;
-/// The overlay's surfaces (the pill and its list, tips, cards, menus) are glass, after Diri's
-/// menus: what's behind them, blurred, under this much of a dark surface (text on it stays legible
-/// over a white page), with a hairline of white around it.
+/// The overlay's surfaces (the pill and its list, tips, cards, menus) are the asides window's glass,
+/// in the system's appearance (`controls::Theme`'s `sidebar`). Help's clips caption what's said on
+/// a dark glass of this color.
 pub const GLASS: u32 = 0x1c1b1a;
-pub const GLASS_ALPHA: f32 = 0.66;
-pub const PANEL_STROKE: f32 = 0.10;
 pub const RECORDING: u32 = 0xff3b30;
 /// The pill's microphone while it listens: a softer red.
 pub const RECORDING_SOFT: u32 = 0xec6a5e;
