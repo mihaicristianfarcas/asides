@@ -27,9 +27,9 @@ use gpui::{
     quad, size, svg, transparent_black,
 };
 
-use crate::controls::{Fade, Glide, Slot, fade_in};
+use crate::controls::{Fade, Glide, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
-use crate::input::TextInput;
+use crate::input::{self, TextInput};
 use crate::{finish, glass, io, style};
 
 const TOAST: Duration = Duration::from_millis(1600);
@@ -235,6 +235,9 @@ pub struct Overlay {
     spec: Spec,
     keys: Keys,
     accent: u32,
+    /// The colors of the pill, its list and the surfaces on the frozen screens: the asides window's,
+    /// in the system's appearance (`set_theme`).
+    pub theme: Theme,
     images: Vec<Arc<RenderImage>>,
     /// Each frozen screen, small and blurred: the glass of what's drawn on it.
     backdrops: Vec<Arc<glass::Backdrop>>,
@@ -387,7 +390,7 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub fn new(spec: Spec, frames: Vec<Frame>, dir: PathBuf, commands: Receiver<Command>) -> Overlay {
+    pub fn new(spec: Spec, frames: Vec<Frame>, dir: PathBuf, commands: Receiver<Command>, theme: Theme) -> Overlay {
         // The session's pixels: shared, a screen's are tens of megabytes.
         let frames: Vec<Arc<Frame>> = frames.into_iter().map(Arc::new).collect();
         let screens = spec.screens.iter().zip(&frames).map(|(s, f)| Session::from_spec(s, f.clone())).collect();
@@ -405,6 +408,7 @@ impl Overlay {
             session,
             keys: Keys::new(&spec.keys),
             accent,
+            theme,
             images,
             backdrops,
             glass: Vec::new(),
@@ -1060,12 +1064,29 @@ impl Overlay {
         }
     }
 
+    /// The system's appearance changed: the pill and the surfaces follow, the card's text too.
+    pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
+        if self.theme == theme {
+            return;
+        }
+        self.theme = theme;
+        if let Some(card) = &self.card {
+            card.input.update(cx, |input, _| input.look = card_look(theme));
+        }
+        cx.notify();
+    }
+
     // --- The card (an annotation's feedback) ---
 
     fn open_card(&mut self, screen: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(a) = self.session.screens[screen].annotations.get(index) else { return };
         let (comment, number, key, intent, severity) = (a.comment.clone(), a.number, a.key, a.intent, a.severity);
-        let input = cx.new(|cx| TextInput::new(&comment, "What should change?", cx));
+        let theme = self.theme;
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(&comment, "What should change?", cx);
+            input.look = card_look(theme);
+            input
+        });
         // The card opens where the click was: `window` is that screen's.
         window.focus(&input.read(cx).focus_handle(cx));
         self.card = Some(Card { screen, index, number, key, input, intent, severity });
@@ -1711,23 +1732,24 @@ fn paint(prim: Prim, window: &mut Window) {
     }
 }
 
-/// A glass label with white text, centered on `(x, y)` (window points, in a window `offset` points
-/// into screen `screen`). Its digits are all as wide, and it's never narrower than a short number:
+/// A glass label, centered on `(x, y)` (window points, in a window `offset` points into screen
+/// `screen`). Its digits are all as wide, and it's never narrower than a short number:
 /// a measurement changing as it's dragged doesn't make it jump.
 fn pill(
     overlay: &Entity<Overlay>,
+    t: Theme,
     screen: usize,
     offset: (f64, f64),
     text: impl Into<SharedString>,
     (x, y): (f64, f64),
 ) -> AnyElement {
-    let mut label = frozen_glass(overlay, screen, offset, 5.)
+    let mut label = frozen_glass(overlay, t, screen, offset, 5.)
         .min_w(px(LABEL_MIN_WIDTH))
         .flex()
         .justify_center()
         .px(px(6.))
         .py(px(1.5))
-        .text_color(gpui::white())
+        .text_color(t.primary)
         .text_size(px(11.))
         .font_weight(FontWeight::SEMIBOLD);
     label.text_style().get_or_insert_with(Default::default).font_features =
@@ -1775,6 +1797,7 @@ impl Render for ScreenView {
         let screen = self.screen;
         let overlay = self.overlay.clone();
         let o = self.overlay.read(cx);
+        let t = o.theme;
         let state = &o.session.screens[screen];
         let win = &o.windows[screen];
         let (ox, oy) = win.offset;
@@ -1854,7 +1877,7 @@ impl Render for ScreenView {
                     if gap >= 16.0 {
                         let mid = (pair[0] + pair[1]) / 2.0;
                         let at = if axis == Axis::X { (mid, 14.0) } else { (28.0, mid) };
-                        labels.push(pill(&overlay, screen, (ox, oy), n(gap), label(at)));
+                        labels.push(pill(&overlay, t, screen, (ox, oy), n(gap), label(at)));
                     }
                 }
             }
@@ -1873,6 +1896,7 @@ impl Render for ScreenView {
                             let ly = if *y < 30.0 { y + 14.0 } else { y - 14.0 };
                             labels.push(pill(
                                 &overlay,
+                                t,
                                 screen,
                                 (ox, oy),
                                 n(across.len()),
@@ -1891,6 +1915,7 @@ impl Render for ScreenView {
                             let lx = if x + w + 16.0 > sw { x - w / 2.0 - 8.0 } else { x + w / 2.0 + 8.0 };
                             labels.push(pill(
                                 &overlay,
+                                t,
                                 screen,
                                 (ox, oy),
                                 text,
@@ -1903,7 +1928,7 @@ impl Render for ScreenView {
                         prims.push(Prim::Border(rect(*r), accent_c, thin as f32, false));
                         let text = format!("{} × {}", n(r.width), n(r.height));
                         let at = style::area_label(*r, pill_width(&text), sh);
-                        labels.push(pill(&overlay, screen, (ox, oy), text, label(at)));
+                        labels.push(pill(&overlay, t, screen, (ox, oy), text, label(at)));
                         // Over a held object: its camera.
                         let over = cursor.is_some_and(|(x, y)| r.contains(x, y))
                             && session.drag.is_none()
@@ -2033,14 +2058,14 @@ impl Render for ScreenView {
                     }
                     let text: String = text.chars().take(90).collect();
                     markers.push(
-                        frozen_glass(&overlay, screen, (ox, oy), 6.)
+                        frozen_glass(&overlay, t, screen, (ox, oy), 6.)
                             .absolute()
                             .left(px((mx + MARKER / 2.0 + 6.0) as f32))
                             .top(px((my - 11.0) as f32))
                             .max_w(px(360.))
                             .px(px(8.))
                             .py(px(3.))
-                            .text_color(gpui::white())
+                            .text_color(t.primary)
                             .text_size(px(12.))
                             .child(text)
                             .into_any_element(),
@@ -2078,7 +2103,7 @@ impl Render for ScreenView {
                     let w = pill_width(&text);
                     let lx = if x + 14.0 + w > sw { x - 14.0 - w / 2.0 } else { x + 14.0 + w / 2.0 };
                     let ly = if y + 34.0 > sh { y - 18.0 } else { y + 22.0 };
-                    labels.push(pill(&overlay, screen, (ox, oy), text, label((lx, ly))));
+                    labels.push(pill(&overlay, t, screen, (ox, oy), text, label((lx, ly))));
                 }
             }
             if let Some(drag) = session.drag.as_ref().filter(|d| d.screen == screen) {
@@ -2122,7 +2147,7 @@ impl Render for ScreenView {
                             ));
                             let text = format!("{} × {}", n(r.width), n(r.height));
                             let at = style::area_label(r, pill_width(&text), sh);
-                            labels.push(pill(&overlay, screen, (ox, oy), text, label(at)));
+                            labels.push(pill(&overlay, t, screen, (ox, oy), text, label(at)));
                         }
                     }
                 }
@@ -2149,11 +2174,12 @@ impl Render for ScreenView {
         // The pill (its own window, above) is on this screen: what goes with it is too.
         let pill_here = o.pill_rect.is_some_and(|(s, _)| s == screen);
         let card = o.card.as_ref().filter(|c| c.screen == screen).map(|c| self.card(o, c, (ox, oy), (ww, wh)));
-        let menu = o.menu.as_ref().filter(|m| m.screen == screen).map(|m| self.menu(m, (ox, oy), (ww, wh), top));
+        let menu = o.menu.as_ref().filter(|m| m.screen == screen).map(|m| self.menu(m, t, (ox, oy), (ww, wh), top));
         let notes = (pill_here && !session.hidden).then(|| self.notes(o, (ox, oy), wh)).flatten();
         let hidden_hint = (session.hidden && pill_here).then(|| {
             pill(
                 &overlay,
+                t,
                 screen,
                 (ox, oy),
                 format!("Hidden ({} shows everything again)", o.keys.label(Cmd::Hide)),
@@ -2278,11 +2304,11 @@ enum Emphasis {
 
 impl Emphasis {
     /// Its text and icons.
-    fn ink(self) -> Hsla {
+    fn ink(self, t: Theme) -> Hsla {
         match self {
-            Emphasis::Plain => color(0xffffff, 0.86),
-            Emphasis::On => color(0xedebe7, 1.0),
-            Emphasis::Primary => color(style::UI_INK, 1.0),
+            Emphasis::Plain => t.primary.opacity(0.86),
+            Emphasis::On => t.primary,
+            Emphasis::Primary => t.on_accent,
         }
     }
 }
@@ -2296,6 +2322,7 @@ fn icon(name: &str, ink: Hsla) -> impl IntoElement {
 /// it's dragged anywhere but its buttons.
 pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElement {
     let session = &o.session;
+    let t = o.theme;
     // Moving, the pointer runs over the buttons: they don't light up.
     let still = o.moving_toolbar.is_none();
     // An icon (or short text) button; its name shows by the pill while the pointer is on it.
@@ -2320,12 +2347,12 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             .border_color(color(0, 0.0))
             .text_size(px(12.5))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(emphasis.ink())
-            .when(emphasis == Emphasis::On, |d| d.bg(color(0xffffff, 0.12)).border_color(color(0xffffff, 0.10)))
+            .text_color(emphasis.ink(t))
+            .when(emphasis == Emphasis::On, |d| d.bg(t.selected).border_color(t.selected_stroke))
             .when(emphasis == Emphasis::Primary, |d| {
-                d.bg(color(style::UI, 1.0)).when(still, |d| d.hover(|s| s.bg(color(style::UI_LIGHT, 1.0))))
+                d.bg(t.accent).when(still, |d| d.hover(|s| s.bg(color(style::UI_LIGHT, 1.0))))
             })
-            .when(emphasis == Emphasis::Plain && still, |d| d.hover(|s| s.bg(color(0xffffff, 0.08))))
+            .when(emphasis == Emphasis::Plain && still, |d| d.hover(|s| s.bg(t.hover)))
             .when(still, |d| d.cursor_pointer())
             .on_hover(move |hovered, _, cx| o1.update(cx, |o, cx| o.show_hint(id, name.clone(), *hovered, cx)))
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -2340,13 +2367,12 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             .into_any_element()
     };
     // Room to grab the pill by, around the line.
-    let sep = || div().w(px(1.)).h(px(18.)).mx(px(10.)).bg(color(0xffffff, 0.10)).into_any_element();
+    let sep = || div().w(px(1.)).h(px(18.)).mx(px(10.)).bg(t.hairline).into_any_element();
     // Buttons side by side as one control: the pointer goes from one to the next without leaving
     // them, and the name by the pill changes at once.
-    let group = |buttons: Vec<AnyElement>| {
-        div().flex().rounded(px(8.)).bg(color(0xffffff, 0.06)).children(buttons).into_any_element()
-    };
-    let plain = Emphasis::Plain.ink();
+    let group =
+        |buttons: Vec<AnyElement>| div().flex().rounded(px(8.)).bg(t.hover).children(buttons).into_any_element();
+    let plain = Emphasis::Plain.ink(t);
     let open = o.list.is_open();
     let target = if open { Emphasis::On } else { Emphasis::Plain };
     let (hover, toggle) = (overlay.clone(), overlay.clone());
@@ -2359,8 +2385,8 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         .justify_center()
         .size(px(28.))
         .rounded(px(8.))
-        .when(help, |d| d.bg(color(0xffffff, 0.12)))
-        .when(still, |d| d.cursor_pointer().hover(|s| s.bg(color(0xffffff, 0.08))))
+        .when(help, |d| d.bg(t.selected))
+        .when(still, |d| d.cursor_pointer().hover(|s| s.bg(t.hover)))
         .on_hover(move |hovered, _, cx| {
             let hovered = *hovered;
             hover.update(cx, |o, cx| {
@@ -2383,7 +2409,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 cx.notify();
             });
         })
-        .child(icon("help", if help { Emphasis::On.ink() } else { plain }))
+        .child(icon("help", if help { Emphasis::On.ink(t) } else { plain }))
         .into_any_element();
     // What a `Slot` shows, as wide as it's drawn (clipped while it grows, faded while it grows in or
     // shrinks away), noting the width it takes.
@@ -2430,7 +2456,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .flex()
                 .items_center()
                 .gap(px(5.))
-                .child(icon(tool_icon(tool), Emphasis::On.ink()))
+                .child(icon(tool_icon(tool), Emphasis::On.ink(t)))
                 .child(tool.label())
                 .into_any_element(),
             // Shrinking away, it's already put down.
@@ -2453,7 +2479,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             "done",
             format!("Send ({} or {})", o.spec.record_shortcut, o.keys.label(Cmd::Done)),
             Emphasis::Primary,
-            icon("check", Emphasis::Primary.ink()).into_any_element(),
+            icon("check", Emphasis::Primary.ink(t)).into_any_element(),
             Box::new(|o, w, cx| o.command(Cmd::Done, w, cx)),
         ),
         button(
@@ -2476,6 +2502,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
 /// The keys at a glance, under the pill (or above it, as its list): what asides does, and the keys
 /// for it.
 fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
+    let t = o.theme;
     let k = |c: Cmd| o.keys.label(c);
     let left: Vec<(&str, Vec<(&str, String)>)> = vec![
         (
@@ -2529,9 +2556,9 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             .items_center()
             .justify_center()
             .rounded(px(4.))
-            .bg(color(0xffffff, 0.1))
+            .bg(t.selected)
             .border_1()
-            .border_color(color(0xffffff, 0.16))
+            .border_color(t.control_stroke)
             .text_size(px(11.))
             .child(text)
     };
@@ -2545,7 +2572,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                     div()
                         .text_size(px(11.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(color(0xffffff, 0.55))
+                        .text_color(t.secondary)
                         .child(name.to_string()),
                 )
                 .children(rows.into_iter().map(|(label, keys)| {
@@ -2555,7 +2582,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                         .justify_between()
                         .gap(px(12.))
                         .text_size(px(12.))
-                        .child(div().text_color(color(0xffffff, 0.85)).child(label.to_string()))
+                        .child(div().text_color(t.primary).child(label.to_string()))
                         .child(
                             div()
                                 .flex()
@@ -2572,7 +2599,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let measure = overlay.clone();
     let shown = o.keys_sheet.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
-    glass_panel()
+    glass_panel(t)
         .id("keys")
         .top(slide)
         .opacity(shown)
@@ -2581,16 +2608,17 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         .flex()
         .flex_col()
         .gap(px(12.))
-        .text_color(gpui::white())
+        .text_color(t.primary)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             div()
                 .text_size(px(12.))
-                .text_color(color(0xffffff, 0.7))
+                .text_color(t.secondary)
                 .child("Click what's wrong or drag around it, say why, and send it."),
         )
         .child(div().flex().gap(px(22.)).child(column(left)).child(column(right)))
-        .child(div().text_size(px(11.)).text_color(color(style::UI, 1.0)).child(footer))
+        // asides' soft blue reads on the dark glass only.
+        .child(div().text_size(px(11.)).text_color(if t.dark { t.accent } else { t.secondary }).child(footer))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.keys_bounds = Some(bounds))))
         .into_any_element()
 }
@@ -2618,7 +2646,8 @@ enum Pick {
 fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElement {
     let targets = &o.spec.targets;
     // Firmer than on a solid surface: what's behind shows through.
-    let (primary, tertiary) = (color(0xedebe7, 1.0), color(0xffffff, 0.6));
+    let t = o.theme;
+    let (primary, tertiary) = (t.primary, t.secondary);
     // A row: a check where it's chosen, then what it is; hovered, a glass pill.
     let row = |id: String, chosen: bool, enabled: bool, content: AnyElement, action: Option<Pick>| {
         let pick = overlay.clone();
@@ -2634,9 +2663,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
             .rounded(px(6.))
             .border_1()
             .border_color(color(0, 0.0))
-            .when(enabled, |d| {
-                d.cursor_pointer().hover(|s| s.bg(color(0xffffff, 0.10)).border_color(color(0xffffff, 0.09)))
-            })
+            .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(t.selected).border_color(t.selected_stroke)))
             .when(!enabled, |d| d.opacity(0.55))
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
@@ -2678,7 +2705,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
             .text_color(tertiary)
             .child(text.to_string())
     };
-    let hairline = || div().flex_none().h(px(1.)).mx(px(8.)).my(px(4.)).bg(color(0xffffff, 0.08)).into_any_element();
+    let hairline = || div().flex_none().h(px(1.)).mx(px(8.)).my(px(4.)).bg(t.hairline).into_any_element();
     let mut rows: Vec<AnyElement> = Vec::new();
     if !targets.sessions.is_empty() || targets.looking {
         rows.push(heading("Sessions").into_any_element());
@@ -2720,7 +2747,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 .border_color(color(0, 0.0))
                 .text_size(px(11.5))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(if on { primary } else { color(0xffffff, 0.68) })
+                .text_color(if on { primary } else { primary.opacity(0.7) })
                 .when(!on, |d| d.cursor_pointer().hover(|s| s.text_color(primary)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     cx.stop_propagation();
@@ -2747,11 +2774,11 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                         .p(px(2.))
                         .gap(px(2.))
                         .rounded(px(7.))
-                        .bg(color(0xffffff, 0.06))
+                        .bg(t.hover)
                         .child(glide.layer(
                             targets.agents.iter().position(|&a| a == o.new_agent),
-                            color(0xffffff, 0.12),
-                            color(0xffffff, 0.10),
+                            t.selected,
+                            t.selected_stroke,
                             5.,
                         ))
                         .children(segments),
@@ -2815,7 +2842,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     let measure = overlay.clone();
     let shown = o.list.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
-    glass_panel()
+    glass_panel(t)
         .id("targets")
         .top(slide)
         .opacity(shown)
@@ -2834,42 +2861,30 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 .flex_col()
                 .children(rows),
         )
-        .child(crate::controls::scrollbar("targets-bar", &o.list_scroll, crate::controls::Theme::dark()))
+        .child(crate::controls::scrollbar("targets-bar", &o.list_scroll, t))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.list_bounds = Some(bounds))))
         .into_any_element()
 }
 
 /// A surface of the pill (the pill, its list): rounded, the glass behind it (macOS blurs what's
-/// behind the window there, `native::set_glass`) under a tint, a hairline around it. No shadow:
-/// GPUI fills one under the whole surface too, between the blur and the tint, and it darkened the
-/// glass to near black.
-fn glass_panel() -> Div {
-    div()
-        .relative()
-        .occlude()
-        .rounded(px(12.))
-        .border_1()
-        .border_color(color(0xffffff, style::PANEL_STROKE))
-        .bg(color(style::GLASS, style::GLASS_ALPHA))
+/// behind the window there, `native::set_glass`) under the asides window's sidebar's tint, a
+/// hairline around it. No shadow: GPUI fills one under the whole surface too, between the blur and
+/// the tint, and it darkened the glass to near black.
+fn glass_panel(t: Theme) -> Div {
+    div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(t.sidebar)
 }
 
 /// A surface on a frozen screen (a window `offset` points into screen `screen`), glass like the
-/// pill: the screen behind it, blurred (`glass::frozen`), under the pill's tint, a hairline around
-/// it. What's added to it goes on top.
-fn frozen_glass(overlay: &Entity<Overlay>, screen: usize, offset: (f64, f64), radius: f32) -> Div {
+/// pill: the screen behind it, blurred (`glass::frozen`), under the pill's tint (`t`'s), a hairline
+/// around it. What's added to it goes on top.
+fn frozen_glass(overlay: &Entity<Overlay>, t: Theme, screen: usize, offset: (f64, f64), radius: f32) -> Div {
     // The tint is a layer of its own, over the blur (a child draws over its parent's background).
-    let tint = div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .rounded(px(radius - 1.))
-        .bg(color(style::GLASS, style::GLASS_ALPHA));
+    let tint = div().absolute().top_0().left_0().size_full().rounded(px(radius - 1.)).bg(t.sidebar);
     div()
         .relative()
         .rounded(px(radius))
         .border_1()
-        .border_color(color(0xffffff, style::PANEL_STROKE))
+        .border_color(t.card_stroke)
         .child(glass::frozen(overlay, screen, offset, radius - 1.))
         .child(tint)
 }
@@ -2900,7 +2915,7 @@ fn toolbar_panel(
         .gap(px(LIST_GAP as f32))
         .font_family(".SystemUIFont")
         .child(
-            glass_panel()
+            glass_panel(o.theme)
                 .id("toolbar")
                 .cursor(if o.moving_toolbar.is_some() { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
                 .on_mouse_down(MouseButton::Left, move |e, _, cx| {
@@ -2967,8 +2982,13 @@ fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         (true, true) => "Listening (click to mute)".into(),
         (true, false) => format!("Muted (click to listen, or hold {})", keys::label(&o.keys.talk)).into(),
     };
-    let red = color(style::RECORDING_SOFT, 1.0);
-    let ink = if listening { gpui::white() } else { Emphasis::Plain.ink() };
+    let (red, t) = (color(style::RECORDING_SOFT, 1.0), o.theme);
+    // Listening, over the red fill: white on dark glass, the ink on light.
+    let ink = match listening {
+        true if t.dark => gpui::white(),
+        true => t.primary,
+        false => Emphasis::Plain.ink(t),
+    };
     div()
         .id("mic")
         .relative()
@@ -2979,7 +2999,7 @@ fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         .rounded(px(8.))
         .when(o.moving_toolbar.is_none(), |d| d.cursor_pointer())
         .when(listening, |d| d.bg(red.opacity(0.32)))
-        .when(!listening && o.moving_toolbar.is_none(), |d| d.hover(|s| s.bg(color(0xffffff, 0.08))))
+        .when(!listening && o.moving_toolbar.is_none(), |d| d.hover(|s| s.bg(t.hover)))
         .on_hover(move |hovered, _, cx| tip.update(cx, |o, cx| o.show_hint("mic", name.clone(), *hovered, cx)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             cx.stop_propagation();
@@ -3013,6 +3033,8 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
     let recording = o.recording_seconds();
     let (t1, t2, t3) = (overlay.clone(), overlay.clone(), overlay.clone());
     let name: SharedString = "Say what should change: hold, or tap to start and stop".into();
+    // White on the red while recording.
+    let ink = if recording.is_some() { gpui::white() } else { o.theme.primary };
     div()
         .id(SharedString::from(id.to_string()))
         .flex()
@@ -3024,10 +3046,10 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .px(px(7.))
         .rounded(px(7.))
         .text_size(px(12.))
-        .text_color(gpui::white())
+        .text_color(ink)
         .cursor_pointer()
         .when(recording.is_some(), |d| d.bg(color(style::RECORDING, 1.0)))
-        .when(recording.is_none(), |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
+        .when(recording.is_none(), |d| d.hover(|s| s.bg(o.theme.hover)))
         .on_hover(move |hovered, _, cx| {
             let name = name.clone();
             t3.update(cx, |o, cx| {
@@ -3045,7 +3067,7 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .on_mouse_up(MouseButton::Left, move |_, _, cx| {
             t2.update(cx, |o, _| o.talk_button(false));
         })
-        .child(icon("mic", gpui::white()))
+        .child(icon("mic", ink))
         .children(recording.filter(|_| timer).map(|s| format!("{}:{:02}", s / 60, s % 60)))
         .into_any_element()
 }
@@ -3058,8 +3080,14 @@ pub struct ToolbarView {
 }
 
 impl ToolbarView {
-    pub fn new(overlay: Entity<Overlay>, cx: &mut Context<Self>) -> ToolbarView {
+    pub fn new(overlay: Entity<Overlay>, window: &mut Window, cx: &mut Context<Self>) -> ToolbarView {
         cx.observe(&overlay, |_, _, cx| cx.notify()).detach();
+        // The system's appearance, for every window: the pill's is there as long as the overlay.
+        cx.observe_window_appearance(window, |this: &mut ToolbarView, window, cx| {
+            let theme = Theme::of(window.appearance());
+            this.overlay.update(cx, |o, cx| o.set_theme(theme, cx));
+        })
+        .detach();
         ToolbarView { overlay, glide: Glide::new(cx) }
     }
 }
@@ -3110,11 +3138,11 @@ impl ScreenView {
             .then(|| o.hint.as_ref().map(|(_, name)| name.clone()))
             .flatten();
         let small = |text: SharedString| {
-            frozen_glass(&self.overlay, self.screen, (ox, oy), 7.)
+            frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), 7.)
                 .px(px(9.))
                 .py(px(5.))
                 .font_family(".SystemUIFont")
-                .text_color(color(0xffffff, 0.86))
+                .text_color(o.theme.primary.opacity(0.86))
                 .text_size(px(12.))
                 .child(text)
         };
@@ -3141,6 +3169,7 @@ impl ScreenView {
     /// it is (the dots), the microphone, and, once something was said about it, what was said and a
     /// trash button to say it again.
     fn card(&self, o: &Overlay, card: &Card, (ox, oy): (f64, f64), (ww, wh): (f64, f64)) -> AnyElement {
+        let t = o.theme;
         let state = &o.session.screens[card.screen];
         let Some(a) = state.annotations.get(card.index) else { return div().into_any_element() };
         let recording_here = o.recording.is_some() && o.recording_for == Some(card.key);
@@ -3174,13 +3203,7 @@ impl ScreenView {
                 (false, None) => format!("“{said}”"),
                 (true, status) => status.clone().unwrap_or_default(),
             };
-            div()
-                .px(px(8.))
-                .pb(px(2.))
-                .text_size(px(12.))
-                .line_height(px(17.))
-                .text_color(color(0xffffff, 0.72))
-                .child(text)
+            div().px(px(8.)).pb(px(2.)).text_size(px(12.)).line_height(px(17.)).text_color(t.secondary).child(text)
         });
         let (unsay, tip) = (self.overlay.clone(), self.overlay.clone());
         let key = card.key;
@@ -3193,7 +3216,7 @@ impl ScreenView {
                 .size(px(28.))
                 .rounded(px(7.))
                 .cursor_pointer()
-                .hover(|s| s.bg(color(0xffffff, 0.12)))
+                .hover(|s| s.bg(t.hover))
                 .on_hover(move |hovered, _, cx| {
                     tip.update(cx, |o, cx| {
                         o.card_tip = hovered.then_some("Delete what you said, to say it again".into());
@@ -3208,7 +3231,7 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(icon("trash", gpui::white()))
+                .child(icon("trash", t.primary))
         });
         let dots = Intent::ALL.into_iter().enumerate().map(|(i, intent)| {
             let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
@@ -3222,7 +3245,7 @@ impl ScreenView {
                 .justify_center()
                 .rounded_full()
                 .cursor_pointer()
-                .when(on, |d| d.border_2().border_color(gpui::white()))
+                .when(on, |d| d.border_2().border_color(t.primary))
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
@@ -3257,8 +3280,8 @@ impl ScreenView {
                 .size(px(28.))
                 .rounded(px(7.))
                 .cursor_pointer()
-                .when(on, |d| d.bg(color(0xffffff, 0.14)))
-                .when(!on, |d| d.hover(|s| s.bg(color(0xffffff, 0.12))))
+                .when(on, |d| d.bg(t.selected))
+                .when(!on, |d| d.hover(|s| s.bg(t.hover)))
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
@@ -3275,9 +3298,9 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(icon(tool_icon(tool), gpui::white()))
+                .child(icon(tool_icon(tool), t.primary))
         });
-        let surface = frozen_glass(&self.overlay, card.screen, (ox, oy), 12.)
+        let surface = frozen_glass(&self.overlay, t, card.screen, (ox, oy), 12.)
             .id("card")
             .occlude()
             .absolute()
@@ -3290,7 +3313,7 @@ impl ScreenView {
             .when(!up, |d| d.flex_col())
             .when(up, |d| d.flex_col_reverse())
             .gap(px(4.))
-            .text_color(gpui::white())
+            .text_color(t.primary)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 div()
@@ -3305,7 +3328,7 @@ impl ScreenView {
             )
             .children(said_row)
             .children(o.card_tip.clone().map(|tip| {
-                frozen_glass(&self.overlay, card.screen, (ox, oy), 6.)
+                frozen_glass(&self.overlay, t, card.screen, (ox, oy), 6.)
                     .absolute()
                     .bottom(px(-26.))
                     .right(px(30.))
@@ -3319,7 +3342,7 @@ impl ScreenView {
     }
 
     /// The right-click menu, at the pointer, on the window (`ww` × `wh`, below `top`).
-    fn menu(&self, menu: &Menu, (ox, oy): (f64, f64), (ww, wh): (f64, f64), top: f64) -> AnyElement {
+    fn menu(&self, menu: &Menu, t: Theme, (ox, oy): (f64, f64), (ww, wh): (f64, f64), top: f64) -> AnyElement {
         let height = menu.items.len() as f64 * 26.0 + 10.0;
         let x = (menu.at.0 - ox).min(ww - MENU_WIDTH - 6.0).max(6.0);
         let y = if menu.at.1 - oy + height > wh - 6.0 { menu.at.1 - oy - height } else { menu.at.1 - oy };
@@ -3340,7 +3363,7 @@ impl ScreenView {
                 .border_color(color(0, 0.0))
                 .text_size(px(13.))
                 .cursor_pointer()
-                .when(lit, |d| d.bg(color(0xffffff, 0.10)).border_color(color(0xffffff, 0.09)))
+                .when(lit, |d| d.bg(t.selected).border_color(t.selected_stroke))
                 .on_hover(move |hovered, _, cx| {
                     hover.update(cx, |o, cx| {
                         if let Some(menu) = &mut o.menu {
@@ -3360,7 +3383,7 @@ impl ScreenView {
                 .child(label.clone())
                 .child(div().opacity(0.55).child(key.clone()))
         });
-        let surface = frozen_glass(&self.overlay, menu.screen, (ox, oy), 12.)
+        let surface = frozen_glass(&self.overlay, t, menu.screen, (ox, oy), 12.)
             .id("menu")
             .occlude()
             .absolute()
@@ -3369,9 +3392,21 @@ impl ScreenView {
             .w(px(MENU_WIDTH as f32))
             .p(px(4.))
             .font_family(".SystemUIFont")
-            .text_color(color(0xedebe7, 1.0))
+            .text_color(t.primary)
             .children(rows);
         fade_in(surface, SharedString::from(format!("menu-{}-{}", menu.at.0, menu.at.1)), -4.).into_any_element()
+    }
+}
+
+/// The card's text field, on its glass: only a hairline around it.
+fn card_look(t: Theme) -> input::Look {
+    input::Look {
+        text: t.primary,
+        placeholder: t.tertiary,
+        border: t.card_stroke,
+        background: transparent_black(),
+        caret: t.accent,
+        selection: t.accent.opacity(0.35),
     }
 }
 

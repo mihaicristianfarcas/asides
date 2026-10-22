@@ -311,7 +311,7 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
     if let Some(spare) = spare {
         let o = overlay.clone();
         let taken = spare.handle.update(cx, |_, window, cx| {
-            window.replace_root(cx, |_, cx| ToolbarView::new(o, cx));
+            window.replace_root(cx, |window, cx| ToolbarView::new(o, window, cx));
         });
         if taken.is_ok() {
             let mut toolbar = window(spare.number, spare.view, spare.frame);
@@ -328,7 +328,7 @@ fn open_toolbar(overlay: &Entity<Overlay>, cx: &mut App) {
         // Nothing blurred until the pill is drawn and its shapes are known (`follow_toolbar`).
         native::set_glass(view, &[]);
         o.update(cx, |o, _| (o.toolbar_screen, o.toolbar_window) = (index, Some(window(number, view, frame))));
-        cx.new(|cx| ToolbarView::new(o.clone(), cx))
+        cx.new(|cx| ToolbarView::new(o.clone(), w, cx))
     });
     match opened {
         Ok(handle) => overlay.update(cx, |o, _| {

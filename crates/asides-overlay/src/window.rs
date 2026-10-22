@@ -33,8 +33,8 @@ use futures::StreamExt;
 use gpui::{
     AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
     ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, PromptButton, PromptLevel,
-    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions, actions, div, img, point, prelude::*, px, size,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowOptions, actions, div, img, point, prelude::*, px, size,
 };
 
 actions!(
@@ -467,17 +467,11 @@ pub fn run() {
             window_background: WindowBackgroundAppearance::Blurred,
             ..WindowOptions::default()
         };
-        // Development: one appearance or the other, whatever the system's.
-        let forced = match std::env::var("ASIDES_WINDOW_APPEARANCE").as_deref() {
-            Ok("light") => Some(WindowAppearance::Light),
-            Ok("dark") => Some(WindowAppearance::Dark),
-            _ => None,
-        };
         let opened = cx.open_window(options, move |window, cx| {
-            let theme = Theme::of(forced.unwrap_or(window.appearance()));
+            let theme = Theme::of(window.appearance());
             cx.new(|cx| {
                 cx.observe_window_appearance(window, move |this: &mut AsidesWindow, window, cx| {
-                    this.theme = Theme::of(forced.unwrap_or(window.appearance()));
+                    this.theme = Theme::of(window.appearance());
                     cx.notify();
                 })
                 .detach();

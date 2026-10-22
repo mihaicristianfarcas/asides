@@ -96,7 +96,8 @@ ASIDES_BENCH=~/bench ASIDES_BENCH_MODELS="small.en=$M/ggml-small.en-q5_1.bin,lar
 **Replays.** `target/debug/asides-overlay <dir>` runs the real overlay on a session directory:
 `session.json` (`helper::Spec`) with a screen whose `pixels` file is raw RGBA, `windowed` for a
 small window, and `replay` with mouse and key steps and `capture`s (see `replay.rs`;
-`scripts/make-screenshot.py` is an example; `"toolbar": true` for the pill's window). Replays send events straight to GPUI's view; to check
+`scripts/make-screenshot.py` is an example; `"toolbar": true` for the pill's window;
+`ASIDES_WINDOW_APPEARANCE=light` or `dark` for one look, as for the window). Replays send events straight to GPUI's view; to check
 the real input path, run the overlay through the app (`launchctl setenv ASIDES_OVERLAY <binary>`)
 and create `asides-overlay-debug` in `getconf DARWIN_USER_TEMP_DIR`: keys and focus changes are
 logged to `asides-overlay-debug.log` there.
