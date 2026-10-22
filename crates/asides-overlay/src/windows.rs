@@ -429,7 +429,7 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
         true => native::hide(toolbar),
         false => {
             native::draw_now(&[toolbar]);
-            native::show(toolbar, false);
+            native::appear(toolbar);
         }
     }
     cx.update(|cx| overlay.update(cx, |o, _| o.pill_hidden = hide))
@@ -542,11 +542,12 @@ fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<(
         native::pointer_moved(view);
     }
     native::draw_now(&screens);
-    // Opening, the pill first: over the live screen for a moment, it looks just the same.
+    // Opening, the pill first: over the live screen for a moment, it looks just the same. It comes
+    // in (`native::appear`) over the frozen screens, which show the screen as it was.
     if opening && let Some(toolbar) = toolbar {
         prepare_toolbar(overlay, toolbar, cx)?;
         if !hidden {
-            native::show(toolbar, false);
+            native::appear(toolbar);
         }
     }
     let previous = native::front_app();
@@ -626,7 +627,7 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
     // Opened live, or hidden with everything on the frozen screen.
     if let Some(toolbar) = toolbar.filter(|_| !frozen || hidden) {
         prepare_toolbar(overlay, toolbar, cx)?;
-        native::show(toolbar, false);
+        native::appear(toolbar);
     }
     for view in screens {
         native::hide(view);

@@ -194,6 +194,48 @@ pub fn show(pointer: usize, key: bool) {
     }
 }
 
+/// How long the pill's window takes to come in (`appear`), and how big it starts, of its size.
+const APPEAR: f64 = 0.18;
+const APPEAR_SCALE: f64 = 0.96;
+
+/// Shows the pill's window (it never takes the keyboard), coming in: the glass and the pill on it
+/// fade in and grow to their size about their middle, quick to start and gentle to settle (as
+/// `controls::ease`); with Reduce Motion, they only fade. Core Animation plays it on the window's
+/// content view, which holds the blur and GPUI's view, without GPUI drawing again: opening, the
+/// main thread is busy with the frozen screens.
+pub fn appear(pointer: usize) {
+    use objc2_foundation::NSValue;
+    use objc2_quartz_core::{
+        CABasicAnimation, CAMediaTiming, CAMediaTimingFunction, CATransaction, CATransform3D,
+        NSValueCATransform3DAdditions,
+    };
+
+    let Some(window) = view(pointer).and_then(|v| v.window()) else { return };
+    if let Some(layer) = window.contentView().and_then(|c| c.layer()) {
+        let (size, anchor) = (layer.bounds().size, layer.anchorPoint());
+        // About the middle, from the layer's anchor point (AppKit's views: their corner).
+        let (x, y) = ((0.5 - anchor.x) * size.width, (0.5 - anchor.y) * size.height);
+        let smaller =
+            CATransform3D::new_translation(x, y, 0.0).scale(APPEAR_SCALE, APPEAR_SCALE, 1.0).translate(-x, -y, 0.0);
+        let still = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        let from: [(&str, Retained<NSValue>); 2] = [
+            ("opacity", Retained::into_super(NSNumber::new_f64(0.0))),
+            ("transform", unsafe { NSValue::valueWithCATransform3D(smaller) }),
+        ];
+        for (path, value) in from.into_iter().take(if still { 1 } else { 2 }) {
+            let animation = CABasicAnimation::animationWithKeyPath(Some(&NSString::from_str(path)));
+            let value: &AnyObject = &value;
+            unsafe { animation.setFromValue(Some(value)) };
+            animation.setDuration(APPEAR);
+            animation.setTimingFunction(Some(&CAMediaTimingFunction::functionWithControlPoints(0.33, 1.0, 0.68, 1.0)));
+            layer.addAnimation_forKey(&animation, Some(&NSString::from_str(&format!("appear-{path}"))));
+        }
+        // Committed before the window shows: its first frame on screen is the fade's first.
+        CATransaction::flush();
+    }
+    window.orderFrontRegardless();
+}
+
 /// The window is on screen, drawn (not just ordered in).
 pub fn on_screen(pointer: usize) -> bool {
     view(pointer)

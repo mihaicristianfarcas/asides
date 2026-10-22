@@ -26,6 +26,17 @@ objc2 = "0.6"
 objc2-app-kit = "0.3"
 objc2-foundation = "0.3"
 objc2-core-graphics = "0.3"
+# Already AppKit's: the pill's window comes in (`native::appear`).
+objc2-quartz-core = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "CAAnimation",
+    "CALayer",
+    "CAMediaTiming",
+    "CAMediaTimingFunction",
+    "CATransaction",
+    "CATransform3D",
+] }
 raw-window-handle = "0.6"
 unicode-segmentation = "1"
 
