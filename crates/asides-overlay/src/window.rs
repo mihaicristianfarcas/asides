@@ -2633,11 +2633,11 @@ impl AsidesWindow {
             .iter()
             .map(|m| {
                 let id = m.id;
-                let what = if m.english { "English only" } else { "Any language" };
+                let what = format!("{}, {}", m.name(), m.size_label());
                 let detail = match (m.downloaded(), id == asides_core::models::DEFAULT) {
-                    (true, _) => format!("{what}, {}, downloaded", m.size_label()),
-                    (false, true) => format!("{what}, {}: the default", m.size_label()),
-                    (false, false) => format!("{what}, {}", m.size_label()),
+                    (true, _) => format!("{what}, downloaded"),
+                    (false, true) => format!("{what}: the default"),
+                    (false, false) => what,
                 };
                 let pick = self.setter(cx, move |c, _: ()| c.model = id.into());
                 choice_row(
@@ -3241,8 +3241,8 @@ impl AsidesWindow {
         let choices = MODELS
             .iter()
             .map(|m| {
-                let state = if m.downloaded() { "downloaded".to_string() } else { m.size_label() };
-                Choice::new(model_name(m)).detail(state)
+                let what = format!("{}, {}", m.name(), m.size_label());
+                Choice::new(model_name(m)).detail(if m.downloaded() { format!("{what}, downloaded") } else { what })
             })
             .collect();
         let pick_model = self.setter(cx, |c, i: usize| c.model = MODELS[i].id.into());
