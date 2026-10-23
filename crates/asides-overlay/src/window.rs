@@ -2079,6 +2079,11 @@ impl AsidesWindow {
                     format!("Listening from the start. Click it to mute; muted, hold {talk} to talk."),
                 ),
                 part("terminal", "Where it goes", "The agent session the aside is typed into.".into()),
+                part(
+                    "restart",
+                    "Start over",
+                    "Without sending: what's pinned and said goes, and the session goes on.".into(),
+                ),
                 part("check", "Send", format!("Or press {open}, or {done}.")),
                 part(
                     "close",

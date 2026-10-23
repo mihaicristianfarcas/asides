@@ -385,6 +385,12 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         let followed = follow_toolbar(overlay, cx, None)?;
         native::draw_now(&followed.redraw);
     }
+    // The pointer left the pill from a button, and GPUI hears only moves in the pill's window: it's
+    // told where the pointer is now (`Overlay::left_pill`), for the button to go dark.
+    let left = cx.update(|cx| overlay.update(cx, |o, _| std::mem::take(&mut o.left_pill)))?;
+    if left && let Some(toolbar) = toolbar {
+        native::pointer_moved(toolbar);
+    }
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
         // Frozen again while still giving way: the system comes back to the overlay.

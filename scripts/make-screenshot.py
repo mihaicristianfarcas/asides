@@ -3,7 +3,7 @@ checkout page, with all it does: the pill recording, pins on elements and an are
 its number, a pin's card typed in, a measurement and a sketch.
 
 The screen is the demo's desktop from docs/index.html (rendered with Firefox), Safari alone over
-readme-wallpaper.webp (beside this script); the overlay is
+its wallpaper; the overlay is
 target/debug/asides-overlay, run on it in a window at the top left of your screen for a few seconds,
 with a replay of the clicks and a capture (your terminal needs Screen Recording), dark whatever your
 Mac's appearance. Needs Pillow.
@@ -26,7 +26,6 @@ OUT = ROOT / "guide" / "overlay.png"
 FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
 # The screen, the demo's 14-inch MacBook Pro, in points, drawn at 2×.
 WIDTH, HEIGHT = 1512, 945
-WALLPAPER = pathlib.Path(__file__).resolve().parent / "readme-wallpaper.webp"
 # Safari, alone, moves from where the demo puts it (24, 62) to the middle, below the pill.
 SAFARI = (286, 104)
 DX, DY = SAFARI[0] - 24, SAFARI[1] - 62
@@ -50,7 +49,6 @@ html, body {{ margin: 0; overflow: hidden; }}
 /* The demo scales with its width: twice the points is a 2× screen. */
 .display {{ width: {WIDTH * 2}px; border-radius: 0; }}
 .apill, .ruler, .outline, .marker, .pointer {{ display: none !important; }}
-.desk {{ background: #2e2a5c url({WALLPAPER.as_uri()}) 50% 50% / cover; }}
 .safari {{ left: calc({SAFARI[0]} * var(--u)); top: calc({SAFARI[1]} * var(--u)); height: calc(700 * var(--u)); }}
 </style></head><body><div class="display">{desk}</div></body></html>"""
 

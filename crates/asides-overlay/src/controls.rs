@@ -61,6 +61,11 @@ pub const MENU_LAYER: usize = 3;
 /// How long what opens and closes (menus, lists, pages, cards, tips) takes to fade.
 pub const FADE: Duration = Duration::from_millis(140);
 
+/// How long a width takes to ease (`Grow`): shorter than a fade, for the edges to be there as the
+/// words they go around have faded in (`Slot`). As long, they still closed in on short words for
+/// as long again, after the words had changed.
+pub const RESIZE: Duration = Duration::from_millis(100);
+
 /// Eased out: quick to start, gentle to settle.
 pub fn ease(t: f32) -> f32 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
@@ -205,12 +210,17 @@ impl Fade {
 
     /// How much of it shows, 0 to 1.
     pub fn shown(&self) -> f32 {
-        let t = self.since.map_or(1.0, |since| since.elapsed().as_secs_f32() / FADE.as_secs_f32());
+        self.shown_within(1.0)
+    }
+
+    /// How much of it shows, 0 to 1, fading in that `part` of the time.
+    fn shown_within(&self, part: f32) -> f32 {
+        let t = self.since.map_or(1.0, |since| since.elapsed().as_secs_f32() / (FADE.as_secs_f32() * part));
         if self.open { ease(t) } else { 1.0 - ease(t) }
     }
 }
 
-/// A width easing to another (`FADE` long), a step at a time: what grows in or shrinks away beside
+/// A width easing to another (`RESIZE` long), a step at a time: what grows in or shrinks away beside
 /// others, which move along with it. It changes only when stepped, for its window to take the new
 /// size as it's drawn.
 #[derive(Clone, Copy, Debug, Default)]
@@ -241,7 +251,7 @@ impl Grow {
     /// The width to draw now; whether it changed.
     pub fn step(&mut self) -> bool {
         let Some(since) = self.since else { return false };
-        let t = since.elapsed().as_secs_f32() / FADE.as_secs_f32();
+        let t = since.elapsed().as_secs_f32() / RESIZE.as_secs_f32();
         let before = self.drawn;
         if t >= 1.0 {
             (self.drawn, self.since) = (self.to, None);
@@ -275,25 +285,31 @@ impl Grow {
 
 /// A place in a row whose width changes smoothly (`Grow`), what's after it moving along: what it
 /// shows, its width as drawn (none before it's measured: as wide as it takes), and the width it
-/// takes, measured as it's drawn. Something else shows at once, at the width drawn until it's
-/// measured, then the width eases to its own; with nothing to show, it shrinks away. It changes
-/// only when stepped, for its window to take the row's new width as it's drawn.
+/// takes, measured as it's drawn. Something else comes in unseen, at the width drawn, until it's
+/// measured; then it fades in as what it showed fades out (`was`), while the width eases to its
+/// own: shown at once, the new words were there before the edge moved, which trailed them. With
+/// nothing to show, it shrinks away. It changes only when stepped, for its window to take the
+/// row's new width as it's drawn.
 #[derive(Clone, Debug)]
 pub struct Slot<T> {
     shows: Option<T>,
     width: Option<Grow>,
     natural: Option<f32>,
+    /// What it showed before, fading out, and how much of it showed as it began to.
+    was: Option<(T, f32)>,
+    /// What it shows, fading in (open from the moment it's measured).
+    swap: Fade,
 }
 
 impl<T: Clone + PartialEq> Slot<T> {
     /// Showing `shows`, as wide as it takes.
     pub fn new(shows: T) -> Slot<T> {
-        Slot { shows: Some(shows), width: None, natural: None }
+        Slot { shows: Some(shows), width: None, natural: None, was: None, swap: Fade::new(true) }
     }
 
     /// Showing nothing: what comes grows in.
     pub fn empty() -> Slot<T> {
-        Slot { shows: None, width: Some(Grow::default()), natural: None }
+        Slot { shows: None, width: Some(Grow::default()), natural: None, was: None, swap: Fade::new(true) }
     }
 
     pub fn shows(&self) -> Option<&T> {
@@ -317,6 +333,17 @@ impl<T: Clone + PartialEq> Slot<T> {
         self.width.map_or(1.0, |g| g.shown())
     }
 
+    /// How much of what it shows shows as it comes in for what it showed, 0 to 1.
+    pub fn fading_in(&self) -> f32 {
+        self.swap.shown()
+    }
+
+    /// What it showed before, fading out, and how much of it shows: gone halfway, for the two not
+    /// to show as one blur.
+    pub fn was(&self) -> Option<(&T, f32)> {
+        self.was.as_ref().map(|(was, from)| (was, from * (1.0 - self.swap.shown_within(0.5))))
+    }
+
     /// The width it heads for, to show `wanted`: none until that's measured.
     fn target(&self, wanted: Option<&T>) -> Option<f32> {
         if wanted.is_some() { self.natural } else { Some(0.0) }
@@ -325,28 +352,118 @@ impl<T: Clone + PartialEq> Slot<T> {
     /// Still to change, to show `wanted`: what it shows, or its width.
     pub fn moving(&self, wanted: Option<&T>) -> bool {
         let heading = |g: &Grow| g.moving() || self.target(wanted).is_some_and(|to| !g.heads_for(to));
-        wanted != self.shows.as_ref() || self.width.as_ref().is_some_and(heading)
+        wanted != self.shows.as_ref() || self.width.as_ref().is_some_and(heading) || self.was.is_some()
     }
 
     /// A step on, to show `wanted`: how much wider it's drawn (on a screen's pixels, as `width`),
-    /// when anything changed.
+    /// when anything changed or its width is easing. Each step is drawn, and the drawing asks for
+    /// the next: one too small to show (the first, as the ease starts) stopped them until something
+    /// else drew the pill, and the width jumped most of the way.
     pub fn step(&mut self, wanted: Option<&T>, scale: f32) -> Option<f32> {
         let before = self.width(scale).unwrap_or_default();
         let mut changed = false;
         if wanted.is_some() && wanted != self.shows.as_ref() {
+            // What shows more fades out from there: another comes before the last came in.
+            let shown = self.was().map(|(_, shown)| shown);
+            let was = self.was.take().zip(shown).map(|((was, _), shown)| (was, shown));
+            self.was = match (self.shows.take().map(|shows| (shows, self.swap.shown())), was) {
+                (Some(shows), Some(was)) => Some(if shows.1 >= was.1 { shows } else { was }),
+                (shows, was) => shows.or(was),
+            };
+            self.swap = Fade::new(self.was.is_none());
             (self.shows, self.natural, changed) = (wanted.cloned(), None, true);
         }
         let to = self.target(wanted);
+        if wanted.is_some() && to.is_some() {
+            self.swap.set(true);
+        }
         if let Some(g) = &mut self.width {
             if let Some(to) = to {
                 g.set(to);
             }
-            changed |= g.step();
+            changed |= g.step() || g.moving();
             if wanted.is_none() && self.shows.is_some() && !g.moving() {
                 (self.shows, changed) = (None, true);
             }
         }
+        changed |= self.swap.moving();
+        if self.was.is_some() && self.swap.is_open() && !self.swap.moving() {
+            (self.was, changed) = (None, true);
+        }
         changed.then(|| self.width(scale).unwrap_or_default() - before)
+    }
+}
+
+/// A note by the pill (a toast, a button's name): it fades in as it shows and out as it goes, and as
+/// it says something else its width eases to it, the words fading from one to the other (`Slot`).
+/// It changes only when stepped, a frame at a time while it does.
+#[derive(Clone, Debug)]
+pub struct Note<T> {
+    says: Slot<T>,
+    fade: Fade,
+    height: Option<f32>,
+}
+
+impl<T: Clone + PartialEq> Note<T> {
+    /// Saying `says`, fading in.
+    pub fn new(says: T) -> Note<T> {
+        let mut fade = Fade::new(false);
+        fade.set(true);
+        Note { says: Slot::new(says), fade, height: None }
+    }
+
+    /// What it says as last stepped (fading out, what it said last): drawn before the step, what's
+    /// wanted showed in full for a frame, before the words it was to fade in for.
+    pub fn says(&self) -> Option<&T> {
+        self.says.shows()
+    }
+
+    /// Its words' width as drawn (`Slot::width`).
+    pub fn width(&self, scale: f32) -> Option<f32> {
+        self.says.width(scale)
+    }
+
+    /// How much of its words show, coming in for what it said (`Slot::fading_in`).
+    pub fn fading_in(&self) -> f32 {
+        self.says.fading_in()
+    }
+
+    /// What it said before, fading out, and how much of it shows (`Slot::was`).
+    pub fn said(&self) -> Option<(&T, f32)> {
+        self.says.was()
+    }
+
+    /// Drawn, its words take `width`.
+    pub fn measured(&mut self, width: f32) {
+        self.says.measured(width);
+    }
+
+    /// Drawn, it's `height` tall.
+    pub fn sized(&mut self, height: f32) {
+        self.height = Some(height);
+    }
+
+    /// The room it takes among the others, `gap` after it, as much as it shows: fading in, it
+    /// pushes them along; fading out, they close in on its place.
+    pub fn room(&self, gap: f32) -> f32 {
+        self.height.map_or(0.0, |h| (h + gap) * self.shown())
+    }
+
+    /// How much of it shows, 0 to 1.
+    pub fn shown(&self) -> f32 {
+        self.fade.shown()
+    }
+
+    /// A step on, to say `wanted` (none: it fades out, as wide as it was): whether to draw it again.
+    pub fn step(&mut self, wanted: Option<&T>, scale: f32) -> bool {
+        self.fade.set(wanted.is_some());
+        let eased = wanted.is_some() && self.says.step(wanted, scale).is_some();
+        eased || self.fade.moving()
+    }
+
+    /// Faded out.
+    pub fn gone(&self) -> bool {
+        !self.fade.is_open() && !self.fade.moving()
     }
 }
 
@@ -1329,17 +1446,17 @@ mod tests {
         grow.set(90.0);
         assert_eq!((grow.drawn(), grow.shown()), (0.0, 0.0));
         // Halfway, and done: it changes only when stepped.
-        grow.since = Some(Instant::now() - FADE / 2);
+        grow.since = Some(Instant::now() - RESIZE / 2);
         assert!(grow.step() && grow.drawn() > 45.0 && grow.drawn() < 90.0);
         assert_eq!(grow.shown(), grow.drawn() / 90.0);
-        grow.since = Some(Instant::now() - FADE);
+        grow.since = Some(Instant::now() - RESIZE);
         assert!(grow.step() && !grow.moving());
         assert_eq!((grow.drawn(), grow.shown()), (90.0, 1.0));
         // From one width to another, it shows all along; shrinking away, less and less.
         grow.set(60.0);
         assert_eq!(grow.shown(), 1.0);
         grow.set(0.0);
-        grow.since = Some(Instant::now() - FADE / 2);
+        grow.since = Some(Instant::now() - RESIZE / 2);
         grow.step();
         assert!(grow.shown() > 0.0 && grow.shown() < 1.0);
         assert!(grow.heads_for(0.0) && !grow.heads_for(60.0));
@@ -1348,14 +1465,15 @@ mod tests {
     /// Ends the step in progress, as if it had taken its time.
     fn done<T>(slot: &mut Slot<T>) {
         if let Some(g) = &mut slot.width {
-            g.since = g.since.map(|_| Instant::now() - FADE);
+            g.since = g.since.map(|_| Instant::now() - RESIZE);
         }
+        slot.swap.since = slot.swap.since.map(|_| Instant::now() - FADE);
     }
 
     #[test]
     fn slots_ease_to_what_they_show() {
-        // A name, as wide as it takes until it's measured; then another at that width until it's
-        // measured too, easing to its own.
+        // A name, as wide as it takes until it's measured; then another, unseen at that width until
+        // it's measured too, fading in for the first as the width eases to its own.
         let mut name = Slot::new("shop");
         assert_eq!((name.width(2.0), name.moving(Some(&"shop"))), (None, false));
         name.measured(100.0);
@@ -1363,12 +1481,23 @@ mod tests {
         assert!(name.moving(Some(&"payments")));
         assert_eq!(name.step(Some(&"payments"), 2.0), Some(0.0));
         assert_eq!((name.shows(), name.width(2.0)), (Some(&"payments"), Some(100.0)));
+        assert_eq!((name.fading_in(), name.was()), (0.0, Some((&"shop", 1.0))));
         name.measured(160.3);
-        name.step(Some(&"payments"), 2.0);
+        // Starting to ease, not wider yet: still a step, for the next to come.
+        assert_eq!(name.step(Some(&"payments"), 2.0), Some(0.0));
+        assert!(name.fading_in() < 0.1);
         done(&mut name);
         assert_eq!(name.step(Some(&"payments"), 2.0), Some(60.5));
-        assert_eq!((name.width(2.0), name.shown()), (Some(160.5), 1.0));
+        assert_eq!((name.width(2.0), name.shown(), name.fading_in(), name.was()), (Some(160.5), 1.0, 1.0, None));
         assert!(!name.moving(Some(&"payments")));
+        // Another before that one came in: the one that shows more fades out from where it was.
+        name.step(Some(&"shop"), 2.0);
+        name.measured(100.0);
+        name.step(Some(&"shop"), 2.0);
+        name.swap.since = Some(Instant::now() - FADE / 20);
+        name.step(Some(&"blog"), 2.0);
+        assert_eq!((name.fading_in(), name.was().map(|(w, _)| *w)), (0.0, Some("payments")));
+        assert!(name.was().is_some_and(|(_, shown)| shown > 0.25 && shown < 1.0));
 
         // A tool grows in from nothing, and shrinks away showing the last one.
         let mut tool = Slot::empty();
@@ -1376,7 +1505,7 @@ mod tests {
         tool.step(Some(&"Measure"), 2.0);
         assert_eq!((tool.width(2.0), tool.shown()), (Some(0.0), 0.0));
         tool.measured(90.0);
-        tool.step(Some(&"Measure"), 2.0);
+        assert_eq!(tool.step(Some(&"Measure"), 2.0), Some(0.0));
         done(&mut tool);
         assert_eq!(tool.step(Some(&"Measure"), 2.0), Some(90.0));
         tool.step(None, 2.0);

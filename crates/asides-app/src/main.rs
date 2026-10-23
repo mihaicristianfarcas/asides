@@ -1241,6 +1241,15 @@ impl App {
                 self.publish();
             }
             OverlayMessage::Event(OverlayEvent::Copied) => {}
+            OverlayMessage::Event(OverlayEvent::Restart) => {
+                let listening = self.recording.as_ref().is_some_and(|r| r.annotation.is_none() && !r.push_to_talk);
+                self.drop_said();
+                if listening {
+                    self.start_recording(None, None, false);
+                }
+                self.refresh();
+                self.publish();
+            }
             OverlayMessage::Event(OverlayEvent::Finished) => {
                 overlay.over = true;
                 let origin = overlay.origin();
@@ -1270,18 +1279,8 @@ impl App {
                 if !saved.is_empty() {
                     self.last_measure = saved;
                 }
-                // Esc sends nothing, what was said in it included. (A session before it may still
-                // be finishing.)
-                let before = self.finishing.as_ref().map_or(0, |f| f.last_take);
-                self.said.retain(|s| s.1 <= before);
-                let talked = !self.takes.is_empty() || self.recording.is_some();
-                self.takes.clear();
-                self.dictations.clear();
-                if let Some(recording) = self.recording.take() {
-                    drop(recording.recorder.finish());
-                    self.tell_overlay_recording();
-                }
-                if talked {
+                // Esc sends nothing, what was said in it included.
+                if self.drop_said() {
                     self.sound(Sound::Closed);
                 }
                 self.flash(FLASH, Mark::Cross, "Closed: nothing was sent");
@@ -1314,6 +1313,21 @@ impl App {
                 self.publish();
             }
         }
+    }
+
+    /// Throws away what was said in the open session (a session before it may still be finishing),
+    /// the recording under way included: whether anything was.
+    fn drop_said(&mut self) -> bool {
+        let before = self.finishing.as_ref().map_or(0, |f| f.last_take);
+        self.said.retain(|s| s.1 <= before);
+        let talked = !self.takes.is_empty() || self.recording.is_some();
+        self.takes.clear();
+        self.dictations.clear();
+        if let Some(recording) = self.recording.take() {
+            drop(recording.recorder.finish());
+            self.tell_overlay_recording();
+        }
+        talked
     }
 
     /// The overlay's talk key (Space held while muted) or an annotation's microphone (a tap toggles,
@@ -1405,7 +1419,7 @@ impl App {
             .collect();
         let joined = takes::join(&parts);
         drop(parts);
-        let (mut pictures, mut texts, pins) = inspection_parts(outcome, images, |time| joined.offset(time));
+        let (mut pictures, mut texts, pins) = inspection_parts(outcome, images, |time| joined.place(time));
         texts.extend(dictations.into_iter().map(|(time, text)| (joined.offset(time), text)));
         let started = takes.first().map_or(opened, |t| t.started.min(opened));
         for (take, start) in takes.into_iter().zip(starts) {
