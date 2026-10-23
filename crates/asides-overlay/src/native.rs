@@ -442,7 +442,8 @@ pub fn mouse_pressed() -> bool {
     NSEvent::pressedMouseButtons() & 1 != 0
 }
 
-fn view_pointer(window: &Window) -> usize {
+/// The window's view, for development replays.
+pub fn view_pointer(window: &Window) -> usize {
     match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
         Ok(RawWindowHandle::AppKit(h)) => h.ns_view.as_ptr() as usize,
         _ => 0,
@@ -788,6 +789,9 @@ pub mod synthetic {
             "down" => return special(125, '\u{f701}'),
             "up" => return special(126, '\u{f700}'),
             "f1" => return special(122, '\u{f704}'),
+            "home" => return special(115, '\u{f729}'),
+            "end" => return special(119, '\u{f72b}'),
+            "delete" => return special(117, '\u{f728}'),
             _ => {}
         }
         const LAYOUT: &[(&str, u16, &str)] = &[

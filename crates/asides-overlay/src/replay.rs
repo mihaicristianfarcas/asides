@@ -9,7 +9,8 @@
 //!  {"answer": {"name": "button \"Save\"", "app": "Safari"}}, {"capture": "after.png"}]
 //! ```
 //!
-//! `shift`, `alt`, `cmd` and `right` modify mouse steps; `screen` picks the window. `answer`
+//! `shift`, `alt`, `cmd` and `right` modify mouse steps; `screen` picks the window. `{"press":
+//! "tab"}` is a key pressed and let go (its release, as Return's on a button, can do more). `answer`
 //! answers the overlay's pending lookups as the app would (frames in global points), `answers`
 //! answers them one each, oldest first (an arrow's two ends), and
 //! `{"recording": 14}` says a recording is 14 s in (`"card": true`: for the open card's annotation),
@@ -50,6 +51,8 @@ struct Step {
     /// The key down again, as the keyboard repeats it while it's held.
     held: bool,
     keyup: Option<String>,
+    /// Down, then up.
+    press: Option<String>,
     #[serde(rename = "type")]
     text: Option<String>,
     wait: Option<u64>,
@@ -132,9 +135,46 @@ fn send(view: usize, offset: (f64, f64), step: &Step) {
     if let Some(chord) = step.keyup.as_deref().and_then(|k| keys::parse(k).into_iter().next()) {
         synthetic::key(view, &chord, false, false);
     }
+    if let Some(chord) = step.press.as_deref().and_then(|k| keys::parse(k).into_iter().next()) {
+        synthetic::key(view, &chord, true, false);
+        synthetic::key(view, &chord, false, false);
+    }
     if let Some(text) = &step.text {
         synthetic::text(view, text);
     }
+}
+
+/// Development (`ASIDES_WINDOW_REPLAY=<steps.json>`): plays steps in the asides window (its view
+/// `view`): keys (`press`, `key`, `keyup`, `type`), the mouse (`move`, `down`, `up`, in the window's
+/// points from its top left), `wait`, and `capture`s of the window as it shows, into `dir`. Then it
+/// quits.
+pub fn run_window(view: usize, steps: serde_json::Value, dir: std::path::PathBuf, cx: &mut App) {
+    let steps: Vec<Step> = match serde_json::from_value(steps) {
+        Ok(steps) => steps,
+        Err(err) => return eprintln!("asides-overlay: bad replay: {err}"),
+    };
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(Duration::from_millis(600)).await;
+        for step in steps {
+            // Outside any update: GPUI updates the window to handle each event.
+            send(view, (0.0, 0.0), &step);
+            cx.background_executor().timer(Duration::from_millis(step.wait.unwrap_or(120))).await;
+            if let Some(name) = &step.capture {
+                capture_window(view, &dir.join(name));
+            }
+        }
+        let _ = cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
+
+/// Where the window with view `view` is on screen, captured as it shows (glass shows what's behind).
+fn capture_window(view: usize, path: &std::path::Path) {
+    let main = crate::native::screens().into_iter().find(|(_, f)| f.x == 0.0 && f.y == 0.0).map(|(_, f)| f.height);
+    let Some((f, main)) = crate::native::frame(view).zip(main) else { return };
+    let rect = format!("{},{},{},{}", f.x, main - f.y - f.height, f.width, f.height);
+    let status = std::process::Command::new("screencapture").args(["-x", "-o", "-R", &rect]).arg(path).status();
+    eprintln!("captured {} ({status:?})", path.display());
 }
 
 fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
