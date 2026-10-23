@@ -44,6 +44,9 @@ const NOTICE: Duration = Duration::from_millis(5000);
 /// The pill's list, opened by pointing at where the aside goes, stays this long after the pointer
 /// leaves the name and the list.
 const LIST_LINGER: Duration = Duration::from_millis(200);
+/// The clock running this often in a second is a spin (something changing each time it runs, so it
+/// runs again at once): the log says so. Pointer moves and keys wake it a few hundred times at most.
+const SPIN: u32 = 1000;
 /// Tab held moves to the next session this often, slower than keys repeat: each name can be read.
 const TARGET_REPEAT: Duration = Duration::from_millis(240);
 const CARD_WIDTH: f64 = 440.0;
@@ -1217,6 +1220,7 @@ impl Overlay {
             let listening = self.recording.is_some() && !self.talking;
             if !e.is_held && !self.talking && !listening && !self.needs_model() {
                 self.talking = true;
+                asides_core::log::write(format_args!("{} down, no card open: talking", keys::label(&self.keys.talk)));
                 io::emit(&Event::Talk { down: true, annotation: None });
             }
             return cx.notify();
@@ -1369,6 +1373,10 @@ impl Overlay {
         }
         self.space_hold = Some((since, true));
         self.talking = true;
+        asides_core::log::write(format_args!(
+            "Space held {} ms in pin {key}'s card: talking",
+            since.elapsed().as_millis()
+        ));
         io::emit(&Event::Talk { down: true, annotation: Some(key) });
         true
     }
@@ -1540,6 +1548,23 @@ impl Overlay {
         if changed {
             cx.notify();
         }
+    }
+
+    /// What the clock may be running for, for the log.
+    pub fn doing(&self) -> String {
+        let card = self.card.as_ref().map(|c| c.number);
+        let space = self.space_hold.map(|(since, talking)| (since.elapsed().as_millis(), talking));
+        format!(
+            "card {card:?}, Space held {space:?}, talking {}, recording {:?}, toast {}, awaiting {:?}, pointing {:?}, \
+             list {}, live {}",
+            self.talking,
+            self.recording.map(|(seconds, _)| seconds),
+            self.toast.is_some(),
+            self.awaiting.map(|(key, _)| key),
+            self.pointing,
+            self.list.is_open(),
+            self.live,
+        )
     }
 
     /// When what shows next changes with time (the clock runs then, `run_clock`): a toast ends, the
@@ -3622,7 +3647,12 @@ pub fn run_clock(overlay: &Entity<Overlay>, cx: &mut App) {
     // It keeps the overlay as long as the app runs (its windows open from here).
     let overlay = overlay.clone();
     cx.spawn(async move |cx| {
+        let mut spin = asides_core::watchdog::Spin::new(SPIN);
         loop {
+            if let Some(times) = spin.ran(Instant::now()) {
+                let doing = cx.update(|cx| overlay.read(cx).doing()).unwrap_or_default();
+                asides_core::log::problem(format_args!("the clock ran {times} times in a second ({doing})"));
+            }
             if overlay.update(cx, |o, cx| o.tick(cx)).is_err() {
                 break;
             }

@@ -52,9 +52,10 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
   | cargo run -q -p asides-cli -- mcp
 ```
 
-- **The app's output** is discarded when launched normally. To see it: `asides quit`, then run
-  `~/Applications/asides.app/Contents/MacOS/asides` (macOS may then ask for the microphone for your
-  terminal).
+- **The app's output** goes to `~/Library/Logs/asides/asides.log` (`asides log`), the overlay's
+  and the window's too, with panics, slow or stuck main threads and the clock spinning. Run from a
+  terminal, a process prints there instead. `{"stall": 3000}` in a replay holds the overlay's main
+  thread, for the watchdog.
 - **Real agents** cost a model call: start yours in a scratch repo with a first message that keeps
   it small ("reply in one line, don't run tools"). Claude Code asks to trust a new folder first.
   Start terminals from the Dock: one launched from inside an agent's session hands its markers
@@ -225,7 +226,7 @@ shortcuts, requirements and install steps from the README: update both.
 
 ## Reporting bugs
 
-Use the bug report template, with your macOS version, `asides --version`, `asides status` and the
-steps. asides can contain private things: share only what's relevant.
+Use the bug report template, with your macOS version, `asides --version`, `asides status`,
+`asides log` and the steps. asides can contain private things: share only what's relevant.
 
 By contributing, you agree your contributions are dual licensed under MIT and Apache-2.0.

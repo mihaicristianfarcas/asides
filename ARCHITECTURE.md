@@ -54,6 +54,8 @@ crates/
     install.rs        linking the asides command for a hand-installed app
     wispr.rs          Wispr Flow's dictation history (read-only sqlite3)
     watch.rs          files and folders watched (FSEvents): what changes, as it changes
+    log.rs            ~/Library/Logs/asides/asides.log: lines, problems, panics, standard error; crash reports
+    watchdog.rs       main threads that stop or spin: slow, stuck, given up
     config.rs         config.toml schema and defaults
     models.rs         Whisper model catalog (sizes, SHA-256)
     resample.rs       resampling to 16 kHz
@@ -119,6 +121,8 @@ Casks/asides.rb       the Homebrew cask (the repository is a tap)
 | ScreenCaptureKit | screenshots → frames | `UserEvent::Captured` |
 | Overlay reader | the overlay's stdout | `UserEvent::Overlay` |
 | Updater | the feed, downloads into `~/Library/Caches/asides/updates` | `UserEvent::Update` |
+| Log (each process) | its standard error, into the log | the log |
+| Watchdog (each GUI process) | the main thread's spell of work, from a run loop observer | the log; the overlay ends itself after 10 s stuck |
 
 Background threads never touch AppKit (the pasteboard excepted); they send `UserEvent`s that
 `App::handle` runs on the main thread. The app writes overlay commands from the main thread.
@@ -205,7 +209,8 @@ Break these only on purpose, and update this list.
 1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates.
 2. **Nothing polls.** Everything waits on what happens (input, notifications, FSEvents through
    `watch.rs`, kqueue, a process ending, a channel) or sleeps until the exact time something is
-   due. A timer only where nothing says, and the code says why (the update check).
+   due. A timer only where nothing says, and the code says why (the update check, the watchdog's
+   deadline: a stuck thread can't say so).
 3. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted).
 4. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
    file renamed over the old), an edit in History (only a message `markdown::check_message`
@@ -232,6 +237,9 @@ Break these only on purpose, and update this list.
 17. **Each aside goes to one place**: a session, a new session, or the history.
 18. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
     only once it has quit. Copies that aren't notarized never update themselves.
+19. **What goes wrong is in the log**: errors as problems (`log::problem`, `App::fail`), panics,
+    standard error, how an overlay ended, slow and stuck main threads, the overlay's clock spinning.
+    A frozen overlay stuck 10 s ends itself (`abort`: macOS keeps a report of where it was).
 
 ## Persistent state
 
@@ -245,6 +253,7 @@ Break these only on purpose, and update this list.
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |
 | `~/Library/Caches/asides/updates/<version>/` | updater | `staged/asides.app`, `install.sh`, `install.log`; removed once that version runs |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, overlay | a session's pixels, spec, result; removed on exit |
+| `~/Library/Logs/asides/asides.log` | app, overlay, window | a line each, `!` for a problem; `asides.log.1` past 4 MB |
 | `~/Library/Application Support/Wispr Flow/flow.sqlite` | Wispr Flow | read-only, with `wispr_flow` on |
 
 ## Design decisions

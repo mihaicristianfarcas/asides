@@ -111,6 +111,8 @@ changes.
 - measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
 - read `~/Library/Application Support/asides/state.json`
+- read what went wrong: `asides log` (problems, crash reports, the log's last lines), or
+  `~/Library/Logs/asides/asides.log` itself; `asides status` says when there are any
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md)
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
 
@@ -192,7 +194,7 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 
 - The overlay's clock runs again at once when `tick` reports a change. A change true on every tick
   spun it: Space down in a card ran it 10,000 times a second, libdispatch never let the run loop
-  take the key-up, and a tap talked. Report a change once.
+  take the key-up, and a tap talked. Report a change once; the log says when the clock spins.
 - GPUI owns `NSApplication` and the event loop, like tao: hence a second process. It makes its app
   regular (a Dock icon): `native::accessory` undoes it, and `native::stay_accessory_at_launch` stops
   its launch-time call (else a second Dock tile stayed until quit). The asides window's process

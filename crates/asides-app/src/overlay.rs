@@ -49,6 +49,12 @@ impl Standby {
         self.child.id()
     }
 
+    /// How it ended, having quit by itself.
+    pub fn ended(mut self) -> String {
+        drop(self.stdin);
+        self.child.wait().map_or_else(|err| err.to_string(), |status| status.to_string())
+    }
+
     /// Opens the session in `dir`: the process is the session's now. `None` if it quit.
     fn open(mut self, dir: &Path) -> Option<(Child, ChildStdin)> {
         let open = asides_core::helper::line(&Command::Open { dir: dir.to_path_buf() });
@@ -211,10 +217,17 @@ impl Overlay {
 
 impl Drop for Overlay {
     fn drop(&mut self) {
-        if let Ok(None) = self.child.try_wait() {
+        let running = matches!(self.child.try_wait(), Ok(None));
+        if running {
             let _ = self.child.kill();
         }
-        let _ = self.child.wait();
+        // Ended by itself, and not well: a panic, a crash, or stuck too long (`signal: 6`).
+        if let Ok(status) = self.child.wait()
+            && !running
+            && !status.success()
+        {
+            asides_core::log::problem(format_args!("the overlay ({}) ended: {status}", self.child.id()));
+        }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }

@@ -41,6 +41,10 @@ fn main() {
         eprintln!("usage: asides-overlay <session directory> | {STANDBY} | {WINDOW}");
         std::process::exit(2);
     };
+    asides_core::log::init(if arg == WINDOW { "window" } else { "overlay" });
+    if let Err(err) = asides_core::log::capture_stderr() {
+        asides_core::log::problem(format_args!("standard error not in the log: {err}"));
+    }
     if arg == STANDBY {
         return standby();
     }
@@ -158,7 +162,13 @@ fn standby() {
 fn launched(cx: &mut App) {
     native::accessory();
     input::bind_keys(cx);
+    // Stuck, the overlay can't be closed, and frozen it covers every screen, the Dock and the menu
+    // bar hidden (the Mac seems frozen): it ends, and gives them back.
+    native::watch_main_thread(Some(GIVE_UP));
 }
+
+/// How long the overlay's main thread may be stuck before it ends.
+const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Opens the session: the clock opens its windows, or takes the spare ones.
 fn open(

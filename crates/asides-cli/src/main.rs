@@ -64,6 +64,16 @@ enum Command {
     Download { model: Option<String> },
     /// Show whether asides is running and what it's doing.
     Status,
+    /// What went wrong lately: the problems in asides' log (~/Library/Logs/asides), the crash
+    /// reports macOS kept, and the log's last lines.
+    Log {
+        /// How many of the log's last lines.
+        #[arg(short = 'n', default_value_t = 30)]
+        count: usize,
+        /// Problems and crash reports from this many days back.
+        #[arg(long, default_value_t = 7)]
+        days: i64,
+    },
     /// Quit the menu-bar app.
     Quit,
     /// Run the MCP server (stdio): agents can measure screenshots and read your asides.
@@ -142,6 +152,7 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Command::Status) => status(),
+        Some(Command::Log { count, days }) => log(count, days),
         Some(Command::Quit) => {
             if running_state().is_none() {
                 println!("asides is not running.");
@@ -338,7 +349,100 @@ fn status() -> Result<()> {
         };
         println!("Last aside: {} ({}), {sent}", aside.record.title, aside.id);
     }
+    let problems = asides_core::log::recent_problems(1).len() + crash_reports(1).iter().map(|c| c.count).sum::<usize>();
+    if problems > 0 {
+        let s = if problems == 1 { "" } else { "s" };
+        println!("{problems} problem{s} in the last day: `asides log`");
+    }
     Ok(())
+}
+
+fn log(count: usize, days: i64) -> Result<()> {
+    let path = asides_core::log::path();
+    println!("{} (Console lists it under Log Reports)", tilde(&path));
+    let problems = asides_core::log::recent_problems(days);
+    match problems.is_empty() {
+        true => println!("\nNo problems in the last {days} days."),
+        false => println!("\nProblems in the last {days} days:"),
+    }
+    for problem in problems {
+        println!("  {problem}");
+    }
+    let crashes = crash_reports(days);
+    match crashes.is_empty() {
+        true => println!("\nNo crash reports in the last {days} days."),
+        false => println!("\nCrash reports in the last {days} days ({}):", tilde(&paths::crash_reports_dir())),
+    }
+    for c in crashes {
+        let (first, last) = (minute(&c.first.time), minute(&c.last.time));
+        let when = if c.count == 1 { last.to_string() } else { format!("{} times, {first} to {last}", c.count) };
+        let name = [c.last.process.as_str(), &c.last.version].join(" ");
+        println!("  {}: {} ({when})", name.trim(), c.last.reason);
+        if let Some(function) = &c.last.crashed_in {
+            println!("    in {function}");
+        }
+        if let Some(function) = &c.last.main_in {
+            println!("    the main thread in {function}");
+        }
+        println!("    {}", c.file);
+    }
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    if !lines.is_empty() {
+        println!("\nThe log's last lines:");
+    }
+    for line in &lines[lines.len().saturating_sub(count)..] {
+        println!("  {line}");
+    }
+    Ok(())
+}
+
+/// `2026-10-19 16:26:59.00 +0300` → `2026-10-19 16:26`.
+fn minute(time: &str) -> &str {
+    time.get(..16).unwrap_or(time)
+}
+
+/// Crash reports alike (the same process, reason and place), counted.
+struct Crashes {
+    count: usize,
+    first: asides_core::log::Crash,
+    last: asides_core::log::Crash,
+    /// The last one's report.
+    file: String,
+}
+
+/// asides' crash reports from `days` back, alike ones together, oldest first.
+fn crash_reports(days: i64) -> Vec<Crashes> {
+    let since = SystemTime::now() - Duration::from_secs(days.max(0) as u64 * 86_400);
+    let dir = paths::crash_reports_dir();
+    let mut reports: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            name.starts_with("asides") && name.ends_with(".ips")
+        })
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .filter(|(modified, _)| *modified >= since)
+        .collect();
+    reports.sort();
+    let mut crashes: Vec<Crashes> = Vec::new();
+    for (_, path) in reports {
+        let Some(crash) = std::fs::read_to_string(&path).ok().and_then(|t| asides_core::log::crash(&t)) else {
+            continue;
+        };
+        let file = tilde(&path);
+        let alike = |c: &&mut Crashes| {
+            (&c.last.process, &c.last.reason, &c.last.crashed_in, &c.last.main_in)
+                == (&crash.process, &crash.reason, &crash.crashed_in, &crash.main_in)
+        };
+        match crashes.iter_mut().find(|c| alike(c)) {
+            Some(c) => (c.count, c.last, c.file) = (c.count + 1, crash, file),
+            None => crashes.push(Crashes { count: 1, first: crash.clone(), last: crash, file }),
+        }
+    }
+    crashes
 }
 
 pub(crate) fn is_running(pid: u32) -> bool {

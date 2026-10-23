@@ -17,7 +17,8 @@
 //! `{"transcribing": true}` that what was said about it is being transcribed, and `{"said": "…"}`
 //! that it was, as the app would. `"toolbar": true` sends a step to the pill's window (in its points),
 //! `{"toggle": true}` is ⌃⌥P (live, or frozen again) and `{"frozen": true}` answers a freeze with
-//! the spec's screens, as the app would. A capture is
+//! the spec's screens, as the app would. `{"stall": 3000}` holds the main thread that long (the
+//! watchdog's to notice: `native::watch_main_thread`). A capture is
 //! of where a screen's window is, as it shows (the pill above it; live, what's on screen there), or
 //! of the pill's window alone (`"toolbar": true`, or opened live).
 
@@ -71,6 +72,8 @@ struct Step {
     toggle: bool,
     /// The app froze the screens (the spec's).
     frozen: bool,
+    /// Milliseconds the main thread is held, as if stuck.
+    stall: Option<u64>,
     capture: Option<String>,
 }
 
@@ -135,6 +138,9 @@ fn send(view: usize, offset: (f64, f64), step: &Step) {
 }
 
 fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
+    if let Some(ms) = step.stall {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
     if step.toggle {
         overlay.update(cx, |o, cx| o.apply_command(Command::ToggleFreeze, cx));
     }

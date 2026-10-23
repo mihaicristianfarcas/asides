@@ -309,7 +309,9 @@ name = "asides-core"
 version = "1.0.7"
 dependencies = [
  "chrono",
+ "libc",
  "notify",
+ "rustc-demangle",
  "serde",
  "serde_json",
  "tempfile",
@@ -331,6 +333,7 @@ dependencies = [
  "image",
  "objc2",
  "objc2-app-kit",
+ "objc2-core-foundation",
  "objc2-core-graphics",
  "objc2-foundation",
  "objc2-quartz-core",
@@ -5833,6 +5836,12 @@ dependencies = [
  "sha2 0.11.1",
  "walkdir",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"
