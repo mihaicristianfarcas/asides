@@ -310,6 +310,10 @@ pub struct Overlay {
     talking: bool,
     /// A toolbar button's name while the pointer is on it.
     hint: Option<(&'static str, SharedString)>,
+    /// The toolbar button under the pointer, as GPUI last said (pressed, its name goes; it stays).
+    pointing: Option<&'static str>,
+    /// The pointer left the pill from a button: GPUI is to hear where it is (`windows::sync`).
+    pub left_pill: bool,
     /// The card's dot under the pointer, named above the card.
     card_tip: Option<SharedString>,
     /// Screenshots taken: when, and the file in the session directory.
@@ -453,6 +457,8 @@ impl Overlay {
             next_id: 1,
             talking: false,
             hint: None,
+            pointing: None,
+            left_pill: false,
             card_tip: None,
             shots: Vec::new(),
             shot_count: 0,
@@ -648,10 +654,20 @@ impl Overlay {
         changed
     }
 
+    /// GPUI says the pointer is on the pill's button `id`, or left it (`pointing`).
+    fn pointed(&mut self, id: &'static str, hovered: bool) {
+        if hovered {
+            self.pointing = Some(id);
+        } else if self.pointing == Some(id) {
+            self.pointing = None;
+        }
+    }
+
     /// The name of the pill's button `id` under the pointer, by the pill. Leaving a button clears
     /// only its own name (whichever of the two GPUI tells first): going straight to the next one, the
     /// name changes without a gap. A press clears it, as a tooltip goes.
     fn show_hint(&mut self, id: &'static str, name: SharedString, hovered: bool, cx: &mut Context<Self>) {
+        self.pointed(id, hovered);
         if hovered && self.moving_toolbar.is_none() {
             self.hint = Some((id, name));
         } else if self.hint.as_ref().is_some_and(|(shown, _)| *shown == id) {
@@ -1493,9 +1509,14 @@ impl Overlay {
             changed = true;
         }
         // GPUI isn't told when the pointer leaves the pill's window: the keys go with it, and the
-        // list opened by pointing, a moment after.
+        // list opened by pointing, a moment after. Left straight from a button, the button stayed
+        // lit and its name up, until the pointer came back: GPUI is told where it is.
         if self.help_hover && !self.pointer_on_pill() {
             self.help_hover = false;
+        }
+        if self.pointing.is_some() && !self.pointer_on_pill() {
+            (self.pointing, self.hint, self.left_pill) = (None, None, true);
+            changed = true;
         }
         if self.list_hovered && self.list.is_open() {
             match self.pointer_on_list() {
@@ -1509,7 +1530,9 @@ impl Overlay {
             }
         }
         changed |= self.show_keys();
-        crate::native::watch_pointer(self.help_hover || (self.list_hovered && self.list.is_open()));
+        crate::native::watch_pointer(
+            self.help_hover || self.pointing.is_some() || (self.list_hovered && self.list.is_open()),
+        );
         if changed {
             cx.notify();
         }
@@ -2416,6 +2439,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         .on_hover(move |hovered, _, cx| {
             let hovered = *hovered;
             hover.update(cx, |o, cx| {
+                o.pointed("help", hovered);
                 o.help_hover = hovered && o.moving_toolbar.is_none();
                 if hovered && o.list_hovered {
                     o.show_list(false);
