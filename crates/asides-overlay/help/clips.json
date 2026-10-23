@@ -6,7 +6,7 @@
     {"image": "basics-3.webp", "hold": 3400, "pointer": [320, 504], "say": "This card [1] needs room under the header, and this button [2] wraps.", "step": 2},
     {"image": "basics-4.webp", "hold": 3600, "key": "send", "step": 3}
   ]},
-  "pill": {"size": [293.0, 38.0], "radius": 12, "bare": true, "frames": [
+  "pill": {"size": [326.0, 38], "radius": 12, "bare": true, "frames": [
     {"image": "pill.webp", "hold": 0}
   ]},
   "target": {"size": [560, 470], "frames": [
@@ -20,7 +20,7 @@
     {"image": "card-2.webp", "hold": 1200, "pointer": [374, 504]},
     {"image": "card-3.webp", "hold": 2600, "key": "⌘2"}
   ]},
-  "tools": {"size": [880, 520], "frames": [
+  "tools": {"size": [918, 520], "frames": [
     {"image": "tools-0.webp", "hold": 1800, "pointer": [180, 261], "key": "measure"},
     {"image": "tools-1.webp", "hold": 1900, "path": [[16, 241.5], [150, 259], [492, 294]]},
     {"image": "tools-2.webp", "hold": 2600, "pointer": [820, 504], "path": [[513.9, 389.9], [525.7, 378.3], [543.0, 368.7], [564.6, 361.7], [589.0, 357.8], [614.5, 357.2], [639.5, 360.0], [662.2, 366.0], [681.1, 374.9], [694.8, 385.9], [702.5, 398.3], [703.6, 411.4], [698.1, 424.1], [686.3, 435.7], [669.0, 445.3], [647.4, 452.3], [623.0, 456.2], [597.5, 456.8], [572.5, 454.0], [549.8, 448.0], [530.9, 439.1], [517.2, 428.1], [509.5, 415.7], [508.4, 402.6], [513.9, 389.9]], "key": "draw"}

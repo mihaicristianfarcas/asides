@@ -138,8 +138,10 @@ RUNS = {
 # and "send" are the shortcut, as set. The first frame's are what happens as the clip starts over.
 # After the frames, anything else the window needs: `radius`, its corners'; `bare`, no outline.
 BASICS = (560, 36, 740, 600)
-# The pill's corners (`glass_panel` in the overlay's ui.rs).
+# The pill's corners (`glass_panel` in the overlay's ui.rs), and its height: its buttons, padding and
+# border (`toolbar_panel`).
 PILL_RADIUS = 12
+PILL_HEIGHT = 38
 CLIPS = {
     "basics": (BASICS, [
         {"image": "basics-0", "pointer": REST, "key": "open", "hold": 1800, "step": 0},
@@ -163,12 +165,12 @@ CLIPS = {
         {"image": "card-2", "pointer": REST, "hold": 1200},
         {"image": "card-3", "key": "⌘2", "hold": 2600},
     ]),
-    "tools": ((60, 36, 880, 520), [
+    "tools": ((60, 36, 918, 520), [
         {"image": "tools-0", "pointer": FIELD, "key": "measure", "hold": 1800},
         {"image": "tools-1", "path": FIELD_DRAG, "hold": 1900},
         {"image": "tools-2", "path": CIRCLE, "pointer": REST, "key": "draw", "hold": 2600},
     ]),
-    "keys": ((595, 36, 490, 480), [{"image": "keys-0", "hold": 0}]),
+    "keys": ((579, 36, 490, 480), [{"image": "keys-0", "hold": 0}]),
 }
 
 
@@ -222,11 +224,12 @@ def run(name, screen, replay, tmp):
 
 
 def pill_box(frame, desk):
-    """The pill on `frame` (pixels): where it differs from the desktop, near the top."""
+    """The pill on `frame` (pixels): where it differs from the desktop, near the top, as tall as it is
+    from its bottom (over a dark sky, its top edge hardly differs)."""
     top = (0, 0, frame.width, 400)
     changed = ImageChops.difference(frame.crop(top), desk.crop(top)).convert("L").point(lambda v: 255 if v > 24 else 0)
-    x0, y0, x1, y1 = changed.getbbox()
-    return x0 / 2, y0 / 2, (x1 - x0) / 2, (y1 - y0) / 2
+    x0, _, x1, y1 = changed.getbbox()
+    return x0 / 2, y1 / 2 - PILL_HEIGHT, (x1 - x0) / 2, PILL_HEIGHT
 
 
 def cut_corners(image, radius):
