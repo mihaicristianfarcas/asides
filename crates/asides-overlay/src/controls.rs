@@ -1121,6 +1121,27 @@ pub fn setting(
     control: impl IntoElement,
     t: Theme,
 ) -> AnyElement {
+    setting_row(label_stack(label, detail.map(|d| d.to_string().into()), t), control)
+}
+
+/// A setting whose line says what the chosen option does: as tall as the longest of `details`, so
+/// the row keeps its height as the choice changes.
+pub fn choice_setting(
+    label: impl Into<SharedString>,
+    details: impl IntoIterator<Item = &'static str>,
+    chosen: Option<usize>,
+    control: impl IntoElement,
+    t: Theme,
+) -> AnyElement {
+    // All of them in one grid cell, only the chosen one drawn: the cell is as tall as the tallest.
+    let lines = details
+        .into_iter()
+        .enumerate()
+        .map(|(i, detail)| div().row_start(1).col_start(1).when(Some(i) != chosen, |d| d.invisible()).child(detail));
+    setting_row(label_stack(label, None, t).child(detail_line(t).grid().grid_cols(1).children(lines)), control)
+}
+
+fn setting_row(labels: Div, control: impl IntoElement) -> AnyElement {
     div()
         .min_h(px(Metrics::SETTINGS_ROW))
         .px(px(12.))
@@ -1129,7 +1150,7 @@ pub fn setting(
         .items_center()
         .justify_between()
         .gap(px(16.))
-        .child(label_stack(label, detail.map(|d| d.to_string().into()), t))
+        .child(labels)
         .child(div().flex_none().flex().items_center().gap(px(8.)).child(control))
         .into_any_element()
 }
@@ -1142,9 +1163,12 @@ pub fn label_stack(label: impl Into<SharedString>, detail: Option<SharedString>,
         .flex_col()
         .gap(px(2.))
         .child(div().font_weight(FontWeight::MEDIUM).child(label.into()))
-        .when_some(detail, |d, detail| {
-            d.child(div().text_size(px(Type::META)).line_height(px(15.)).text_color(t.tertiary).child(detail))
-        })
+        .when_some(detail, |d, detail| d.child(detail_line(t).child(detail)))
+}
+
+/// The small print under a name.
+fn detail_line(t: Theme) -> Div {
+    div().text_size(px(Type::META)).line_height(px(15.)).text_color(t.tertiary)
 }
 
 /// Small print under a card.

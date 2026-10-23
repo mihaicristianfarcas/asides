@@ -72,6 +72,12 @@ impl ModelSpec {
         self.path().is_file()
     }
 
+    /// The model's name as OpenAI publishes it (huggingface.co/openai/whisper-large-v3-turbo):
+    /// "whisper-large-v3-turbo".
+    pub fn name(&self) -> String {
+        format!("whisper-{}", self.id)
+    }
+
     /// "190 MB".
     pub fn size_label(&self) -> String {
         match self.size {
