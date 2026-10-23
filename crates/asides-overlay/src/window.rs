@@ -2208,10 +2208,11 @@ impl AsidesWindow {
             SetupStep::Permissions => self.setup_permissions(cx),
             SetupStep::Voice => self.setup_voice(window, cx),
             SetupStep::Shortcuts => self.setup_shortcuts(cx),
-            SetupStep::Welcome | SetupStep::Done => self.setup_done(),
+            SetupStep::Welcome | SetupStep::Done => self.setup_done(cx),
         };
         let index = |s: SetupStep| SetupStep::ALL.iter().position(|x| *x == s).unwrap_or(0);
-        // The steps between the welcome and done: those behind checked, this one lit.
+        // The steps between the welcome and done: those behind checked, this one lit. A click on
+        // another goes to it.
         let between = &SetupStep::ALL[1..SetupStep::ALL.len() - 1];
         let progress = div().flex().items_center().gap(px(20.)).children(between.iter().map(|&s| {
             let (behind, on) = (index(s) < index(step), s == step);
@@ -2222,12 +2223,14 @@ impl AsidesWindow {
                 }
             };
             div()
+                .id(SharedString::from(format!("setup-step-{}", s.name())))
                 .flex()
                 .items_center()
                 .gap(px(6.))
                 .text_size(px(12.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(if on { t.primary } else { t.tertiary })
+                .when(!on, |d| d.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.setup_go(s, cx))))
                 .child(div().w(px(12.)).flex().justify_center().child(mark))
                 .child(s.title())
         }));
@@ -2752,21 +2755,25 @@ impl AsidesWindow {
             .into_any_element()
     }
 
-    /// What's ready, what's left (asked for when first needed), and how to try it.
-    fn setup_done(&mut self) -> AnyElement {
+    /// What's ready, what's left (asked for when first needed), and how to try it. A click on one
+    /// goes to its step.
+    fn setup_done(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let p = &self.state.permissions;
         let model = ModelSpec::find(&self.config.model);
         let terminal = terminal_app(&self.config.agents.terminal);
         let downloading = (self.state.status == "downloading").then(|| self.state.detail.clone()).flatten();
-        let item = |ready: bool, label: String, detail: String| {
+        let item = |step: SetupStep, ready: bool, label: String, detail: String| {
             div()
+                .id(SharedString::from(format!("setup-done-{label}")))
                 .min_h(px(44.))
                 .px(px(12.))
                 .py(px(8.))
                 .flex()
                 .items_center()
                 .gap(px(12.))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.setup_go(step, cx)))
                 .child(div().w(px(28.)).flex().justify_center().child(icon(
                     if ready { "check" } else { "clock" },
                     16.,
@@ -2795,9 +2802,20 @@ impl AsidesWindow {
             ))
             .child(rows(
                 [
-                    item(mic, "Microphone".into(), if mic { "Allowed".into() } else { later.clone() }),
-                    item(p.screen, "Screen Recording".into(), if p.screen { "Allowed".into() } else { later.clone() }),
                     item(
+                        SetupStep::Permissions,
+                        mic,
+                        "Microphone".into(),
+                        if mic { "Allowed".into() } else { later.clone() },
+                    ),
+                    item(
+                        SetupStep::Permissions,
+                        p.screen,
+                        "Screen Recording".into(),
+                        if p.screen { "Allowed".into() } else { later.clone() },
+                    ),
+                    item(
+                        SetupStep::Voice,
                         model.downloaded(),
                         format!("Voice model: {}", model_name(model)),
                         match (model.downloaded(), downloading) {
@@ -2807,11 +2825,12 @@ impl AsidesWindow {
                         },
                     ),
                     item(
+                        SetupStep::Sessions,
                         typing,
                         format!("New sessions: {agent} in {terminal}"),
                         if typing { "Ready".into() } else { "macOS asks the first time asides types there".into() },
                     ),
-                    item(true, format!("Each pin: {pins}"), what.into()),
+                    item(SetupStep::Pins, true, format!("Each pin: {pins}"), what.into()),
                 ],
                 t,
             ))
