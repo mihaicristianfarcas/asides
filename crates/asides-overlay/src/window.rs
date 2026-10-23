@@ -944,20 +944,22 @@ impl AsidesWindow {
         (handle, ring)
     }
 
-    /// A card of choices (`choice_row`s, each with its id and what picking it does): Tab reaches
-    /// each, Return or Space picks it, and the arrows pick the one before or after.
+    /// A card of choices (`choice_row`s, each with its id, whether it's chosen, and what picking it
+    /// does): one stop for Tab, the chosen one (or the first); the arrows pick the one before or
+    /// after, and Return or Space picks the one with the keyboard.
     fn choice_rows(
         &mut self,
-        choices: Vec<(SharedString, gpui::Stateful<gpui::Div>, Pick)>,
+        choices: Vec<(SharedString, gpui::Stateful<gpui::Div>, bool, Pick)>,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let t = self.theme;
+        let stop = choices.iter().position(|(_, _, chosen, _)| *chosen).unwrap_or(0);
         let (mut handles, mut picks, mut shown) = (Vec::new(), Vec::new(), Vec::new());
-        for (id, row, pick) in choices {
+        for (i, (id, row, _, pick)) in choices.into_iter().enumerate() {
             let (handle, ring) = self.focusable(id, cx);
             let click = pick.clone();
             shown.push(
-                row.track_focus(&handle)
+                row.track_focus(&handle.clone().tab_stop(i == stop))
                     .relative()
                     .on_click(move |_, window, cx| click(window, cx))
                     .when(ring, |d| d.child(controls::focus_ring(t, Radius::ROW, -3.)))
@@ -1426,7 +1428,8 @@ impl AsidesWindow {
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let current = self.page;
-        // Tab reaches each page; the arrows go up and down them, each shown as they come to it.
+        // One stop for Tab, the page shown (What's new isn't there: History); the arrows go up and
+        // down the pages, each shown as they come to it.
         let pages = [
             ("nav-history", Page::History),
             ("nav-sessions", Page::Sessions),
@@ -1448,6 +1451,7 @@ impl AsidesWindow {
             this.go(pages[to].1, cx);
         });
         let foot = self.foot(cx);
+        let stop = pages.iter().find(|&&(_, p)| p == current).map_or(Page::History, |&(_, p)| p);
         let nav = |id: &'static str,
                    label: &'static str,
                    glyph: &'static str,
@@ -1458,7 +1462,7 @@ impl AsidesWindow {
             let (handle, ring) = focus[id].clone();
             div()
                 .id(id)
-                .track_focus(&handle)
+                .track_focus(&handle.tab_stop(page == stop))
                 .h(px(Metrics::NAV_ROW))
                 .px(px(8.))
                 .flex()
@@ -1653,9 +1657,10 @@ impl AsidesWindow {
         let today = Local::now().date_naive();
         let mut list: Vec<AnyElement> = Vec::new();
         let mut day = None;
-        // Tab reaches the asides; the arrows (Home, End) go through them, each shown as they come
-        // to it.
+        // One stop for Tab, the aside shown (or the first); the arrows (Home, End) go through them,
+        // each shown as they come to it.
         let ids: Vec<String> = self.asides.iter().map(|a| a.id.clone()).collect();
+        let stop = ids.iter().position(|id| self.selected.as_ref() == Some(id)).unwrap_or(0);
         let focus: Vec<(gpui::FocusHandle, bool)> =
             ids.iter().map(|id| self.focusable(format!("aside-{id}"), cx)).collect();
         let handles: Vec<gpui::FocusHandle> = focus.iter().map(|(h, _)| h.clone()).collect();
@@ -1695,7 +1700,7 @@ impl AsidesWindow {
             list.push(
                 div()
                     .id(SharedString::from(format!("aside-{id}")))
-                    .track_focus(&handle)
+                    .track_focus(&handle.tab_stop(index == stop))
                     .flex()
                     .flex_col()
                     .gap(px(2.))
@@ -2630,7 +2635,8 @@ impl AsidesWindow {
                 });
                 let id = SharedString::from(format!("setup-terminal-{name}"));
                 let row = choice_row(id.clone(), t, "terminal", name, detail, name == current);
-                (id, row, std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick)
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (id, row, name == current, pick)
             })
             .collect();
         let terminals = self.choice_rows(terminals, cx);
@@ -2692,7 +2698,8 @@ impl AsidesWindow {
                 let pick = self.setter(cx, move |c, _: ()| c.annotation_detail = detail);
                 let id = SharedString::from(format!("setup-detail-{name}"));
                 let row = choice_row(id.clone(), t, "annotate", name, what, detail == chosen);
-                (id, row, std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick)
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (id, row, detail == chosen, pick)
             })
             .collect();
         let choices = self.choice_rows(choices, cx);
@@ -2874,7 +2881,8 @@ impl AsidesWindow {
                 let pick = self.setter(cx, move |c, _: ()| c.model = id.into());
                 let key = SharedString::from(format!("setup-model-{id}"));
                 let row = choice_row(key.clone(), t, "mic", model_name(m), detail, m.id == chosen.id);
-                (key, row, std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick)
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (key, row, m.id == chosen.id, pick)
             })
             .collect();
         let models = self.choice_rows(models, cx);
