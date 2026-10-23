@@ -10,11 +10,12 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 
 | | |
 |---|---|
-| `⌃⌥Space` | Freeze every screen. The pill at the top shows the keys (?), the microphone, where the aside goes, send (✓) and close (×). |
+| `⌃⌥Space` | Freeze every screen. The pill at the top shows the keys (?), the microphone, where the aside goes, start over (↻), send (✓) and close (×). |
 | Click | Pin the element under the pointer. Drag to pin an area. |
 | Drag a pin's number | Move what it's on: a copy goes where you drop it, with an arrow, and the pin says where to. |
 | Talk | Each pin's number lands after the word you said as you placed it (`this [1] a different color`). |
 | `⌃⌥Space`, `⏎` or ✓ | Send. A moment later it's in your agent's chat: what you said, with a screenshot around what you marked (none if you marked nothing). |
+| ↻ | Start over without sending: what you pinned and said goes, and the session goes on (listening, if it was). |
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 

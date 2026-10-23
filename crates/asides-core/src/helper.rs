@@ -230,6 +230,9 @@ pub enum Event {
     Finished,
     /// Closed without sending anything; what to restore next time.
     Cancelled { saved: Saved },
+    /// Start over: the overlay threw away what was pinned, measured and drawn; what was said goes
+    /// too, and the microphone, if it was listening, listens again.
+    Restart,
 }
 
 /// From the app to the overlay.

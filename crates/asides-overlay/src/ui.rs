@@ -1419,6 +1419,27 @@ impl Overlay {
         self.quit(cx);
     }
 
+    /// The pill's start over: what was pinned, measured, drawn and said on every freeze goes, and
+    /// the session goes on from here, frozen or live (the app throws away what was said).
+    fn restart(&mut self, window: &mut Window) {
+        if self.done {
+            return;
+        }
+        if let Some(card) = self.card.take()
+            && let Some(focus) = self.windows.get(card.screen).and_then(|w| w.focus.clone())
+        {
+            window.focus(&focus);
+        }
+        self.session.clear();
+        self.shots.clear();
+        self.kept.clear();
+        self.keeping = None;
+        (self.transcribing, self.awaiting) = (Vec::new(), None);
+        (self.talking, self.space_hold, self.talked, self.close_armed) = (false, None, false, None);
+        io::emit(&Event::Restart);
+        self.toast("Started over");
+    }
+
     /// Esc: closes without adding anything, at once with nothing to lose, otherwise on a second
     /// press within `CLOSE_AGAIN`.
     fn close_by_key(&mut self, cx: &mut Context<Self>) {
@@ -2318,7 +2339,7 @@ fn icon(name: &str, ink: Hsla) -> impl IntoElement {
 }
 
 /// The pill: the microphone, where the aside goes (a click lists the sessions and New session…), the
-/// tool when it isn't Annotate (frozen), send and close. One window, frozen and live; it moves when
+/// tool when it isn't Annotate (frozen), start over, send and close. One window, frozen and live; it moves when
 /// it's dragged anywhere but its buttons.
 pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElement {
     let session = &o.session;
@@ -2475,6 +2496,13 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     let mut items: Vec<AnyElement> = vec![div().flex().items_center().child(first).children(badge).into_any_element()];
     items.push(sep());
     items.push(group(vec![
+        button(
+            "restart",
+            "Start over without sending".into(),
+            Emphasis::Plain,
+            icon("restart", plain).into_any_element(),
+            Box::new(|o, w, _| o.restart(w)),
+        ),
         button(
             "done",
             format!("Send ({} or {})", o.spec.record_shortcut, o.keys.label(Cmd::Done)),
