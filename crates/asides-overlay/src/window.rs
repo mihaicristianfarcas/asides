@@ -54,9 +54,9 @@ actions!(
 );
 
 use crate::controls::{
-    ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, fade_in, floating, font, footnote, hex,
-    icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section, segmented, select, setting,
-    stepper, swatches, switch, toolbar_row,
+    ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, choice_setting, fade_in, floating, font,
+    footnote, hex, icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section, segmented,
+    select, setting, stepper, swatches, switch, toolbar_row,
 };
 use crate::input::{Look, TextInput};
 use crate::{assets, help, native, style};
@@ -3361,9 +3361,10 @@ impl AsidesWindow {
                             switch("identify", c.measure.identify_elements, t).on_toggle(identify),
                             t,
                         ),
-                        setting(
+                        choice_setting(
                             "How much each pin says",
-                            Some(detail_text(c.annotation_detail).1),
+                            DETAILS.map(|(.., what)| what),
+                            DETAILS.iter().position(|(d, ..)| *d == c.annotation_detail),
                             segmented(
                                 "detail",
                                 DETAILS.map(|(_, name, _)| name),
