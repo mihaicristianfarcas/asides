@@ -297,6 +297,45 @@ pub fn frontmost_app() -> Option<i32> {
     NSWorkspace::sharedWorkspace().frontmostApplication().map(|app| app.processIdentifier())
 }
 
+/// The name of the app with this process id, for the log.
+pub fn app_name(pid: i32) -> String {
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .and_then(|app| app.localizedName())
+        .map_or_else(|| format!("process {pid}"), |name| name.to_string())
+}
+
+/// `26.5.2 (25F84)`, for the log.
+pub fn system_version() -> String {
+    let version = objc2_foundation::NSProcessInfo::processInfo().operatingSystemVersionString().to_string();
+    version.trim_start_matches("Version ").replace("Build ", "")
+}
+
+/// Tells a watchdog (`asides_core::watchdog`) what the main thread does, from its run loop
+/// (menus run loops of their own on it): its slow and stuck spells go in the log. It isn't ended
+/// when stuck: only the menu bar waits on it, and it can be quit.
+pub fn watch_main_thread() {
+    use asides_core::watchdog::{Limits, Watchdog};
+    use objc2_core_foundation::{CFRunLoop, CFRunLoopActivity, CFRunLoopObserver, kCFRunLoopCommonModes};
+    let limits = Limits { slow: Duration::from_millis(250), stuck: Duration::from_secs(2), give_up: None };
+    let watchdog = match Watchdog::start(limits, |note| note.log()) {
+        Ok(watchdog) => watchdog,
+        Err(err) => return eprintln!("asides: no watchdog: {err}"),
+    };
+    let block = RcBlock::new(move |_: *mut CFRunLoopObserver, activity: CFRunLoopActivity| {
+        match activity.contains(CFRunLoopActivity::BeforeWaiting) {
+            true => watchdog.waiting(),
+            false => watchdog.working(),
+        }
+    });
+    // SAFETY: an allocator and a block are given; the observer copies the block.
+    let observer =
+        unsafe { CFRunLoopObserver::with_handler(None, CFRunLoopActivity::AllActivities.0, true, 0, Some(&block)) };
+    if let (Some(observer), Some(main)) = (observer, CFRunLoop::main()) {
+        // SAFETY: a constant CoreFoundation defines.
+        main.add_observer(Some(&observer), unsafe { kCFRunLoopCommonModes });
+    }
+}
+
 /// Brings the app with this process id to the front again.
 pub fn activate_app(pid: i32) {
     if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {

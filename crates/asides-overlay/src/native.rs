@@ -449,6 +449,40 @@ fn view_pointer(window: &Window) -> usize {
     }
 }
 
+/// Tells a watchdog (`asides_core::watchdog`) what the main thread does, from its run loop:
+/// waiting for events, or at work (in every mode: menus, panels and drags run loops of their own
+/// on it). Slow and stuck spells go in the log. Stuck for `give_up`, the process ends (`abort`:
+/// macOS keeps a crash report of where it was stuck).
+pub fn watch_main_thread(give_up: Option<std::time::Duration>) {
+    use asides_core::watchdog::{Limits, Note, Watchdog};
+    use objc2_core_foundation::{CFRunLoop, CFRunLoopActivity, CFRunLoopObserver, kCFRunLoopCommonModes};
+    use std::time::Duration;
+    let limits = Limits { slow: Duration::from_millis(250), stuck: Duration::from_secs(2), give_up };
+    let watchdog = Watchdog::start(limits, |note| {
+        note.log();
+        if let Note::GiveUp(_) = note {
+            std::process::abort();
+        }
+    });
+    let watchdog = match watchdog {
+        Ok(watchdog) => watchdog,
+        Err(err) => return eprintln!("asides-overlay: no watchdog: {err}"),
+    };
+    let block = RcBlock::new(move |_: *mut CFRunLoopObserver, activity: CFRunLoopActivity| {
+        match activity.contains(CFRunLoopActivity::BeforeWaiting) {
+            true => watchdog.waiting(),
+            false => watchdog.working(),
+        }
+    });
+    // SAFETY: an allocator and a block are given; the observer copies the block.
+    let observer =
+        unsafe { CFRunLoopObserver::with_handler(None, CFRunLoopActivity::AllActivities.0, true, 0, Some(&block)) };
+    if let (Some(observer), Some(main)) = (observer, CFRunLoop::main()) {
+        // SAFETY: a constant CoreFoundation defines.
+        main.add_observer(Some(&observer), unsafe { kCFRunLoopCommonModes });
+    }
+}
+
 /// Development: with `asides-overlay-debug` in the temporary directory, notes what the overlay
 /// gets (keys, focus) in `asides-overlay-debug.log` there, for when it runs under the app.
 pub fn debug(message: &str) {

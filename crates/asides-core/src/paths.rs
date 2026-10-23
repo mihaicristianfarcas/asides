@@ -26,6 +26,16 @@ pub fn updates_dir() -> PathBuf {
     std::env::home_dir().expect("HOME is not set").join("Library/Caches").join(APP_NAME).join("updates")
 }
 
+/// `~/Library/Logs/asides`: the log (`log::path`), where Console looks.
+pub fn logs_dir() -> PathBuf {
+    std::env::home_dir().expect("HOME is not set").join("Library/Logs").join(APP_NAME)
+}
+
+/// Where macOS keeps the crash reports of the user's apps.
+pub fn crash_reports_dir() -> PathBuf {
+    std::env::home_dir().expect("HOME is not set").join("Library/Logs/DiagnosticReports")
+}
+
 /// Launch scripts for new sessions (each removes itself once it runs).
 pub fn launch_dir() -> PathBuf {
     std::env::temp_dir().join("asides-sessions")

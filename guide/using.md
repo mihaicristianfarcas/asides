@@ -137,8 +137,16 @@ Copies built from source don't update themselves.
 | `asides download [MODEL]` | Download a voice model. |
 | `asides measure IMAGE X,Y` | Measure a PNG from a point, or `X,Y,W,H` for the object in an area. |
 | `asides status` | What asides is doing, and where asides go. |
+| `asides log` | What went wrong lately: problems, crash reports, the log's last lines. |
 | `asides mcp` | The MCP server (below). |
 | `asides quit` | Quit the app. |
+
+## When something goes wrong
+
+asides keeps a log in `~/Library/Logs/asides` (Console shows it under Log Reports). `asides status`
+says when something went wrong in the last day, and `asides log` shows what: errors, crashes, and
+moments asides was stuck. If the frozen screen stops responding for 10 seconds, asides closes it
+and gives your screens back; what you said is kept in History. Add `asides log` to a bug report.
 
 ## For your agents (optional)
 

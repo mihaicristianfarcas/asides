@@ -267,6 +267,9 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
     "$CLI" simulate-measure "$SHOT" "$WORK/session.json" --to "$SESSION" >/dev/null
     for _ in $(seq 1 60); do grep -q "Area 110" "$AGENT_LOG" && break; sleep 0.5; done
     check "an aside from the screen goes straight to the session" grep -q "### 2. Area 110 × 50 at (250, 40)" "$AGENT_LOG"
+    # Its Return comes last: until then the session must stay (the cleanup removes it).
+    for _ in $(seq 1 60); do grep -Eq '^<CR>$|<ESC>\[201~<CR>' "$AGENT_LOG" && break; sleep 0.5; done
+    check "and Return sends it" grep -Eq '^<CR>$|<ESC>\[201~<CR>' "$AGENT_LOG"
     if [ "$HOST" = Diri ]; then
         "$DIRIJOR" session release "$DIRI_SESSION" --remove >/dev/null 2>&1 || true
         DIRI_SESSION=""

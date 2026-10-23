@@ -24,6 +24,7 @@ futures = "0.3"
 image = { version = "0.25", default-features = false }
 objc2 = "0.6"
 objc2-app-kit = "0.3"
+objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
 objc2-core-graphics = "0.3"
 # Already AppKit's: the pill's window comes in (`native::appear`).

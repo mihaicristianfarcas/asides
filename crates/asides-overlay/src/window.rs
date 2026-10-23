@@ -396,6 +396,8 @@ pub fn run() {
         }
     });
     app.run(|cx: &mut App| {
+        // Stuck, it's only a window: the log says so, and it can be quit.
+        native::watch_main_thread(None);
         // A Mac app's keys and menus: ⌘, opens the settings, ⌘1 and ⌘2 History and Sessions; ⌘Q
         // quits asides (the menu bar's too), ⌘W closes the window.
         cx.bind_keys([

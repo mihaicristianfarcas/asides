@@ -266,6 +266,17 @@ fn main() {
         // SAFETY: first thing in main, before any thread exists to read the environment.
         unsafe { std::env::remove_var(marker) };
     }
+    // What goes wrong is kept in ~/Library/Logs/asides (`asides log`): launched from the Dock or at
+    // login, standard error went nowhere.
+    asides_core::log::init("app");
+    if let Err(err) = asides_core::log::capture_stderr() {
+        asides_core::log::problem(format_args!("standard error not in the log: {err}"));
+    }
+    asides_core::log::write(format_args!(
+        "asides {} started, macOS {}",
+        env!("CARGO_PKG_VERSION"),
+        macos::system_version()
+    ));
     let mtm = MainThreadMarker::new().expect("must start on the main thread");
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
@@ -285,6 +296,7 @@ fn main() {
     TrayIconEvent::set_event_handler(Some(|_| {}));
 
     let mut app = App::new(mtm, proxy);
+    macos::watch_main_thread();
     event_loop.run(move |event, _, control_flow| {
         if let Event::NewEvents(StartCause::ResumeTimeReached { .. }) = &event {
             app.tick();
@@ -920,6 +932,12 @@ impl App {
         let place = look_up_place(pid, self.config.measure.identify_elements);
         // The speech model, loaded while the user talks (it's let go after a while unused).
         let _ = self.worker.jobs.send(Job::Warm(self.config.model.clone()));
+        let about = match (annotation, push_to_talk) {
+            (Some(key), _) => format!("about pin {key}"),
+            (None, true) => "while the talk key is down".into(),
+            (None, false) => "until it's muted".into(),
+        };
+        asides_core::log::write(format_args!("recording {about}"));
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -978,6 +996,7 @@ impl App {
     /// Ends the recording under way, without a sound (the caller says): what it captured.
     fn end_recording(&mut self) -> Option<Take> {
         let recording = self.recording.take()?;
+        asides_core::log::write(format_args!("recorded {:.1} s", recording.started_at.elapsed().as_secs_f32()));
         self.tell_overlay_recording();
         let (samples, sample_rate) = recording.recorder.finish();
         let mut texts = recording.texts;
@@ -1151,9 +1170,16 @@ impl App {
         // A script plays without windows, in a process of its own: the one standing by stays.
         let standby = if spec.script.is_none() { self.standby.take() } else { None };
         let live = spec.live;
+        let screens = spec.screens.len();
         let mut overlay = overlay::start(spec, frames, windows, standby, self.overlay_notify())?;
         overlay.previous_app = macos::frontmost_app();
         overlay.frozen = !live;
+        let over = overlay.previous_app.map_or_else(|| "no app".into(), macos::app_name);
+        let how = if live { "live" } else { "frozen" };
+        asides_core::log::write(format_args!(
+            "opened over {over}, {how}, {screens} screens (overlay {})",
+            overlay.pid()
+        ));
         self.dictations.clear();
         self.overlay = Some(overlay);
         Ok(())
@@ -1189,8 +1215,10 @@ impl App {
     fn on_overlay(&mut self, pid: u32, message: OverlayMessage) {
         // The one standing by quit: asides opens in a process of its own, until the next session ends.
         if self.standby.as_ref().is_some_and(|s| s.pid() == pid) {
-            if matches!(message, OverlayMessage::Exited) {
-                self.standby = None;
+            if matches!(message, OverlayMessage::Exited)
+                && let Some(standby) = self.standby.take()
+            {
+                asides_core::log::problem(format_args!("the overlay standing by ({pid}) ended: {}", standby.ended()));
             }
             return;
         }
@@ -1563,7 +1591,9 @@ impl App {
 
     /// Shows `mark` between the brackets for a moment, and `status` atop the menu.
     fn flash(&mut self, how_long: Duration, mark: Mark, status: impl Into<String>) {
-        self.flash = Some(Flash { until: Instant::now() + how_long, mark, status: status.into() });
+        let status = status.into();
+        asides_core::log::write(&status);
+        self.flash = Some(Flash { until: Instant::now() + how_long, mark, status });
     }
 
     /// When what the menu bar shows changes next: the recording's clock ticks over, a flash ends,
@@ -1697,6 +1727,7 @@ impl App {
     }
 
     fn fail(&mut self, message: String) {
+        asides_core::log::problem(&message);
         // The overlay covers the menu bar: say it there too.
         if let Some(overlay) = &mut self.overlay {
             overlay.send(&OverlayCommand::Notice { text: message.clone() });
