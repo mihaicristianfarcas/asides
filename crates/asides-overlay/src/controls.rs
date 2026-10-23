@@ -3,15 +3,16 @@
 //! kept for status, and asides' soft blue for the one main action. Warm grays in dark mode, white in
 //! light mode. Each control takes the [`Theme`] it paints with.
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationElement, AnimationExt, AnyElement, AnyView, App, BorderStyle, Bounds, BoxShadow, ClickEvent,
-    DispatchPhase, Div, ElementId, Entity, FontWeight, HitboxBehavior, Hsla, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, ScrollHandle, SharedString, Stateful, Window, WindowAppearance, anchored, canvas, deferred,
-    div, point, prelude::*, px, quad, size, svg,
+    DispatchPhase, Div, ElementId, Entity, FocusHandle, FontWeight, HitboxBehavior, Hsla, KeyDownEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollHandle, SharedString, Stateful, Window,
+    WindowAppearance, anchored, canvas, deferred, div, point, prelude::*, px, quad, size, svg,
 };
 
 use crate::style;
@@ -467,6 +468,142 @@ impl<T: Clone + PartialEq> Note<T> {
     }
 }
 
+// --- Keyboard focus ---
+
+thread_local! {
+    /// The keyboard moved the focus last (Tab, the arrows), not a click: what has it shows a ring.
+    /// A click hides it again, as in macOS.
+    static KEYBOARD: Cell<bool> = const { Cell::new(false) };
+    /// What the keyboard just moved to is still to be scrolled into view.
+    static REVEAL: Cell<bool> = const { Cell::new(false) };
+    /// The window's scroll areas, as last drawn: what the keyboard moves to is scrolled into view in
+    /// the one it's in.
+    static SCROLL_AREAS: RefCell<Vec<ScrollHandle>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The keyboard moved the focus: what has it shows a ring, scrolled into view.
+pub fn keyboard_moved() {
+    KEYBOARD.set(true);
+    REVEAL.set(true);
+}
+
+/// A click: rings go. Whether one showed (to draw again).
+pub fn clicked() -> bool {
+    KEYBOARD.replace(false)
+}
+
+/// The ring shows on what has the focus.
+pub fn keyboard_focus() -> bool {
+    KEYBOARD.get()
+}
+
+/// The scroll areas drawn, for what the keyboard moves to to be scrolled into view.
+pub fn scroll_areas(areas: impl IntoIterator<Item = ScrollHandle>) {
+    SCROLL_AREAS.set(areas.into_iter().collect());
+}
+
+/// A control's focus handle, in the tab order: kept under `id` while the control is drawn.
+pub fn focus_handle(id: String, window: &mut Window, cx: &mut App) -> FocusHandle {
+    let id = ElementId::Name(id.into());
+    window.use_keyed_state(id, cx, |_, cx| cx.focus_handle().tab_stop(true)).read(cx).clone()
+}
+
+/// Whether `focus` shows a ring: it has the focus, and the keyboard moved it there.
+pub fn ringed(focus: &FocusHandle, window: &Window) -> bool {
+    keyboard_focus() && focus.is_focused(window)
+}
+
+/// The ring around what has the focus (in a parent with `relative()`), `outset` outside its edge
+/// (negative: inside, where a scroll area or a card would cut it), its corners `radius` round as
+/// the edge's. Just moved to, it's scrolled into view.
+pub fn focus_ring(t: Theme, radius: f32, outset: f32) -> impl IntoElement {
+    // On white, the soft blue is faint: the deeper one, as the basics' step that's playing.
+    let ink = if t.dark { t.accent.opacity(0.85) } else { hex(style::UI_DEEP, 1.0) };
+    canvas(
+        |bounds, window, _| {
+            if REVEAL.replace(false) {
+                reveal(bounds, window);
+            }
+        },
+        move |bounds, _, window, _| {
+            let corner = px((radius + outset).max(2.));
+            window.paint_quad(quad(bounds, corner, hex(0, 0.0), px(2.), ink, BorderStyle::Solid));
+        },
+    )
+    .absolute()
+    .top(px(-outset))
+    .left(px(-outset))
+    .right(px(-outset))
+    .bottom(px(-outset))
+}
+
+/// Scrolls the area `bounds` is drawn in (as its clip says) to show all of it, or its top.
+fn reveal(bounds: Bounds<Pixels>, window: &mut Window) {
+    let clip = window.content_mask().bounds;
+    // In a scroll area, it's clipped to it: inside it across, from its top down (scrolled out of
+    // view below, the clip is empty, past its bottom). The strip above a page isn't.
+    let area = SCROLL_AREAS.with_borrow(|areas| {
+        areas
+            .iter()
+            .find(|a| {
+                let view = a.bounds();
+                clip.left() >= view.left() - px(1.)
+                    && clip.right() <= view.right() + px(1.)
+                    && clip.top() >= view.top() - px(1.)
+            })
+            .cloned()
+    });
+    if let Some(area) = area {
+        scroll_into_view(&area, bounds, px(12.), window);
+    }
+}
+
+/// Scrolls `area` to show all of `bounds` (drawn in it), `margin` clear of its edges, or its top.
+pub fn scroll_into_view(area: &ScrollHandle, bounds: Bounds<Pixels>, margin: Pixels, window: &mut Window) {
+    let (view, offset) = (area.bounds(), area.offset());
+    let mut y = offset.y;
+    if bounds.bottom() + margin > view.bottom() {
+        y -= bounds.bottom() + margin - view.bottom();
+    }
+    let top = bounds.top() + (y - offset.y);
+    if top - margin < view.top() {
+        y += view.top() - (top - margin);
+    }
+    let y = y.clamp(-area.max_offset().height, px(0.));
+    if y != offset.y {
+        area.set_offset(point(offset.x, y));
+        // Drawn again next frame (`refresh` does nothing while drawing).
+        window.request_animation_frame();
+    }
+}
+
+/// Up and Down (Left and Right, `across`), Home and End, among `count` things side by side, the
+/// `at`th one the keyboard's: the one they go to, with no modifier down.
+pub fn arrow_step(e: &KeyDownEvent, at: Option<usize>, count: usize, across: bool) -> Option<usize> {
+    let m = &e.keystroke.modifiers;
+    if m.platform || m.alt || m.control || m.shift {
+        return None;
+    }
+    step(&e.keystroke.key, at, count, across)
+}
+
+/// `key` among `count` things, the `at`th one the keyboard's: the one it goes to, if it's an arrow
+/// (Left and Right, `across`; else Up and Down), Home or End. The ends stop it; from none, the first
+/// arrow goes to the first, or back to the last, as in a menu.
+pub fn step(key: &str, at: Option<usize>, count: usize, across: bool) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    let (back, on) = if across { ("left", "right") } else { ("up", "down") };
+    Some(match (key, at) {
+        ("home", _) => 0,
+        ("end", _) => last,
+        (k, None) if k == on => 0,
+        (k, None) if k == back => last,
+        (k, Some(i)) if k == on => (i + 1).min(last),
+        (k, Some(i)) if k == back => i.saturating_sub(1),
+        _ => return None,
+    })
+}
+
 /// A scroll area's bar, beside it (in a parent with `relative()`, after it): a thin thumb as long as
 /// the part that shows, when there's more than shows. Dragged, it scrolls; a click beside it jumps
 /// there.
@@ -788,8 +925,12 @@ impl Button {
 }
 
 impl RenderOnce for Button {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = self.theme;
+        // Tab reaches it, and Return or Space press it; a click leaves the focus where it was, so a
+        // key pressed later doesn't press it again.
+        let focus = (!self.disabled).then(|| focus_handle(format!("{}-focus", self.id), window, cx));
+        let ring = focus.as_ref().is_some_and(|f| ringed(f, window));
         let icon_only = self.label.is_none();
         let clear = hex(0, 0.0);
         let (fill, hover, stroke, ink) = match self.kind {
@@ -800,6 +941,7 @@ impl RenderOnce for Button {
         let ink = if self.disabled { ink.opacity(0.45) } else { ink };
         let mut el = div()
             .id(self.id)
+            .relative()
             .flex_none()
             .h(px(Metrics::CONTROL))
             .when(icon_only, |d| d.w(px(Metrics::CONTROL)).justify_center())
@@ -822,13 +964,20 @@ impl RenderOnce for Button {
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
                 .active(|s| s.opacity(0.82))
+                .when_some(focus, |d, f| d.track_focus(&f).on_mouse_down(MouseButton::Left, keep_focus))
                 .when_some(on_click, |d, f| d.on_click(move |e, w, cx| f(e, w, cx)));
         }
         if let Some(tip) = self.tooltip {
             el = el.tooltip(move |_, cx| tooltip(tip.clone(), cx));
         }
-        el
+        el.when(ring, |d| d.child(focus_ring(t, Radius::CONTROL, 2.)))
     }
+}
+
+/// A press on a control that leaves the focus where it was (a button's: Return or Space would
+/// press it again).
+fn keep_focus(_: &MouseDownEvent, window: &mut Window, _: &mut App) {
+    window.prevent_default();
 }
 
 // --- Tooltips ---
@@ -884,15 +1033,21 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = self.theme;
         let on = self.on;
         // Off, a control's surface: on glass, a faint track disappears.
         let track = if on { t.fresh.opacity(if t.dark { 0.72 } else { 0.85 }) } else { t.control_hover };
         let knob = if t.dark { t.primary } else { hex(0xffffff, 1.0) };
         let toggle = self.on_toggle.clone();
+        // Tab reaches it; Space or Return turns it over.
+        let focus = focus_handle(format!("{}-focus", self.id), window, cx);
+        let ring = ringed(&focus, window);
         div()
             .id(self.id)
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, keep_focus)
+            .relative()
             .flex_none()
             .w(px(30.))
             .h(px(18.))
@@ -905,6 +1060,7 @@ impl RenderOnce for Switch {
             .child(div().size(px(14.)).rounded(px(7.)).bg(knob).shadow(lift(0.18)))
             .cursor_pointer()
             .when_some(toggle, |d, f| d.on_click(move |_, w, cx| f(!on, w, cx)))
+            .when(ring, |d| d.child(focus_ring(t, 9., if on { 2. } else { 3. })))
     }
 }
 
@@ -945,8 +1101,23 @@ impl RenderOnce for Segmented {
         let id = self.id.clone();
         // The glass pill slides to the segment picked.
         let glide = Glide::keyed(ElementId::Name(format!("{id}-glide").into()), window, cx);
+        // One stop for Tab; the arrows pick the segment beside.
+        let focus = focus_handle(format!("{id}-focus"), window, cx);
+        let ring = ringed(&focus, window);
+        let (count, selected, pick) = (self.items.len(), self.selected, self.on_select.clone());
         div()
             .id(ElementId::Name(self.id))
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, keep_focus)
+            .on_key_down(move |e, window, cx| {
+                let Some(to) = arrow_step(e, selected, count, true) else { return };
+                cx.stop_propagation();
+                keyboard_moved();
+                if let Some(pick) = pick.as_ref().filter(|_| Some(to) != selected) {
+                    pick(to, window, cx);
+                }
+            })
+            .when(ring, |d| d.child(focus_ring(t, Radius::ROW, 2.)))
             .relative()
             .flex_none()
             .flex()
@@ -1050,6 +1221,8 @@ impl RenderOnce for Select {
             .use_keyed_state(ElementId::Name(format!("{}-button", self.id).into()), cx, |_, _| None::<Bounds<Pixels>>);
         let dismissed = window
             .use_keyed_state(ElementId::Name(format!("{}-dismissed", self.id).into()), cx, |_, _| None::<Instant>);
+        // The choice the arrows are on, while it's open (the pointer puts it where it is).
+        let lit = window.use_keyed_state(ElementId::Name(format!("{}-lit", self.id).into()), cx, |_, _| None::<usize>);
         let fade = *open.read(cx);
         if fade.moving() {
             window.request_animation_frame();
@@ -1059,9 +1232,70 @@ impl RenderOnce for Select {
             .and_then(|i| self.choices.get(i))
             .map(|c| c.label.clone())
             .unwrap_or_else(|| "Choose…".into());
-        let (toggle, just_closed) = (open.clone(), dismissed.clone());
+        // Tab reaches it. Space, Return or an arrow opens it; open, the arrows go through its
+        // choices, Return or Space picks one, Escape closes it.
+        let focus = focus_handle(format!("{}-focus", self.id), window, cx);
+        let ring = ringed(&focus, window);
+        let selected = self.selected;
+        let keys = {
+            let (open, lit, dismissed, pick) = (open.clone(), lit.clone(), dismissed.clone(), self.on_select.clone());
+            let count = self.choices.len();
+            move |e: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                let is_open = open.read(cx).is_open();
+                let key = e.keystroke.key.as_str();
+                let at = *lit.read(cx);
+                if !is_open {
+                    if matches!(key, "up" | "down") && !e.keystroke.modifiers.modified() {
+                        lit.update(cx, |l, _| *l = selected);
+                        open.update(cx, |o, cx| {
+                            o.set(true);
+                            cx.notify();
+                        });
+                        cx.stop_propagation();
+                    }
+                    return;
+                }
+                let close = |cx: &mut App| {
+                    open.update(cx, |o, cx| {
+                        o.set(false);
+                        cx.notify();
+                    });
+                    // The key's release would click the button, opening it again.
+                    dismissed.update(cx, |at, _| *at = Some(Instant::now()));
+                };
+                match key {
+                    "escape" => close(cx),
+                    "enter" | "space" => {
+                        close(cx);
+                        if let (Some(i), Some(pick)) = (at, &pick) {
+                            pick(i, window, cx);
+                        }
+                    }
+                    // Tab goes on to the next control, the menu closed.
+                    "tab" => {
+                        open.update(cx, |o, cx| {
+                            o.set(false);
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    _ => match arrow_step(e, at, count, false) {
+                        Some(to) => lit.update(cx, |l, cx| {
+                            *l = Some(to);
+                            cx.notify();
+                        }),
+                        None => return,
+                    },
+                }
+                cx.stop_propagation();
+            }
+        };
+        let (toggle, just_closed, lit_on_open) = (open.clone(), dismissed.clone(), lit.clone());
         let mut el = div()
             .id(ElementId::Name(self.id.clone()))
+            .track_focus(&focus)
+            .on_key_down(keys)
+            .when(ring, |d| d.child(focus_ring(t, Radius::CONTROL, 2.)))
             .relative()
             .flex_none()
             .h(px(Metrics::CONTROL))
@@ -1079,10 +1313,13 @@ impl RenderOnce for Select {
             .text_color(t.primary)
             .cursor_pointer()
             .hover(move |s| s.bg(t.control_hover))
-            .on_click(move |_, _, cx| {
+            .on_click(move |e, _, cx| {
                 if just_closed.update(cx, |at, _| at.take()).is_some_and(|at| at.elapsed() < Duration::from_secs(1)) {
                     return;
                 }
+                // Opened from the keyboard, the arrows start at the choice made.
+                let lit = if e.is_keyboard() { selected } else { None };
+                lit_on_open.update(cx, |l, _| *l = lit);
                 toggle.update(cx, |o, cx| {
                     o.set(!o.is_open());
                     cx.notify();
@@ -1100,10 +1337,20 @@ impl RenderOnce for Select {
             });
         // Open, or still fading out.
         if fade.shown() > 0.0 {
+            let lit_now = *lit.read(cx);
             let rows = self.choices.into_iter().enumerate().flat_map(|(i, c)| {
-                let (select, close) = (self.on_select.clone(), open.clone());
+                let (select, close, point) = (self.on_select.clone(), open.clone(), lit.clone());
                 let line = c.separated.then(|| div().mx(px(8.)).my(px(4.)).h(px(1.)).bg(t.hairline).into_any_element());
                 let row = menu_row(ElementId::Name(format!("{}-choice-{i}", self.id).into()), t)
+                    .when(lit_now == Some(i), |d| d.bg(t.selected).border_color(t.selected_stroke))
+                    .on_hover(move |hovered, _, cx| {
+                        if *hovered {
+                            point.update(cx, |l, cx| {
+                                *l = Some(i);
+                                cx.notify();
+                            });
+                        }
+                    })
                     .child(
                         div()
                             .w(px(14.))
@@ -1310,50 +1557,89 @@ pub fn chip(label: impl Into<SharedString>, tint: Hsla) -> Div {
 }
 
 /// A number between − and + buttons; `step` gets -1 or 1.
+#[derive(IntoElement)]
+pub struct Stepper {
+    id: SharedString,
+    value: SharedString,
+    theme: Theme,
+    step: Handler<i32>,
+}
+
 pub fn stepper(
     id: &str,
     value: impl Into<SharedString>,
-    t: Theme,
+    theme: Theme,
     step: impl Fn(i32, &mut Window, &mut App) + 'static,
-) -> Div {
-    let step = Rc::new(step);
-    let side = |dir: i32, glyph: &'static str| {
-        let step = step.clone();
+) -> Stepper {
+    Stepper { id: id.to_string().into(), value: value.into(), theme, step: Rc::new(step) }
+}
+
+impl RenderOnce for Stepper {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (t, id, step) = (self.theme, self.id, self.step);
+        let side = |dir: i32, glyph: &'static str| {
+            let step = step.clone();
+            div()
+                .id(ElementId::Name(format!("{id}-{glyph}").into()))
+                .size(px(Metrics::CONTROL - 4.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(Radius::CONTROL - 1.))
+                .cursor_pointer()
+                .hover(move |s| s.bg(t.control_hover))
+                .on_click(move |_, w, cx| step(dir, w, cx))
+                .child(icon(glyph, 12., t.secondary))
+        };
+        let mut number = div()
+            .min_w(px(56.))
+            .flex()
+            .justify_center()
+            .text_size(px(12.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(t.primary)
+            .child(self.value);
+        number.text_style().get_or_insert_with(Default::default).font_features =
+            Some(gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
+        // One stop for Tab: the arrows (or - and =) step it.
+        let focus = focus_handle(format!("{id}-focus"), window, cx);
+        let ring = ringed(&focus, window);
+        let keys = {
+            let step = step.clone();
+            move |e: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                if e.keystroke.modifiers.modified() && !e.keystroke.modifiers.shift {
+                    return;
+                }
+                let dir = match e.keystroke.key.as_str() {
+                    "left" | "down" | "-" => -1,
+                    "right" | "up" | "=" | "+" => 1,
+                    _ => return,
+                };
+                cx.stop_propagation();
+                keyboard_moved();
+                step(dir, window, cx);
+            }
+        };
         div()
-            .id(ElementId::Name(format!("{id}-{glyph}").into()))
-            .size(px(Metrics::CONTROL - 4.))
+            .id(ElementId::Name(format!("{id}-stepper").into()))
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, keep_focus)
+            .on_key_down(keys)
+            .relative()
+            .flex_none()
+            .h(px(Metrics::CONTROL))
             .flex()
             .items_center()
-            .justify_center()
-            .rounded(px(Radius::CONTROL - 1.))
-            .cursor_pointer()
-            .hover(move |s| s.bg(t.control_hover))
-            .on_click(move |_, w, cx| step(dir, w, cx))
-            .child(icon(glyph, 12., t.secondary))
-    };
-    let mut number = div()
-        .min_w(px(56.))
-        .flex()
-        .justify_center()
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(t.primary)
-        .child(value.into());
-    number.text_style().get_or_insert_with(Default::default).font_features =
-        Some(gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
-    div()
-        .flex_none()
-        .h(px(Metrics::CONTROL))
-        .flex()
-        .items_center()
-        .px(px(1.))
-        .rounded(px(Radius::CONTROL))
-        .bg(t.control)
-        .border_1()
-        .border_color(t.control_stroke)
-        .child(side(-1, "minus"))
-        .child(number)
-        .child(side(1, "plus"))
+            .px(px(1.))
+            .rounded(px(Radius::CONTROL))
+            .bg(t.control)
+            .border_1()
+            .border_color(t.control_stroke)
+            .child(side(-1, "minus"))
+            .child(number)
+            .child(side(1, "plus"))
+            .when(ring, |d| d.child(focus_ring(t, Radius::CONTROL, 3.)))
+    }
 }
 
 /// Keys as keycaps (`labels`), which a click records anew: waiting, it asks for them; without
@@ -1380,28 +1666,69 @@ pub fn key_recorder(id: impl Into<ElementId>, labels: Vec<String>, recording: bo
 }
 
 /// Colors to pick from (`0xRRGGBB`): a ring around the one picked.
+#[derive(IntoElement)]
+pub struct Swatches {
+    id: SharedString,
+    colors: Vec<u32>,
+    selected: Option<usize>,
+    theme: Theme,
+    pick: Handler<usize>,
+}
+
 pub fn swatches(
     id: &str,
     colors: &[u32],
     selected: Option<usize>,
-    t: Theme,
+    theme: Theme,
     pick: impl Fn(usize, &mut Window, &mut App) + 'static,
-) -> Div {
-    let pick = Rc::new(pick);
-    div().flex_none().flex().items_center().gap(px(4.)).children(colors.iter().enumerate().map(|(i, &rgb)| {
-        let pick = pick.clone();
-        let on = selected == Some(i);
+) -> Swatches {
+    Swatches { id: id.to_string().into(), colors: colors.to_vec(), selected, theme, pick: Rc::new(pick) }
+}
+
+impl RenderOnce for Swatches {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (t, id, selected, pick) = (self.theme, self.id, self.selected, self.pick);
+        // One stop for Tab: the arrows pick the color beside.
+        let focus = focus_handle(format!("{id}-focus"), window, cx);
+        let ring = ringed(&focus, window);
+        let keys = {
+            let (pick, count) = (pick.clone(), self.colors.len());
+            move |e: &KeyDownEvent, window: &mut Window, cx: &mut App| {
+                let Some(to) = arrow_step(e, selected, count, true) else { return };
+                cx.stop_propagation();
+                keyboard_moved();
+                if Some(to) != selected {
+                    pick(to, window, cx);
+                }
+            }
+        };
         div()
-            .id(ElementId::Name(format!("{id}-{i}").into()))
-            .size(px(22.))
-            .p(px(2.))
-            .rounded_full()
-            .border_2()
-            .border_color(if on { t.primary.opacity(0.75) } else { hex(0, 0.0) })
-            .cursor_pointer()
-            .on_click(move |_, w, cx| pick(i, w, cx))
-            .child(div().size_full().rounded_full().bg(hex(rgb, 1.0)))
-    }))
+            .id(ElementId::Name(format!("{id}-swatches").into()))
+            .track_focus(&focus)
+            .on_mouse_down(MouseButton::Left, keep_focus)
+            .on_key_down(keys)
+            .relative()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .rounded(px(13.))
+            .children(self.colors.into_iter().enumerate().map(|(i, rgb)| {
+                let pick = pick.clone();
+                let on = selected == Some(i);
+                div()
+                    .id(ElementId::Name(format!("{id}-{i}").into()))
+                    .size(px(22.))
+                    .p(px(2.))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(if on { t.primary.opacity(0.75) } else { hex(0, 0.0) })
+                    .cursor_pointer()
+                    .on_click(move |_, w, cx| pick(i, w, cx))
+                    .child(div().size_full().rounded_full().bg(hex(rgb, 1.0)))
+            }))
+            .when(ring, |d| d.child(focus_ring(t, 11., 3.)))
+    }
 }
 
 /// A key or chord, as a keycap.
@@ -1460,6 +1787,21 @@ mod tests {
         grow.step();
         assert!(grow.shown() > 0.0 && grow.shown() < 1.0);
         assert!(grow.heads_for(0.0) && !grow.heads_for(60.0));
+    }
+
+    #[test]
+    fn arrows_step_and_stop_at_the_ends() {
+        assert_eq!(step("down", None, 3, false), Some(0));
+        assert_eq!(step("up", None, 3, false), Some(2));
+        assert_eq!(step("down", Some(1), 3, false), Some(2));
+        assert_eq!(step("down", Some(2), 3, false), Some(2));
+        assert_eq!(step("up", Some(0), 3, false), Some(0));
+        assert_eq!((step("home", Some(2), 3, false), step("end", None, 3, false)), (Some(0), Some(2)));
+        // Side by side, Left and Right; the others aren't theirs.
+        assert_eq!(step("right", Some(0), 3, true), Some(1));
+        assert_eq!(step("left", Some(1), 3, true), Some(0));
+        assert_eq!((step("down", Some(0), 3, true), step("right", Some(0), 3, false)), (None, None));
+        assert_eq!((step("down", None, 0, false), step("a", Some(0), 3, false)), (None, None));
     }
 
     /// Ends the step in progress, as if it had taken its time.

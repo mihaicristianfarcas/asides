@@ -442,7 +442,8 @@ pub fn mouse_pressed() -> bool {
     NSEvent::pressedMouseButtons() & 1 != 0
 }
 
-fn view_pointer(window: &Window) -> usize {
+/// The window's view, for development replays.
+pub fn view_pointer(window: &Window) -> usize {
     match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
         Ok(RawWindowHandle::AppKit(h)) => h.ns_view.as_ptr() as usize,
         _ => 0,
@@ -728,7 +729,8 @@ pub mod synthetic {
     /// A mouse event at `(x, y)` (window points, y down).
     pub fn mouse(window: usize, kind: Mouse, (x, y): (f64, f64), shift: bool, alt: bool, cmd: bool) {
         let Some(view) = view(window) else { return };
-        let height = view.window().map_or(0.0, |w| w.contentLayoutRect().size.height);
+        // The view's own height: the asides window's runs under its title bar.
+        let height = view.frame().size.height;
         let number = view.window().map_or(0, |w| w.windowNumber());
         let at = NSPoint::new(x, height - y);
         // Events made this way have no button number, so a right-click is sent as a
@@ -788,6 +790,9 @@ pub mod synthetic {
             "down" => return special(125, '\u{f701}'),
             "up" => return special(126, '\u{f700}'),
             "f1" => return special(122, '\u{f704}'),
+            "home" => return special(115, '\u{f729}'),
+            "end" => return special(119, '\u{f72b}'),
+            "delete" => return special(117, '\u{f728}'),
             _ => {}
         }
         const LAYOUT: &[(&str, u16, &str)] = &[

@@ -27,7 +27,7 @@ use gpui::{
     quad, size, svg, transparent_black,
 };
 
-use crate::controls::{Fade, Glide, Note, Slot, Theme, fade_in};
+use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::input::{self, TextInput};
 use crate::{finish, glass, io, style};
@@ -93,9 +93,12 @@ enum Cmd {
     Hide,
     Restore,
     Help,
+    Mic,
     Target,
+    Sessions,
     Done,
     DoneWhole,
+    Restart,
     Live,
     Close,
 }
@@ -131,9 +134,12 @@ impl Keys {
                 (p(&k.hide), Cmd::Hide),
                 (p(&k.restore), Cmd::Restore),
                 (p(&k.help), Cmd::Help),
+                (p(&k.mic), Cmd::Mic),
                 (p(&k.target), Cmd::Target),
+                (p(&k.sessions), Cmd::Sessions),
                 (p(&k.done_whole_screen), Cmd::DoneWhole),
                 (p(&k.done), Cmd::Done),
+                (p(&k.restart), Cmd::Restart),
                 (p(&k.live), Cmd::Live),
                 (p(&k.close), Cmd::Close),
             ],
@@ -286,6 +292,10 @@ pub struct Overlay {
     /// It opened as the pointer came onto where the aside goes (not clicked): it closes once the
     /// pointer leaves that and the list (since when it's away).
     list_hovered: bool,
+    /// The row the arrows are on (of `list_choices`), lit as the pointer lights one.
+    list_lit: Option<usize>,
+    /// The arrows just lit a row: it's scrolled into view as it's drawn.
+    list_reveal: bool,
     list_left_at: Option<Instant>,
     /// Where its rows are scrolled to (its bar), past `LIST_ROWS_HEIGHT`.
     list_scroll: ScrollHandle,
@@ -444,6 +454,8 @@ impl Overlay {
             chose_target: false,
             list: Fade::default(),
             list_hovered: false,
+            list_lit: None,
+            list_reveal: false,
             list_left_at: None,
             list_scroll: ScrollHandle::new(),
             folder_asked: false,
@@ -626,8 +638,101 @@ impl Overlay {
     pub fn show_list(&mut self, open: bool) {
         self.list.set(open);
         if !open {
-            (self.list_hovered, self.list_left_at) = (false, None);
+            (self.list_hovered, self.list_left_at, self.list_lit, self.list_reveal) = (false, None, None, false);
         }
+    }
+
+    /// The list's key: it opens (staying until it's closed), the arrows on where the aside goes; or
+    /// it closes.
+    fn list_by_key(&mut self) {
+        if self.list.is_open() {
+            return self.show_list(false);
+        }
+        self.show_list(true);
+        let current = self.target.clone().map(Pick::Target);
+        self.list_lit = Some(self.list_choices().iter().position(|p| Some(p) == current.as_ref()).unwrap_or(0));
+        self.list_reveal = true;
+    }
+
+    /// What the pill's list offers, in its order: the sessions asides can type into, a new session
+    /// in each folder (with the agent picked) and Choose Folder…, and History only.
+    fn list_choices(&self) -> Vec<Pick> {
+        let targets = &self.spec.targets;
+        let mut picks: Vec<Pick> = targets
+            .sessions
+            .iter()
+            .filter(|s| s.unreachable.is_none())
+            .map(|s| Pick::Target(Target::Session { id: s.id.clone() }))
+            .collect();
+        if !targets.agents.is_empty() {
+            let agent = self.new_agent;
+            picks.extend(self.list_folders().into_iter().map(|(dir, _)| Pick::Target(Target::New { agent, dir })));
+            if !self.folder_panel {
+                picks.push(Pick::ChooseFolder);
+            }
+        }
+        picks.push(Pick::Target(Target::History));
+        picks
+    }
+
+    /// The folders the list starts a new session in (their paths and names): one chosen in the
+    /// panel leads, as it isn't among the app's.
+    fn list_folders(&self) -> Vec<(PathBuf, String)> {
+        let folders = &self.spec.targets.folders;
+        let picked = match &self.target {
+            Some(Target::New { dir, .. }) if !folders.iter().any(|f| &f.path == dir) => Some(dir.clone()),
+            _ => None,
+        };
+        picked
+            .iter()
+            .map(|dir| (dir.clone(), dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
+            .chain(folders.iter().map(|f| (f.path.clone(), f.name.clone())))
+            .take(LIST_FOLDERS)
+            .collect()
+    }
+
+    /// A row of the list picked (clicked, or Return on it).
+    fn pick(&mut self, pick: Pick) {
+        match pick {
+            Pick::Target(target) => self.choose_target(target),
+            Pick::ChooseFolder => {
+                self.show_list(false);
+                self.folder_asked = true;
+            }
+        }
+    }
+
+    /// The list open: the arrows go through its rows (← and → through the agents a new session
+    /// starts), Return picks the one they're on, Escape closes it. Whether `key` was the list's.
+    fn list_key(&mut self, key: &str, mods: Mods) -> bool {
+        if mods != Mods::default() {
+            return false;
+        }
+        let choices = self.list_choices();
+        match key {
+            "up" | "down" | "home" | "end" => {
+                self.list_lit = controls::step(key, self.list_lit, choices.len(), false);
+                // On the first row, the heading above it shows too.
+                match self.list_lit {
+                    Some(0) => self.list_scroll.set_offset(point(px(0.), px(0.))),
+                    _ => self.list_reveal = true,
+                }
+            }
+            "left" | "right" => {
+                let agents = &self.spec.targets.agents;
+                let Some(at) = agents.iter().position(|&a| a == self.new_agent) else { return true };
+                let to =
+                    if key == "left" { at.checked_sub(1).unwrap_or(agents.len() - 1) } else { (at + 1) % agents.len() };
+                self.new_agent = agents[to];
+            }
+            "enter" => match self.list_lit.and_then(|i| choices.get(i).cloned()) {
+                Some(pick) => self.pick(pick),
+                None => self.show_list(false),
+            },
+            "escape" => self.show_list(false),
+            _ => return false,
+        }
+        true
     }
 
     /// The pointer came onto where the aside goes: the list opens, as the keys do on `?`, until the
@@ -1161,7 +1266,8 @@ impl Overlay {
 
     // --- Keys ---
 
-    fn key_down(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    /// A key, on screen `screen`'s window.
+    fn key_down(&mut self, screen: usize, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         crate::native::debug(&format!("key down {:?} card={}", e.keystroke, self.card.is_some()));
         if self.done || self.live {
             return;
@@ -1189,9 +1295,12 @@ impl Overlay {
                 return;
             }
             self.type_held_space(cx);
+            let plain = !m.platform && !m.alt && !m.control;
             match (key.as_str(), intent) {
                 ("escape", _) => self.close_card(window, cx),
                 ("enter", _) if !m.shift => self.close_card(window, cx),
+                // Tab and ⇧Tab: the next pin's card on this screen, or the one before.
+                ("tab", _) if plain => self.next_card(m.shift, window, cx),
                 (_, Some(intent)) => self.choose_intent(intent),
                 _ => return,
             }
@@ -1203,6 +1312,28 @@ impl Overlay {
                 let now = now.map_or("no type", |i| capitalized(i.as_str()));
                 self.toast(format!("Pin {number} ({now})"));
             }
+            return cx.notify();
+        }
+        // The right-click menu: the arrows go through it, Return picks.
+        if let Some(menu) = &mut self.menu
+            && mods == Mods::default()
+        {
+            match key.as_str() {
+                "up" | "down" | "home" | "end" => {
+                    menu.hovered = controls::step(&key, menu.hovered, menu.items.len(), false);
+                    return cx.notify();
+                }
+                "enter" => {
+                    match menu.hovered.and_then(|i| menu.items.get(i)).map(|(.., item)| *item) {
+                        Some(item) => self.menu_item(item, window, cx),
+                        None => self.menu = None,
+                    }
+                    return cx.notify();
+                }
+                _ => {}
+            }
+        }
+        if self.list.is_open() && self.list_key(&key, mods) {
             return cx.notify();
         }
         if key == "escape" && (self.menu.is_some() || self.help) {
@@ -1244,8 +1375,40 @@ impl Overlay {
                 Cmd::Close => self.close_by_key(cx),
                 _ => self.command(cmd, window, cx),
             }
+            return cx.notify();
+        }
+        // A pin's number: its card.
+        if let Some(number) = key.parse::<u32>().ok().filter(|n| (1..=9).contains(n) && mods == Mods::default()) {
+            self.open_numbered(screen, number, window, cx);
             cx.notify();
         }
+    }
+
+    /// Pin `number`'s card, when it's on `screen` (the window with the keyboard).
+    fn open_numbered(&mut self, screen: usize, number: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let on = |s: usize| self.session.screens[s].annotations.iter().position(|a| a.number == number);
+        if let Some(index) = on(screen) {
+            return self.open_card(screen, index, window, cx);
+        }
+        if (0..self.session.screens.len()).any(|s| on(s).is_some()) {
+            self.toast(format!("Pin {number} is on another screen: click its number there"));
+        }
+    }
+
+    /// Tab in a card: the card of the next pin on its screen (`back`: the one before), the text
+    /// typed in this one kept.
+    fn next_card(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((screen, number)) = self.card.as_ref().map(|c| (c.screen, c.number)) else { return };
+        let mut pins: Vec<(u32, usize)> =
+            self.session.screens[screen].annotations.iter().enumerate().map(|(i, a)| (a.number, i)).collect();
+        pins.sort_unstable();
+        let Some(at) = pins.iter().position(|&(n, _)| n == number) else { return };
+        let to = if back { (at + pins.len() - 1) % pins.len() } else { (at + 1) % pins.len() };
+        if to == at {
+            return;
+        }
+        self.put_card_away(cx);
+        self.open_card(screen, pins[to].1, window, cx);
     }
 
     fn key_up(&mut self, e: &KeyUpEvent, cx: &mut Context<Self>) {
@@ -1334,7 +1497,10 @@ impl Overlay {
                 }
             }
             Cmd::Help => self.help = !self.help,
+            Cmd::Mic => self.mic(),
             Cmd::Target => self.next_target(),
+            Cmd::Sessions => self.list_by_key(),
+            Cmd::Restart => self.restart(window),
             Cmd::Done => self.finish(false, window, cx),
             Cmd::DoneWhole => self.finish(true, window, cx),
             Cmd::Live => self.go_live(cx),
@@ -2274,7 +2440,8 @@ impl Render for ScreenView {
             .bg(gpui::black())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                this.overlay.update(cx, |o, cx| o.key_down(e, window, cx));
+                let screen = this.screen;
+                this.overlay.update(cx, |o, cx| o.key_down(screen, e, window, cx));
             }))
             .on_key_up(cx.listener(|this, e: &KeyUpEvent, _, cx| {
                 this.overlay.update(cx, |o, cx| o.key_up(e, cx));
@@ -2534,7 +2701,10 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         mic_button(overlay, o),
         button(
             "target",
-            format!("Where it goes ({} switches)", o.keys.label(Cmd::Target)),
+            match o.keys.label(Cmd::Sessions) {
+                list if list.is_empty() => format!("Where it goes ({} switches)", o.keys.label(Cmd::Target)),
+                list => format!("Where it goes ({} switches, {list} lists)", o.keys.label(Cmd::Target)),
+            },
             target,
             slot(
                 o.label.width(scale),
@@ -2600,7 +2770,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     items.push(group(vec![
         button(
             "restart",
-            "Start over without sending".into(),
+            with_key("Start over without sending", o.keys.label(Cmd::Restart)),
             Emphasis::Plain,
             icon("restart", plain).into_any_element(),
             Box::new(|o, w, _| o.restart(w)),
@@ -2614,7 +2784,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         ),
         button(
             "close",
-            "Close without sending".into(),
+            with_key("Close without sending", o.keys.label(Cmd::Close)),
             Emphasis::Plain,
             icon("close", plain).into_any_element(),
             Box::new(|o, w, cx| o.command(Cmd::Close, w, cx)),
@@ -2642,6 +2812,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Draw (⇧ for an arrow)", k(Cmd::Tool(Tool::Draw))),
                 ("Screenshot", k(Cmd::Tool(Tool::Shot))),
                 ("Move it: drag a pin's number", String::new()),
+                ("A pin's card (Tab: the next)", "1 9".into()),
                 ("The last pin's type", "⌘1 ⌘4".into()),
             ],
         ),
@@ -2670,9 +2841,12 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             "The aside",
             vec![
                 ("Talk while muted (hold)", keys::label(&o.keys.talk)),
+                ("Mute or listen", k(Cmd::Mic)),
                 ("Next session", k(Cmd::Target)),
+                ("Where it goes (↑ ↓, ⏎)", k(Cmd::Sessions)),
                 ("Live or frozen", o.spec.freeze_shortcut.clone()),
                 ("Send", format!("{} {}", k(Cmd::Done), o.spec.record_shortcut)),
+                ("Start over", k(Cmd::Restart)),
                 ("Close", k(Cmd::Close)),
             ],
         ),
@@ -2724,7 +2898,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     };
     let footer = match o.live {
         true => format!("Live, your apps have the keyboard: {} freezes the screen again.", o.spec.freeze_shortcut),
-        false => "Click a pin's number to type about it, right-click for more.".into(),
+        false => "Click a pin's number (or press it) to type about it, right-click for more.".into(),
     };
     let measure = overlay.clone();
     let shown = o.keys_sheet.shown();
@@ -2753,6 +2927,11 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         .into_any_element()
 }
 
+/// A button's name, with its key when it has one.
+fn with_key(name: &str, key: String) -> String {
+    if key.is_empty() { name.to_string() } else { format!("{name} ({key})") }
+}
+
 fn tool_icon(tool: Tool) -> &'static str {
     match tool {
         Tool::Measure => "measure",
@@ -2763,7 +2942,7 @@ fn tool_icon(tool: Tool) -> &'static str {
 }
 
 /// What a row of the pill's list does.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 enum Pick {
     Target(Target),
     ChooseFolder,
@@ -2778,9 +2957,14 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     // Firmer than on a solid surface: what's behind shows through.
     let t = o.theme;
     let (primary, tertiary) = (t.primary, t.secondary);
-    // A row: a check where it's chosen, then what it is; hovered, a glass pill.
+    // A row: a check where it's chosen, then what it is; hovered (or the arrows on it), a glass
+    // pill.
+    let choices = o.list_choices();
+    let lit = o.list_lit.and_then(|i| choices.get(i).cloned());
     let row = |id: String, chosen: bool, enabled: bool, content: AnyElement, action: Option<Pick>| {
-        let pick = overlay.clone();
+        let (pick, point) = (overlay.clone(), overlay.clone());
+        let on = action.is_some() && action == lit;
+        let index = action.as_ref().and_then(|a| choices.iter().position(|c| c == a));
         div()
             .id(SharedString::from(id))
             .flex_none()
@@ -2794,20 +2978,24 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
             .border_1()
             .border_color(color(0, 0.0))
             .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(t.selected).border_color(t.selected_stroke)))
+            .when(on, |d| d.bg(t.selected).border_color(t.selected_stroke).relative().child(reveal_lit(overlay, o)))
             .when(!enabled, |d| d.opacity(0.55))
+            // The pointer lights a row as the arrows do: one is lit at a time.
+            .on_hover(move |hovered, _, cx| {
+                if *hovered && index.is_some() {
+                    point.update(cx, |o, cx| {
+                        o.list_lit = index;
+                        cx.notify();
+                    });
+                }
+            })
             .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 cx.stop_propagation();
-                match action.clone() {
-                    Some(Pick::Target(target)) => pick.update(cx, |o, cx| {
-                        o.choose_target(target);
+                if let Some(action) = action.clone() {
+                    pick.update(cx, |o, cx| {
+                        o.pick(action);
                         cx.notify();
-                    }),
-                    Some(Pick::ChooseFolder) => pick.update(cx, |o, cx| {
-                        o.show_list(false);
-                        o.folder_asked = true;
-                        cx.notify();
-                    }),
-                    None => {}
+                    });
                 }
             })
             .child(div().flex_none().w(px(14.)).when(chosen, |d| d.child(icon("check", primary))))
@@ -2915,17 +3103,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 )
                 .into_any_element(),
         );
-        // A folder chosen in the panel isn't among the app's: it leads.
-        let picked = match &o.target {
-            Some(Target::New { dir, .. }) if !targets.folders.iter().any(|f| &f.path == dir) => Some(dir.clone()),
-            _ => None,
-        };
-        let folders = picked
-            .iter()
-            .map(|dir| (dir.clone(), dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
-            .chain(targets.folders.iter().map(|f| (f.path.clone(), f.name.clone())))
-            .take(LIST_FOLDERS);
-        for (i, (dir, name)) in folders.enumerate() {
+        for (i, (dir, name)) in o.list_folders().into_iter().enumerate() {
             let path = asides_core::paths::tilde(&dir);
             let target = Target::New { agent: o.new_agent, dir };
             let chosen = o.target.as_ref() == Some(&target);
@@ -2991,7 +3169,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 .flex_col()
                 .children(rows),
         )
-        .child(crate::controls::scrollbar("targets-bar", &o.list_scroll, t))
+        .child(controls::scrollbar("targets-bar", &o.list_scroll, t))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.list_bounds = Some(bounds))))
         .into_any_element()
 }
@@ -3069,6 +3247,23 @@ fn toolbar_panel(
         .into_any_element()
 }
 
+/// The list's lit row, just moved to by the arrows: scrolled into view as it's drawn.
+fn reveal_lit(overlay: &Entity<Overlay>, o: &Overlay) -> impl IntoElement {
+    let (overlay, list) = (overlay.clone(), o.list_scroll.clone());
+    canvas(
+        move |bounds, window, cx| {
+            if overlay.update(cx, |o, _| std::mem::take(&mut o.list_reveal)) {
+                controls::scroll_into_view(&list, bounds, px(4.), window);
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 /// The notes by the pill a step on (`Note::step`), to say what's `wanted` (the toast, the tip): drawn
 /// again while they change; faded out, they go, and come back at their own width.
 fn step_notes(overlay: &Entity<Overlay>, wanted: [Option<SharedString>; 2], scale: f32) -> impl IntoElement {
@@ -3137,9 +3332,11 @@ fn dragged(overlay: &Entity<Overlay>) -> impl IntoElement {
 fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let listening = o.listening();
     let (press, tip) = (overlay.clone(), overlay.clone());
+    let mic_key = o.keys.label(Cmd::Mic);
     let name: SharedString = match (o.spec.model.ready, listening) {
         (false, _) => format!("Download the voice model ({})", o.spec.model.label).into(),
-        (true, true) => "Listening (click to mute)".into(),
+        (true, true) if mic_key.is_empty() => "Listening (click to mute)".into(),
+        (true, true) => format!("Listening (click or {mic_key} to mute)").into(),
         (true, false) => format!("Muted (click to listen, or hold {})", keys::label(&o.keys.talk)).into(),
     };
     let (red, t) = (color(style::RECORDING_SOFT, 1.0), o.theme);

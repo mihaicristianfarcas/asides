@@ -1,5 +1,6 @@
 //! A text field for an annotation's typed feedback, after GPUI's input example: typing (with the
-//! input methods macOS offers), selection, copy and paste. Long text wraps, and the field grows a
+//! input methods macOS offers), selection, copy and paste, and deleting as macOS fields do (⌥⌫ a
+//! word, ⌘⌫ to the start of the line; with fn, forward). Long text wraps, and the field grows a
 //! line at a time to show it, up to `MAX_LINES`; past that it scrolls, keeping the caret in view.
 //! One paragraph: Return saves the card (or, in the asides window, the setting). Its colors are a
 //! [`Look`].
@@ -24,6 +25,10 @@ actions!(
     [
         Backspace,
         Delete,
+        DeleteWordLeft,
+        DeleteWordRight,
+        DeleteToStart,
+        DeleteToEnd,
         Left,
         Right,
         SelectLeft,
@@ -60,6 +65,10 @@ pub fn bind_keys(cx: &mut App) {
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, context),
             KeyBinding::new("delete", Delete, context),
+            KeyBinding::new("alt-backspace", DeleteWordLeft, context),
+            KeyBinding::new("alt-delete", DeleteWordRight, context),
+            KeyBinding::new("cmd-backspace", DeleteToStart, context),
+            KeyBinding::new("cmd-delete", DeleteToEnd, context),
             KeyBinding::new("left", Left, context),
             KeyBinding::new("right", Right, context),
             KeyBinding::new("shift-left", SelectLeft, context),
@@ -358,21 +367,11 @@ impl TextInput {
 
     /// To the start of the line (in an area, the one the caret is on).
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        let caret = self.cursor_offset();
-        let start = match self.multiline {
-            true => self.content[..caret].rfind('\n').map_or(0, |i| i + 1),
-            false => 0,
-        };
-        self.move_to(start, cx);
+        self.move_to(line_start(&self.content, self.cursor_offset()), cx);
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        let caret = self.cursor_offset();
-        let end = match self.multiline {
-            true => self.content[caret..].find('\n').map_or(self.content.len(), |i| caret + i),
-            false => self.content.len(),
-        };
-        self.move_to(end, cx);
+        self.move_to(line_end(&self.content, self.cursor_offset()), cx);
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -385,6 +384,30 @@ impl TextInput {
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
+        }
+        self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_word_left(&mut self, _: &DeleteWordLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.delete_to(word_start(&self.content, self.cursor_offset()), window, cx);
+    }
+
+    fn delete_word_right(&mut self, _: &DeleteWordRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.delete_to(word_end(&self.content, self.cursor_offset()), window, cx);
+    }
+
+    fn delete_to_start(&mut self, _: &DeleteToStart, window: &mut Window, cx: &mut Context<Self>) {
+        self.delete_to(line_start(&self.content, self.cursor_offset()), window, cx);
+    }
+
+    fn delete_to_end(&mut self, _: &DeleteToEnd, window: &mut Window, cx: &mut Context<Self>) {
+        self.delete_to(line_end(&self.content, self.cursor_offset()), window, cx);
+    }
+
+    /// Deletes from the caret to `offset`, or what's selected.
+    fn delete_to(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_range.is_empty() {
+            self.select_to(offset, cx)
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -881,6 +904,10 @@ impl Render for TextInput {
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
+            .on_action(cx.listener(Self::delete_word_left))
+            .on_action(cx.listener(Self::delete_word_right))
+            .on_action(cx.listener(Self::delete_to_start))
+            .on_action(cx.listener(Self::delete_to_end))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::select_left))
@@ -926,5 +953,54 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+/// Where the line `at` is on starts in `text` (a field's one paragraph, or an area's line).
+fn line_start(text: &str, at: usize) -> usize {
+    text[..at].rfind('\n').map_or(0, |i| i + 1)
+}
+
+/// Where the line `at` is on ends.
+fn line_end(text: &str, at: usize) -> usize {
+    text[at..].find('\n').map_or(text.len(), |i| at + i)
+}
+
+/// The start of the word before `at`, past the spaces and punctuation between, as ⌥⌫ goes.
+fn word_start(text: &str, at: usize) -> usize {
+    text[..at]
+        .split_word_bound_indices()
+        .rev()
+        .find(|(_, w)| w.chars().any(char::is_alphanumeric))
+        .map_or(0, |(i, _)| i)
+}
+
+/// The end of the word after `at`, past the spaces and punctuation between.
+fn word_end(text: &str, at: usize) -> usize {
+    text[at..]
+        .split_word_bound_indices()
+        .find(|(_, w)| w.chars().any(char::is_alphanumeric))
+        .map_or(text.len(), |(i, w)| at + i + w.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deletes_to_the_line_and_word_ends() {
+        let text = "Keep the label, on one line\nand this";
+        let caret = text.find(" line").unwrap();
+        assert_eq!(line_start(text, caret), 0);
+        assert_eq!(line_end(text, caret), text.find('\n').unwrap());
+        assert_eq!(line_start(text, text.len()), text.find('\n').unwrap() + 1);
+        // A word back from after "label, ": "label" (the comma and space go with it).
+        let after_comma = text.find(" on").unwrap() + 1;
+        assert_eq!(word_start(text, after_comma), text.find("label").unwrap());
+        assert_eq!(word_end(text, text.find(',').unwrap()), text.find(" one").unwrap());
+        // The ends stop it; accented and joined letters are one word.
+        assert_eq!((word_start(text, 0), word_end(text, text.len())), (0, text.len()));
+        assert_eq!(word_start("să fie", 3), 0);
+        assert_eq!(word_start("don't", 5), 0);
     }
 }

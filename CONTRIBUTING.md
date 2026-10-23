@@ -42,7 +42,7 @@ pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys), `ASIDES_WINDOW_REPLAY=<steps.json>` (a replay's key and mouse steps in the window, captures beside it; it quits after, and sends the app nothing) |
 | the overlay | a replay (below) |
 | the app | `make install`, then use it (it quits and replaces the running asides); dev-hooks builds open setup only with `ASIDES_SETUP=1` |
 
@@ -143,6 +143,10 @@ Run what your change touches, and say in the pull request what you tried.
   Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect
   (a key already in use names its other action); Help's clips play smoothly and loop, keys shown as
   set; light and dark.
+- [ ] **Keyboard**: in the window, `Tab` and `⇧Tab` reach every control, the ring only after a key
+  (a click hides it), the arrows in the sidebar, lists, selects and segments, `⌘1`–`⌘6`, `⌘⌫` in
+  History; frozen, a pin's number opens its card and `Tab` the next, the right-click menu and `W`'s
+  list take the arrows and `⏎`, `⇧⌘M` mutes, `⌘⌫` starts over.
 - [ ] **Wispr Flow**: a dictation while frozen joins the aside; elsewhere, nothing.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.
@@ -177,8 +181,12 @@ Run what your change touches, and say in the pull request what you tried.
   the example in [guide/using.md](guide/using.md).
 - **A tool or key on the screen**: logic in `asides-core/src/overlay.rs` (with a test, and an
   `Action` for scripts); a default in `OverlayKeys`; routed in `asides-overlay/src/ui.rs`, drawn in
-  `ScreenView::render` (and `export.rs` if it's in the image). Add it to the keys sheet and
-  [guide/using.md](guide/using.md). Check it with a replay.
+  `ScreenView::render` (and `export.rs` if it's in the image). Add it to the keys sheet, the Keys
+  page (`KEY_GROUPS`) and [guide/using.md](guide/using.md). Check it with a replay.
+- **A control in the window**: give it a focus handle (`controls::focus_handle`, or `focusable` in
+  `window.rs`), its ring when `controls::ringed`, the arrows through `controls::arrow_step`, and
+  keep a click on a button from taking the keyboard (as `controls::keep_focus` does). Check Tab reaches it with
+  `ASIDES_WINDOW_REPLAY` (`{"press": "tab"}` steps).
 - **Something the overlay asks the app**: a `helper::Event` (and a `Command` for the answer),
   handled in `App::on_overlay`. The overlay never needs a permission itself.
 

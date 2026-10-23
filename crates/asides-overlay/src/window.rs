@@ -43,7 +43,13 @@ actions!(
         ShowHistory,
         ShowSessions,
         ShowSettings,
+        ShowGeneral,
+        ShowKeys,
+        ShowVoice,
+        ShowPins,
         ShowHelp,
+        FocusNext,
+        FocusPrevious,
         CheckForUpdates,
         QuitAsides,
         HideAsides,
@@ -54,9 +60,9 @@ actions!(
 );
 
 use crate::controls::{
-    ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, choice_setting, fade_in, floating, font,
-    footnote, hex, icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section, segmented,
-    select, setting, stepper, swatches, switch, toolbar_row,
+    self, ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, choice_setting, fade_in, floating,
+    font, footnote, hex, icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section,
+    segmented, select, setting, stepper, swatches, switch, toolbar_row,
 };
 use crate::input::{Look, TextInput};
 use crate::{assets, help, native, style};
@@ -278,9 +284,12 @@ const KEY_GROUPS: &[(&str, &[(&str, &str)])] = &[
         "The aside",
         &[
             ("talk", "Talk while muted (held)"),
+            ("mic", "Mute or listen"),
             ("target", "The next session"),
+            ("sessions", "Where it goes: the list, for the arrows"),
             ("done", "Send"),
             ("done_whole_screen", "Send, with the whole screen"),
+            ("restart", "Start over"),
             ("live", "The live screen"),
             ("help", "Show the keys"),
             ("close", "Close without sending"),
@@ -313,6 +322,9 @@ fn args_field(kind: AgentKind) -> &'static str {
         AgentKind::Qwen => "args-qwen",
     }
 }
+
+/// What picking a choice does.
+type Pick = std::rc::Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// Where History sends an aside: a session running (its id), or a new one in a folder.
 #[derive(Clone, Debug, PartialEq)]
@@ -348,6 +360,12 @@ pub struct AsidesWindow {
     width: f32,
     /// Where its keys go (⌘, and the pages' shortcuts).
     focus: FocusHandle,
+    /// The rows drawn here that Tab reaches (the sidebar's, History's asides, choices), by id, and
+    /// what has the keyboard as it's drawn (its ring shows, when the keyboard moved it there).
+    focuses: HashMap<SharedString, FocusHandle>,
+    focused: Option<FocusHandle>,
+    /// A key was just recorded with Return or Space: its release isn't a press on the recorder.
+    recorded_by_key: bool,
     /// The glass pills behind the page and the aside selected, sliding to the next.
     nav_glide: Glide,
     list_glide: Glide,
@@ -398,12 +416,19 @@ pub fn run() {
     app.run(|cx: &mut App| {
         // Stuck, it's only a window: the log says so, and it can be quit.
         native::watch_main_thread(None);
-        // A Mac app's keys and menus: ⌘, opens the settings, ⌘1 and ⌘2 History and Sessions; ⌘Q
-        // quits asides (the menu bar's too), ⌘W closes the window.
+        // A Mac app's keys and menus: ⌘, opens the settings, ⌘1 to ⌘6 the sidebar's pages; ⌘Q
+        // quits asides (the menu bar's too), ⌘W closes the window. Tab and ⇧Tab go through what can
+        // be clicked.
         cx.bind_keys([
             KeyBinding::new("cmd-,", ShowSettings, None),
             KeyBinding::new("cmd-1", ShowHistory, None),
             KeyBinding::new("cmd-2", ShowSessions, None),
+            KeyBinding::new("cmd-3", ShowGeneral, None),
+            KeyBinding::new("cmd-4", ShowKeys, None),
+            KeyBinding::new("cmd-5", ShowVoice, None),
+            KeyBinding::new("cmd-6", ShowPins, None),
+            KeyBinding::new("tab", FocusNext, None),
+            KeyBinding::new("shift-tab", FocusPrevious, None),
             KeyBinding::new("cmd-?", ShowHelp, None),
             KeyBinding::new("cmd-q", QuitAsides, None),
             KeyBinding::new("cmd-h", HideAsides, None),
@@ -439,6 +464,10 @@ pub fn run() {
                     MenuItem::separator(),
                     MenuItem::action("History", ShowHistory),
                     MenuItem::action("Sessions", ShowSessions),
+                    MenuItem::action("General", ShowGeneral),
+                    MenuItem::action("Keys", ShowKeys),
+                    MenuItem::action("Voice", ShowVoice),
+                    MenuItem::action("Pins", ShowPins),
                 ],
             },
             Menu { name: "Help".into(), items: vec![MenuItem::action("How to Use asides", ShowHelp)] },
@@ -479,6 +508,9 @@ pub fn run() {
                 .detach();
                 let focus = cx.focus_handle();
                 window.focus(&focus);
+                // What had the keyboard went (a page left, a row gone): the window takes it, for its
+                // keys to work.
+                cx.on_focus_lost(window, |this: &mut AsidesWindow, window, _| window.focus(&this.focus)).detach();
                 let glides = (Glide::new(cx), Glide::new(cx));
                 AsidesWindow::new(theme, focus, glides)
             })
@@ -491,6 +523,16 @@ pub fn run() {
         native::activate();
         if let Some(dir) = std::env::var_os("ASIDES_WINDOW_CAPTURE") {
             return capture_pages(handle, PathBuf::from(dir), cx);
+        }
+        // Development: steps played in the window (`replay::run_window`).
+        if let Some(path) = std::env::var_os("ASIDES_WINDOW_REPLAY").map(PathBuf::from) {
+            let steps = std::fs::read_to_string(&path).ok().and_then(|text| serde_json::from_str(&text).ok());
+            let view = handle.update(cx, |_, window, _| native::view_pointer(window)).unwrap_or(0);
+            let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            match steps {
+                Some(steps) => return crate::replay::run_window(view, steps, dir, cx),
+                None => eprintln!("asides-overlay: no steps in {}", path.display()),
+            }
         }
         cx.spawn(async move |cx| {
             while let Some(command) = commands.next().await {
@@ -629,6 +671,9 @@ impl AsidesWindow {
             theme,
             width: 1240.,
             focus,
+            focuses: HashMap::new(),
+            focused: None,
+            recorded_by_key: false,
             nav_glide: glides.0,
             list_glide: glides.1,
             list_scroll: ScrollHandle::new(),
@@ -795,8 +840,10 @@ impl AsidesWindow {
     /// keyboard).
     fn set_editing(&mut self, id: &str, edit: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !edit {
-            self.editing = None;
-            window.focus(&self.focus);
+            // Out of the editor, the window has the keyboard; already out, it stays where it is.
+            if self.editing.take().is_some() {
+                window.focus(&self.focus);
+            }
             return cx.notify();
         }
         let Some(aside) = self.asides.iter().find(|a| a.id == id) else { return };
@@ -804,6 +851,8 @@ impl AsidesWindow {
         let draft = self.drafts.entry(id.to_string()).or_insert_with(|| {
             let draft = cx.new(|cx| TextInput::area(&message, EDITOR_FONT, cx));
             draft.update(cx, |d, _| d.look = editor_look(self.theme));
+            // Tab reaches it (and leaves it: it types no tabs).
+            let _ = draft.read(cx).focus_handle(cx).tab_stop(true);
             draft
         });
         let focus = draft.read(cx).focus_handle(cx);
@@ -811,6 +860,40 @@ impl AsidesWindow {
         self.editing = Some(id.to_string());
         self.aside_scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
+    }
+
+    /// Aside `id` shown, from its top.
+    fn show_aside(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.selected.as_deref() != Some(id) {
+            self.aside_scroll.set_offset(point(px(0.), px(0.)));
+        }
+        self.selected = Some(id.to_string());
+        cx.notify();
+    }
+
+    /// Deletes `aside`, once asked: gone from History, it can't come back.
+    fn ask_delete(&mut self, aside: Aside, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete this aside?",
+            Some("Its message and screenshots go from History. This can't be undone."),
+            &[PromptButton::Ok("Delete".into()), PromptButton::Cancel("Cancel".into())],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| {
+                match history::delete(&aside) {
+                    Ok(()) => this.toast("Deleted"),
+                    Err(err) => this.toast(format!("Could not delete it: {err}")),
+                }
+                this.reload();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// What's typed for aside `id`, when it differs from what's saved.
@@ -856,7 +939,63 @@ impl AsidesWindow {
         found.into_iter().zip(labels).filter(|(s, _)| s.host.reachable()).collect()
     }
 
-    /// ⌘1, ⌘2 and ⌘, go to a page, unless keys are being recorded: then they're the keys.
+    /// The focus handle of a row drawn here (`id`), in the tab order, and whether it shows a ring.
+    fn focusable(&mut self, id: impl Into<SharedString>, cx: &mut Context<Self>) -> (FocusHandle, bool) {
+        let handle = self.focuses.entry(id.into()).or_insert_with(|| cx.focus_handle().tab_stop(true)).clone();
+        let ring = controls::keyboard_focus() && self.focused.as_ref() == Some(&handle);
+        (handle, ring)
+    }
+
+    /// A card of choices (`choice_row`s, each with its id, whether it's chosen, and what picking it
+    /// does): one stop for Tab, the chosen one (or the first); the arrows pick the one before or
+    /// after, and Return or Space picks the one with the keyboard.
+    fn choice_rows(
+        &mut self,
+        choices: Vec<(SharedString, gpui::Stateful<gpui::Div>, bool, Pick)>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = self.theme;
+        let stop = choices.iter().position(|(_, _, chosen, _)| *chosen).unwrap_or(0);
+        let (mut handles, mut picks, mut shown) = (Vec::new(), Vec::new(), Vec::new());
+        for (i, (id, row, _, pick)) in choices.into_iter().enumerate() {
+            let (handle, ring) = self.focusable(id, cx);
+            let click = pick.clone();
+            shown.push(
+                row.track_focus(&handle.clone().tab_stop(i == stop))
+                    .relative()
+                    .on_click(move |_, window, cx| click(window, cx))
+                    .when(ring, |d| d.child(controls::focus_ring(t, Radius::ROW, -3.)))
+                    .into_any_element(),
+            );
+            handles.push(handle);
+            picks.push(pick);
+        }
+        rows(shown, t).on_key_down(move |e, window, cx| {
+            let at = handles.iter().position(|h| h.is_focused(window));
+            let Some(to) = controls::arrow_step(e, at, handles.len(), false) else { return };
+            cx.stop_propagation();
+            controls::keyboard_moved();
+            window.focus(&handles[to]);
+            picks[to](window, cx);
+        })
+    }
+
+    /// Tab or ⇧Tab: the next (or the one before) of what can be clicked, unless keys are being
+    /// recorded: then it's the key.
+    fn tab(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.recording.is_some() {
+            return self.record("tab", Mods { shift: back, ..Mods::default() }, cx);
+        }
+        if back {
+            window.focus_prev();
+        } else {
+            window.focus_next();
+        }
+        controls::keyboard_moved();
+        cx.notify();
+    }
+
+    /// ⌘1 to ⌘6, ⌘, and ⌘? go to a page, unless keys are being recorded: then they're the keys.
     fn page_or_keys(&mut self, page: Page, keys: &str, cx: &mut Context<Self>) {
         match (self.recording, keys::parse(keys).first()) {
             (Some(_), Some(c)) => {
@@ -908,21 +1047,29 @@ impl AsidesWindow {
         })
     }
 
-    /// Keycaps for `labels` that a click records anew, as `recording`.
+    /// Keycaps for `labels` that a click (or Return or Space) records anew, as `recording`.
     fn recorder(
-        &self,
+        &mut self,
         id: &'static str,
         labels: Vec<String>,
         recording: Recording,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (focus, ring) = self.focusable(format!("record-{id}"), cx);
         key_recorder(id, labels, self.recording == Some(recording), self.theme)
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .track_focus(&focus)
+            .relative()
+            .on_click(cx.listener(move |this, e: &gpui::ClickEvent, window, cx| {
+                // The release of the key just recorded.
+                if e.is_keyboard() && std::mem::take(&mut this.recorded_by_key) {
+                    return;
+                }
                 this.recording = Some(recording);
-                // The keys come to the window, not a field.
-                window.focus(&this.focus);
+                // The keys come to the recorder (and the window), not a field.
+                window.focus(&focus);
                 cx.notify();
             }))
+            .when(ring, |d| d.child(controls::focus_ring(self.theme, Radius::CONTROL, 2.)))
             .into_any_element()
     }
 
@@ -950,7 +1097,8 @@ impl AsidesWindow {
             Some((input, _)) => input.clone(),
             None => {
                 let input = cx.new(|cx| TextInput::new(&value, placeholder, cx));
-                let focus = input.read(cx).focus_handle(cx);
+                // Tab reaches it.
+                let focus = input.read(cx).focus_handle(cx).tab_stop(true);
                 cx.on_blur(&focus, window, move |this, _, cx| this.commit(id, cx)).detach();
                 if std::env::var("ASIDES_WINDOW_FOCUS").is_ok_and(|f| f == id) {
                     window.defer(cx, move |window, _| window.focus(&focus));
@@ -969,8 +1117,10 @@ impl AsidesWindow {
             *shown = value.clone();
         }
         let (field, root) = (input.clone(), self.focus.clone());
+        let ring = controls::keyboard_focus() && self.focused.as_ref() == Some(&input.read(cx).focus_handle(cx));
         div()
             .w(px(width))
+            .relative()
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| match e.keystroke.key.as_str() {
                 "enter" => {
                     this.commit(id, cx);
@@ -985,6 +1135,7 @@ impl AsidesWindow {
                 _ => {}
             }))
             .child(input)
+            .when(ring, |d| d.child(controls::focus_ring(t, 6., 2.)))
             .into_any_element()
     }
 
@@ -1051,6 +1202,11 @@ impl AsidesWindow {
 
 /// Hands a link to the app (the copy this window ships in), without bringing it forward.
 fn send_link(link: &Link) -> std::io::Result<()> {
+    // Development: a replay's window, run outside the app (with a home of its own), would start
+    // another asides (the one in /Applications), which takes the shortcuts and opens setup.
+    if std::env::var_os("ASIDES_WINDOW_REPLAY").is_some() {
+        return Ok(());
+    }
     let mut open = Command::new("open");
     open.arg("-g");
     let bundle = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
@@ -1155,6 +1311,8 @@ impl Render for AsidesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         self.width = f32::from(window.viewport_size().width);
+        self.focused = window.focused(cx);
+        controls::scroll_areas([self.page_scroll.clone(), self.list_scroll.clone(), self.aside_scroll.clone()]);
         self.clear_toast_when_due(cx);
         self.redraw_when_ago_changes(cx);
         if std::mem::take(&mut self.edit_at_first)
@@ -1186,7 +1344,13 @@ impl Render for AsidesWindow {
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
             .on_action(cx.listener(|this, _: &ShowSessions, _, cx| this.page_or_keys(Page::Sessions, "cmd+2", cx)))
             .on_action(cx.listener(|this, _: &ShowSettings, _, cx| this.page_or_keys(Page::General, "cmd+comma", cx)))
+            .on_action(cx.listener(|this, _: &ShowGeneral, _, cx| this.page_or_keys(Page::General, "cmd+3", cx)))
+            .on_action(cx.listener(|this, _: &ShowKeys, _, cx| this.page_or_keys(Page::Keys, "cmd+4", cx)))
+            .on_action(cx.listener(|this, _: &ShowVoice, _, cx| this.page_or_keys(Page::Voice, "cmd+5", cx)))
+            .on_action(cx.listener(|this, _: &ShowPins, _, cx| this.page_or_keys(Page::Pins, "cmd+6", cx)))
             .on_action(cx.listener(|this, _: &ShowHelp, _, cx| this.page_or_keys(Page::Help, "cmd+shift+/", cx)))
+            .on_action(cx.listener(|this, _: &FocusNext, window, cx| this.tab(false, window, cx)))
+            .on_action(cx.listener(|this, _: &FocusPrevious, window, cx| this.tab(true, window, cx)))
             .on_action(cx.listener(|this, _: &SaveAside, _, cx| {
                 if let Some(id) = this.editing.clone() {
                     this.save_draft(&id, cx);
@@ -1194,27 +1358,46 @@ impl Render for AsidesWindow {
             }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &CloseWindow, window, _| window.remove_window())
-            // Recording, the next key pressed is it.
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+            // Recording, the next key pressed is it. In setup, Return with nothing else to press
+            // goes on. In History, ⌘⌫ deletes the aside shown (not while it's edited: it's text).
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                let m = &e.keystroke.modifiers;
                 if this.recording.is_some() {
-                    let m = &e.keystroke.modifiers;
-                    this.record(
-                        &e.keystroke.key,
-                        Mods { cmd: m.platform, shift: m.shift, alt: m.alt, ctrl: m.control },
-                        cx,
-                    );
+                    let key = e.keystroke.key.as_str();
+                    this.recorded_by_key = matches!(key, "enter" | "space");
+                    this.record(key, Mods { cmd: m.platform, shift: m.shift, alt: m.alt, ctrl: m.control }, cx);
+                    cx.stop_propagation();
+                } else if this.page == Page::Setup
+                    && e.keystroke.key == "enter"
+                    && !m.modified()
+                    && this.focus.is_focused(window)
+                {
+                    match this.setup {
+                        SetupStep::Done => this.setup_finish(cx),
+                        step => this.setup_go(step.next(), cx),
+                    }
+                    cx.stop_propagation();
+                } else if this.page == Page::History
+                    && e.keystroke.key == "backspace"
+                    && m.platform
+                    && !(m.shift || m.alt || m.control)
+                    && this.editing.is_none()
+                    && let Some(aside) = this.selected().cloned()
+                {
+                    this.ask_delete(aside, window, cx);
                     cx.stop_propagation();
                 }
             }))
+            .on_key_up(cx.listener(|this, _: &gpui::KeyUpEvent, _, _| this.recorded_by_key = false))
             // A click makes asides the app in front, so its keys (⌘,) come here, not to another app;
-            // and anywhere but on a recorder, it stops recording.
+            // and anywhere but on a recorder, it stops recording. It hides the keyboard's ring.
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     if !native::is_active() {
                         native::activate();
                     }
-                    if this.recording.take().is_some() {
+                    if this.recording.take().is_some() | controls::clicked() {
                         cx.notify();
                     }
                 }),
@@ -1244,9 +1427,33 @@ impl Render for AsidesWindow {
 }
 
 impl AsidesWindow {
-    fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let current = self.page;
+        // One stop for Tab, the page shown (What's new isn't there: History); the arrows go up and
+        // down the pages, each shown as they come to it.
+        let pages = [
+            ("nav-history", Page::History),
+            ("nav-sessions", Page::Sessions),
+            ("nav-general", Page::General),
+            ("nav-keys", Page::Keys),
+            ("nav-voice", Page::Voice),
+            ("nav-pins", Page::Pins),
+            ("nav-help", Page::Help),
+        ];
+        let focus: HashMap<&str, (gpui::FocusHandle, bool)> =
+            pages.iter().map(|&(id, _)| (id, self.focusable(id, cx))).collect();
+        let handles: Vec<gpui::FocusHandle> = pages.iter().map(|(id, _)| focus[id].0.clone()).collect();
+        let arrows = cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+            let at = handles.iter().position(|h| h.is_focused(window));
+            let Some(to) = controls::arrow_step(e, at, handles.len(), false) else { return };
+            cx.stop_propagation();
+            controls::keyboard_moved();
+            window.focus(&handles[to]);
+            this.go(pages[to].1, cx);
+        });
+        let foot = self.foot(cx);
+        let stop = pages.iter().find(|&&(_, p)| p == current).map_or(Page::History, |&(_, p)| p);
         let nav = |id: &'static str,
                    label: &'static str,
                    glyph: &'static str,
@@ -1254,8 +1461,10 @@ impl AsidesWindow {
                    count: Option<usize>,
                    cx: &mut Context<Self>| {
             let on = current == page;
+            let (handle, ring) = focus[id].clone();
             div()
                 .id(id)
+                .track_focus(&handle.tab_stop(page == stop))
                 .h(px(Metrics::NAV_ROW))
                 .px(px(8.))
                 .flex()
@@ -1277,6 +1486,7 @@ impl AsidesWindow {
                         .filter(|n| *n > 0)
                         .map(|n| div().text_size(px(Type::META)).text_color(t.tertiary).child(n.to_string())),
                 )
+                .when(ring, |d| d.child(controls::focus_ring(t, Radius::ROW, 0.)))
         };
         let header = |label: &'static str| {
             div()
@@ -1309,6 +1519,7 @@ impl AsidesWindow {
                     .flex_col()
                     .gap(px(2.))
                     .relative()
+                    .on_key_down(arrows)
                     .child(self.nav_glide.layer(selected, t.selected, t.selected_stroke, Radius::ROW))
                     .child(nav("nav-history", "History", "clock", Page::History, Some(self.asides.len()), cx))
                     .child(nav(
@@ -1328,18 +1539,23 @@ impl AsidesWindow {
                     .child(nav("nav-help", "Help", "help", Page::Help, None, cx))
                     .child(div().h(px(6.))),
             )
-            .child(self.foot(cx))
+            .child(foot)
             .into_any_element()
     }
 
     /// The sidebar's foot: what asides is doing; waiting, an update (one click installs it), then
     /// What's New once it's in, else asides' version.
-    fn foot(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn foot(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
+        // Tab reaches the update and What's New (and putting it away, which shows then).
+        let (update_focus, update_ring) = self.focusable("foot-update", cx);
+        let (news_focus, news_ring) = self.focusable("foot-whats-new", cx);
+        let (seen_focus, seen_ring) = self.focusable("foot-whats-new-seen", cx);
         let update = &self.state.update;
         let row = |id: &'static str| {
             div()
                 .id(id)
+                .relative()
                 .flex_none()
                 .mx(px(8.))
                 .mb(px(8.))
@@ -1366,15 +1582,20 @@ impl AsidesWindow {
                 .child(icon(glyph, 14., tint))
                 .child(div().flex_1().min_w_0().truncate().text_color(tint).child(update.summary()))
                 .when_some(step, |d, step| {
-                    d.cursor_pointer().hover(|s| s.bg(t.hover)).on_click(move |_, _, _| {
-                        let _ = send_link(&Link::Update { step, request: None });
-                    })
+                    d.track_focus(&update_focus)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover))
+                        .on_click(move |_, _, _| {
+                            let _ = send_link(&Link::Update { step, request: None });
+                        })
+                        .when(update_ring, |d| d.child(controls::focus_ring(t, Radius::ROW, 0.)))
                 })
                 .into_any_element();
         }
         if let (true, Some(newest)) = (idle, update.unseen(self.state.whats_new_seen.as_deref()).first()) {
             return row("whats-new")
                 .group("whats-new")
+                .track_focus(&news_focus)
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_click(cx.listener(|this, _, _, cx| this.go(Page::WhatsNew, cx)))
@@ -1384,21 +1605,25 @@ impl AsidesWindow {
                     // Hovered, it can be put away unread.
                     div()
                         .id("whats-new-seen")
+                        .track_focus(&seen_focus)
+                        .relative()
                         .flex_none()
                         .size(px(18.))
                         .flex()
                         .items_center()
                         .justify_center()
                         .rounded(px(Radius::CHIP))
-                        .opacity(0.)
+                        .opacity(if news_ring || seen_ring { 1. } else { 0. })
                         .group_hover("whats-new", |s| s.opacity(1.))
                         .hover(|s| s.bg(t.hover))
                         .child(icon("close", 11., t.tertiary))
                         .on_click(|_, _, cx| {
                             cx.stop_propagation();
                             let _ = send_link(&Link::Update { step: Step::Seen, request: None });
-                        }),
+                        })
+                        .when(seen_ring, |d| d.child(controls::focus_ring(t, Radius::CHIP, 0.))),
                 )
+                .when(news_ring, |d| d.child(controls::focus_ring(t, Radius::ROW, 0.)))
                 .into_any_element();
         }
         // asides' version, or what it's doing when that's more than waiting.
@@ -1434,6 +1659,21 @@ impl AsidesWindow {
         let today = Local::now().date_naive();
         let mut list: Vec<AnyElement> = Vec::new();
         let mut day = None;
+        // One stop for Tab, the aside shown (or the first); the arrows (Home, End) go through them,
+        // each shown as they come to it.
+        let ids: Vec<String> = self.asides.iter().map(|a| a.id.clone()).collect();
+        let stop = ids.iter().position(|id| self.selected.as_ref() == Some(id)).unwrap_or(0);
+        let focus: Vec<(gpui::FocusHandle, bool)> =
+            ids.iter().map(|id| self.focusable(format!("aside-{id}"), cx)).collect();
+        let handles: Vec<gpui::FocusHandle> = focus.iter().map(|(h, _)| h.clone()).collect();
+        let arrows = cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+            let at = handles.iter().position(|h| h.is_focused(window));
+            let Some(to) = controls::arrow_step(e, at, handles.len(), false) else { return };
+            cx.stop_propagation();
+            controls::keyboard_moved();
+            window.focus(&handles[to]);
+            this.show_aside(&ids[to], cx);
+        });
         for (index, aside) in self.asides.iter().enumerate() {
             let created = aside.created();
             if day != Some(created.date_naive()) {
@@ -1458,9 +1698,11 @@ impl AsidesWindow {
             let on = self.selected.as_ref() == Some(&aside.id);
             let id = aside.id.clone();
             let (glyph, where_, failed) = delivered(aside);
+            let (handle, ring) = focus[index].clone();
             list.push(
                 div()
                     .id(SharedString::from(format!("aside-{id}")))
+                    .track_focus(&handle.tab_stop(index == stop))
                     .flex()
                     .flex_col()
                     .gap(px(2.))
@@ -1474,13 +1716,8 @@ impl AsidesWindow {
                     // Hovered, it stays so once picked, as the selection slides to it.
                     .hover(|s| s.bg(t.hover))
                     .when(!on, |d| d.cursor_pointer())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selected.as_ref() != Some(&id) {
-                            this.aside_scroll.set_offset(point(px(0.), px(0.)));
-                        }
-                        this.selected = Some(id.clone());
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_aside(&id, cx)))
+                    .when(ring, |d| d.child(controls::focus_ring(t, Radius::ROW, 0.)))
                     .child(div().truncate().font_weight(FontWeight::MEDIUM).child(aside.record.title.clone()))
                     .child(
                         div()
@@ -1543,6 +1780,7 @@ impl AsidesWindow {
                             .flex_col()
                             .gap(px(1.))
                             .relative()
+                            .on_key_down(arrows)
                             .child(self.list_glide.layer(chosen, t.selected, t.selected_stroke, Radius::ROW))
                             .children(list),
                         "history-bar".into(),
@@ -1689,32 +1927,8 @@ impl AsidesWindow {
         );
         let deleted = aside.clone();
         actions.push(
-            icon_button("delete", "trash", "Delete", t)
-                .on_click(cx.listener(move |_, _, window, cx| {
-                    // Asked first: gone from History, it can't come back.
-                    let answer = window.prompt(
-                        PromptLevel::Warning,
-                        "Delete this aside?",
-                        Some("Its message and screenshots go from History. This can't be undone."),
-                        &[PromptButton::Ok("Delete".into()), PromptButton::Cancel("Cancel".into())],
-                        cx,
-                    );
-                    let deleted = deleted.clone();
-                    cx.spawn(async move |this, cx| {
-                        if answer.await != Ok(0) {
-                            return;
-                        }
-                        let _ = this.update(cx, |this, cx| {
-                            match history::delete(&deleted) {
-                                Ok(()) => this.toast("Deleted"),
-                                Err(err) => this.toast(format!("Could not delete it: {err}")),
-                            }
-                            this.reload();
-                            cx.notify();
-                        });
-                    })
-                    .detach();
-                }))
+            icon_button("delete", "trash", "Delete (⌘⌫)", t)
+                .on_click(cx.listener(move |this, _, window, cx| this.ask_delete(deleted.clone(), window, cx)))
                 .into_any_element(),
         );
         // Where it went, each time, or that it's only in History.
@@ -1976,10 +2190,15 @@ impl AsidesWindow {
             (t.accent.opacity(0.3), hex(style::UI_DEEP, 1.0))
         };
         let step_width = if beside { steps_width } else { (width - 8.) / 2. };
-        let mut cards = steps.into_iter().enumerate().map(|(i, (title, text))| {
+        // Tab reaches each step; Return or Space plays it.
+        let focus: Vec<(gpui::FocusHandle, bool)> =
+            (0..steps.len()).map(|i| self.focusable(format!("step-{i}"), cx)).collect();
+        let mut cards = steps.into_iter().zip(focus).enumerate().map(|(i, ((title, text), (handle, ring)))| {
             let on = now == Some(i);
             div()
                 .id(SharedString::from(format!("step-{i}")))
+                .track_focus(&handle)
+                .relative()
                 .w(px(step_width))
                 .px(px(12.))
                 .py(px(10.))
@@ -2007,6 +2226,7 @@ impl AsidesWindow {
                         .child((i + 1).to_string()),
                 )
                 .child(label_stack(title, Some(text.into()), t))
+                .when(ring, |d| d.child(controls::focus_ring(t, Radius::CARD, 2.)))
                 .into_any_element()
         });
         // Beside the clip, a column; under it, two rows of two.
@@ -2037,6 +2257,7 @@ impl AsidesWindow {
         let (measure, draw, shot, annotate) = (k("measure"), k("draw"), k("shot"), k("annotate"));
         let (next, keys, undo, clear, talk, done, close) =
             (k("target"), k("help"), k("undo"), k("clear"), k("talk"), k("done"), k("close"));
+        let (mic, sessions, restart) = (k("mic"), k("sessions"), k("restart"));
         let kept = match self.config.history_days {
             0 => "Every aside is kept in History, sent or not".to_string(),
             days => format!("Every aside is kept in History for {days} days, sent or not"),
@@ -2078,13 +2299,13 @@ impl AsidesWindow {
                 part(
                     "mic",
                     "The microphone",
-                    format!("Listening from the start. Click it to mute; muted, hold {talk} to talk."),
+                    format!("Listening from the start. Click it (or {mic}) to mute; muted, hold {talk} to talk."),
                 ),
                 part("terminal", "Where it goes", "The agent session the aside is typed into.".into()),
                 part(
                     "restart",
                     "Start over",
-                    "Without sending: what's pinned and said goes, and the session goes on.".into(),
+                    format!("Without sending ({restart}): what's pinned and said goes, and the session goes on."),
                 ),
                 part("check", "Send", format!("Or press {open}, or {done}.")),
                 part(
@@ -2136,17 +2357,19 @@ impl AsidesWindow {
                     "Where it goes",
                     format!(
                         "To the agent session you typed into last: Claude Code, Codex, OpenCode and more, in \
-                         Terminal, Ghostty or Diri. {next} picks the next one. Point at its name for the list: \
-                         a new session in a folder, or History only, to send it later."
+                         Terminal, Ghostty or Diri. {next} picks the next one. Point at its name for the list \
+                         ({sessions} opens it for the arrows and ⏎): a new session in a folder, or History only, \
+                         to send it later."
                     ),
                     Some(target),
                 ))
                 .child(topic(
                     "Say more about one pin",
                     format!(
-                        "Click a pin's number to open its card (with the microphone off, each new pin opens it). \
-                         Type there, or hold {talk} to talk about that pin alone. ⌘1 to ⌘4 say what it is: a fix, a \
-                         change, a question, an approval. Its pencil and ruler pick Draw and Measure."
+                        "Click a pin's number, or press it, to open its card (with the microphone off, each new \
+                         pin opens it); Tab goes on to the next pin's. Type there, or hold {talk} to talk about that \
+                         pin alone. ⌘1 to ⌘4 say what it is: a fix, a change, a question, an approval. Its pencil \
+                         and ruler pick Draw and Measure."
                     ),
                     Some(card),
                 ))
@@ -2172,10 +2395,17 @@ impl AsidesWindow {
                     "Every key",
                     format!(
                         "Point at the pill's ? (or press {keys}) for every key. {undo} takes back what's under the \
-                         pointer, {clear} clears everything, and a right-click has more. Change any of them \
-                         under Keys."
+                         pointer, {clear} clears everything, and a right-click has more (the arrows and ⏎ pick \
+                         there). Change any of them under Keys."
                     ),
                     Some(sheet),
+                ))
+                .child(topic(
+                    "This window, by keyboard",
+                    "Tab and ⇧Tab go through what can be clicked, Space or ⏎ presses it, and the arrows move in \
+                     lists and choices. ⌘1 to ⌘6 open History, Sessions and each setting, ⌘? this page."
+                        .into(),
+                    None,
                 ))
                 .child(topic("Afterwards", String::new(), Some(after.into_any_element()))),
         )
@@ -2221,26 +2451,37 @@ impl AsidesWindow {
         // The steps between the welcome and done: those behind checked, this one lit. A click on
         // another goes to it.
         let between = &SetupStep::ALL[1..SetupStep::ALL.len() - 1];
-        let progress = div().flex().items_center().gap(px(20.)).children(between.iter().map(|&s| {
-            let (behind, on) = (index(s) < index(step), s == step);
-            let mark = match behind {
-                true => icon("check", 12., t.fresh).into_any_element(),
-                false => {
-                    div().size(px(7.)).rounded_full().bg(if on { t.accent } else { t.quaternary }).into_any_element()
-                }
-            };
-            div()
-                .id(SharedString::from(format!("setup-step-{}", s.name())))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_size(px(12.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(if on { t.primary } else { t.tertiary })
-                .when(!on, |d| d.cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.setup_go(s, cx))))
-                .child(div().w(px(12.)).flex().justify_center().child(mark))
-                .child(s.title())
-        }));
+        let focus: Vec<(gpui::FocusHandle, bool)> =
+            between.iter().map(|s| self.focusable(format!("setup-step-{}", s.name()), cx)).collect();
+        let progress =
+            div().flex().items_center().gap(px(20.)).children(between.iter().zip(focus).map(|(&s, (handle, ring))| {
+                let (behind, on) = (index(s) < index(step), s == step);
+                let mark = match behind {
+                    true => icon("check", 12., t.fresh).into_any_element(),
+                    false => div()
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(if on { t.accent } else { t.quaternary })
+                        .into_any_element(),
+                };
+                div()
+                    .id(SharedString::from(format!("setup-step-{}", s.name())))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(if on { t.primary } else { t.tertiary })
+                    .when(!on, |d| {
+                        d.track_focus(&handle)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| this.setup_go(s, cx)))
+                    })
+                    .relative()
+                    .child(div().w(px(12.)).flex().justify_center().child(mark))
+                    .child(s.title())
+                    .when(ring && !on, |d| d.child(controls::focus_ring(t, Radius::CHIP, 4.)))
+            }));
         let back = step.back();
         let footer = div()
             .flex_none()
@@ -2383,7 +2624,7 @@ impl AsidesWindow {
     fn setup_sessions(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let current = terminal_app(&self.config.agents.terminal);
-        let terminals: Vec<AnyElement> = deliver::installed_terminals()
+        let terminals = deliver::installed_terminals()
             .into_iter()
             .map(|name| {
                 let detail = match name {
@@ -2394,18 +2635,13 @@ impl AsidesWindow {
                 let pick = self.setter(cx, move |c, _: ()| {
                     c.agents.terminal = if name == "Terminal" { String::new() } else { name.to_string() };
                 });
-                choice_row(
-                    SharedString::from(format!("setup-terminal-{name}")),
-                    t,
-                    "terminal",
-                    name,
-                    detail,
-                    name == current,
-                )
-                .on_click(move |_, window, cx| pick((), window, cx))
-                .into_any_element()
+                let id = SharedString::from(format!("setup-terminal-{name}"));
+                let row = choice_row(id.clone(), t, "terminal", name, detail, name == current);
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (id, row, name == current, pick)
             })
             .collect();
+        let terminals = self.choice_rows(terminals, cx);
         let agents = match self.state.agents.as_slice() {
             [] => vec![AgentKind::Claude, AgentKind::Codex, AgentKind::OpenCode],
             installed => installed.to_vec(),
@@ -2437,7 +2673,7 @@ impl AsidesWindow {
                 ),
                 t,
             ))
-            .child(section("New sessions open in", t).child(rows(terminals, t)))
+            .child(section("New sessions open in", t).child(terminals))
             .child(
                 section("And start", t)
                     .child(rows(
@@ -2458,22 +2694,17 @@ impl AsidesWindow {
     fn setup_pins(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let chosen = self.config.annotation_detail;
-        let choices: Vec<AnyElement> = DETAILS
+        let choices = DETAILS
             .iter()
             .map(|&(detail, name, what)| {
                 let pick = self.setter(cx, move |c, _: ()| c.annotation_detail = detail);
-                choice_row(
-                    SharedString::from(format!("setup-detail-{name}")),
-                    t,
-                    "annotate",
-                    name,
-                    what,
-                    detail == chosen,
-                )
-                .on_click(move |_, window, cx| pick((), window, cx))
-                .into_any_element()
+                let id = SharedString::from(format!("setup-detail-{name}"));
+                let row = choice_row(id.clone(), t, "annotate", name, what, detail == chosen);
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (id, row, detail == chosen, pick)
             })
             .collect();
+        let choices = self.choice_rows(choices, cx);
         div()
             .flex()
             .flex_col()
@@ -2485,7 +2716,7 @@ impl AsidesWindow {
             ))
             .child(
                 section("How much it tells your agent", t)
-                    .child(rows(choices, t))
+                    .child(choices)
                     .child(footnote("Settings → Pins changes it later.", t)),
             )
             .into_any_element()
@@ -2639,7 +2870,7 @@ impl AsidesWindow {
     fn setup_voice(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let chosen = ModelSpec::find(&self.config.model);
-        let models: Vec<AnyElement> = MODELS
+        let models = MODELS
             .iter()
             .map(|m| {
                 let id = m.id;
@@ -2650,18 +2881,13 @@ impl AsidesWindow {
                     (false, false) => what,
                 };
                 let pick = self.setter(cx, move |c, _: ()| c.model = id.into());
-                choice_row(
-                    SharedString::from(format!("setup-model-{id}")),
-                    t,
-                    "mic",
-                    model_name(m),
-                    detail,
-                    m.id == chosen.id,
-                )
-                .on_click(move |_, window, cx| pick((), window, cx))
-                .into_any_element()
+                let key = SharedString::from(format!("setup-model-{id}"));
+                let row = choice_row(key.clone(), t, "mic", model_name(m), detail, m.id == chosen.id);
+                let pick = std::rc::Rc::new(move |window: &mut Window, cx: &mut App| pick((), window, cx)) as Pick;
+                (key, row, m.id == chosen.id, pick)
             })
             .collect();
+        let models = self.choice_rows(models, cx);
         let downloading = (self.state.status == "downloading").then(|| self.state.detail.clone()).flatten();
         let model_state: AnyElement = if chosen.downloaded() {
             chip("Ready", t.fresh).into_any_element()
@@ -2699,7 +2925,7 @@ impl AsidesWindow {
                 Some("Transcribed on this Mac by Whisper, word for word: nothing leaves it.".into()),
                 t,
             ))
-            .child(section("Voice model", t).child(rows(models, t)))
+            .child(section("Voice model", t).child(models))
             .child(
                 section("", t)
                     .child(rows(
@@ -2766,13 +2992,21 @@ impl AsidesWindow {
     /// goes to its step.
     fn setup_done(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
-        let p = &self.state.permissions;
         let model = ModelSpec::find(&self.config.model);
         let terminal = terminal_app(&self.config.agents.terminal);
         let downloading = (self.state.status == "downloading").then(|| self.state.detail.clone()).flatten();
+        let steps = [SetupStep::Permissions, SetupStep::Voice, SetupStep::Sessions, SetupStep::Pins];
+        let focus: HashMap<&str, (gpui::FocusHandle, bool)> =
+            steps.iter().map(|s| (s.name(), self.focusable(format!("setup-done-{}", s.name()), cx))).collect();
+        let p = &self.state.permissions;
         let item = |step: SetupStep, ready: bool, label: String, detail: String| {
+            // Both permissions go to one step: Tab reaches the first.
+            let (handle, ring) = focus[step.name()].clone();
+            let first = !(step == SetupStep::Permissions && label == "Screen Recording");
             div()
                 .id(SharedString::from(format!("setup-done-{label}")))
+                .when(first, |d| d.track_focus(&handle))
+                .relative()
                 .min_h(px(44.))
                 .px(px(12.))
                 .py(px(8.))
@@ -2787,6 +3021,7 @@ impl AsidesWindow {
                     if ready { t.fresh } else { t.tertiary },
                 )))
                 .child(label_stack(label, Some(detail.into()), t))
+                .when(first && ring, |d| d.child(controls::focus_ring(t, Radius::ROW, -3.)))
                 .into_any_element()
         };
         let later = "asks when first needed".to_string();

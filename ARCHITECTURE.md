@@ -240,6 +240,11 @@ Break these only on purpose, and update this list.
 19. **What goes wrong is in the log**: errors as problems (`log::problem`, `App::fail`), panics,
     standard error, how an overlay ended, slow and stuck main threads, the overlay's clock spinning.
     A frozen overlay stuck 10 s ends itself (`abort`: macOS keeps a report of where it was).
+20. **Everything works from the keyboard.** In the asides window, Tab reaches whatever can be
+    clicked (a group, like a segmented control or a list, is one stop its arrows go through), and a
+    ring shows what has the keyboard only after a key moved it (`controls::focus_ring`; a click hides
+    it, and a click on a button leaves the keyboard where it was). On the frozen screen, every button on the
+    pill has a key, and the menus and lists take the arrows and Return.
 
 ## Persistent state
 

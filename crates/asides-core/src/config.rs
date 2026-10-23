@@ -163,13 +163,19 @@ pub struct OverlayKeys {
     pub restore: String,
     /// Hold to talk while the microphone is off.
     pub talk: String,
+    /// The pill's microphone: listening, or muted.
+    pub mic: String,
     /// The next agent session the aside goes to.
     pub target: String,
+    /// The pill's list of where it goes, to pick from with the arrows.
+    pub sessions: String,
     pub help: String,
     /// Send the aside (an open card is saved and closed instead).
     pub done: String,
     /// Send it with the whole screen, not just around what's annotated.
     pub done_whole_screen: String,
+    /// Start over without sending (in a card: what was said about its pin).
+    pub restart: String,
     /// Back to the live screen (the freeze shortcut does it too, from anywhere).
     pub live: String,
     /// Close without sending anything; a second press when there's something to lose.
@@ -200,10 +206,13 @@ impl Default for OverlayKeys {
             hide: k("shift+tab"),
             restore: k("r"),
             talk: k("space"),
+            mic: k("cmd+shift+m"),
             target: k("tab"),
+            sessions: k("w"),
             help: k("shift+/, f1"),
             done: k("enter"),
             done_whole_screen: k("alt+enter"),
+            restart: k("cmd+backspace"),
             live: k(""),
             close: k("escape"),
         }
@@ -212,7 +221,7 @@ impl Default for OverlayKeys {
 
 impl OverlayKeys {
     /// Every action's name in the settings, in the order they're declared.
-    pub const NAMES: [&str; 26] = [
+    pub const NAMES: [&str; 29] = [
         "measure",
         "annotate",
         "draw",
@@ -233,10 +242,13 @@ impl OverlayKeys {
         "hide",
         "restore",
         "talk",
+        "mic",
         "target",
+        "sessions",
         "help",
         "done",
         "done_whole_screen",
+        "restart",
         "live",
         "close",
     ];
@@ -264,10 +276,13 @@ impl OverlayKeys {
             "hide" => &self.hide,
             "restore" => &self.restore,
             "talk" => &self.talk,
+            "mic" => &self.mic,
             "target" => &self.target,
+            "sessions" => &self.sessions,
             "help" => &self.help,
             "done" => &self.done,
             "done_whole_screen" => &self.done_whole_screen,
+            "restart" => &self.restart,
             "live" => &self.live,
             "close" => &self.close,
             _ => return None,
@@ -296,10 +311,13 @@ impl OverlayKeys {
             "hide" => &mut self.hide,
             "restore" => &mut self.restore,
             "talk" => &mut self.talk,
+            "mic" => &mut self.mic,
             "target" => &mut self.target,
+            "sessions" => &mut self.sessions,
             "help" => &mut self.help,
             "done" => &mut self.done,
             "done_whole_screen" => &mut self.done_whole_screen,
+            "restart" => &mut self.restart,
             "live" => &mut self.live,
             "close" => &mut self.close,
             _ => return None,
@@ -486,6 +504,20 @@ mod tests {
         let text = toml::to_string(&keys).unwrap();
         assert!(OverlayKeys::NAMES.iter().all(|n| text.contains(&format!("{n} = \"x+{n}\""))), "{text}");
         assert!(keys.get("nothing").is_none());
+    }
+
+    #[test]
+    fn overlay_keys_start_out_apart() {
+        let keys = OverlayKeys::default();
+        let chords: Vec<(&str, crate::keys::Chord)> = OverlayKeys::NAMES
+            .iter()
+            .flat_map(|&name| crate::keys::parse(keys.get(name).unwrap()).into_iter().map(move |c| (name, c)))
+            .collect();
+        for (i, (name, chord)) in chords.iter().enumerate() {
+            if let Some((other, _)) = chords[i + 1..].iter().find(|(_, c)| c == chord) {
+                panic!("{name} and {other} share {chord:?}");
+            }
+        }
     }
 
     #[test]
