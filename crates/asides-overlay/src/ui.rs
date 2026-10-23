@@ -27,7 +27,7 @@ use gpui::{
     quad, size, svg, transparent_black,
 };
 
-use crate::controls::{Fade, Glide, Slot, Theme, fade_in};
+use crate::controls::{Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::input::{self, TextInput};
 use crate::{finish, glass, io, style};
@@ -267,6 +267,9 @@ pub struct Overlay {
     /// and the glass showed past a shorter one.
     pub label: Slot<SharedString>,
     pub badge: Slot<Tool>,
+    /// The toast and the name of the button under the pointer, by the pill (`ScreenView::notes`),
+    /// as drawn: fading in and out, their widths easing as they say something else.
+    pub notes: [Option<Note<SharedString>>; 2],
     /// The keys under the pill: shown (`?`, its button, the first freeze), or while the pointer is
     /// on its button; fading in and out.
     help: bool,
@@ -426,6 +429,7 @@ impl Overlay {
             following: false,
             label: Slot::new(spec.targets.label(spec.targets.chosen.as_ref()).into()),
             badge: Slot::empty(),
+            notes: [None, None],
             help: spec.tips && !spec.live,
             help_hover: false,
             keys_sheet: Fade::default(),
@@ -2369,7 +2373,8 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             .text_size(px(12.5))
             .font_weight(FontWeight::MEDIUM)
             .text_color(emphasis.ink(t))
-            .when(emphasis == Emphasis::On, |d| d.bg(t.selected).border_color(t.selected_stroke))
+            // The tool's box is its slot's (`slot`), easing with it.
+            .when(emphasis == Emphasis::On && id != "tool", |d| d.bg(t.selected).border_color(t.selected_stroke))
             .when(emphasis == Emphasis::Primary, |d| {
                 d.bg(t.accent).when(still, |d| d.hover(|s| s.bg(color(style::UI_LIGHT, 1.0))))
             })
@@ -2432,18 +2437,45 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         })
         .child(icon("help", if help { Emphasis::On.ink(t) } else { plain }))
         .into_any_element();
-    // What a `Slot` shows, as wide as it's drawn (clipped while it grows, faded while it grows in or
-    // shrinks away), noting the width it takes.
+    // What a `Slot` shows, as wide as it's drawn (cut off on both sides while it's narrower, faded
+    // while it grows in or shrinks away), noting the width it takes, over what it showed (`was`),
+    // fading from one to the other; `under` them, a box as wide as it's drawn, `inset` from its
+    // left (the gap before it, its own: cut off at the slot's edge, the tool's icon showed in the
+    // gap). Both stay in its middle, which stays put as the pill grows from its own: the words
+    // don't move as it eases.
     let scale = o.pill_scale();
-    let slot = |width: Option<f32>, shown: f32, content: Div, measure: fn(&mut Overlay, f32)| {
-        let o4 = overlay.clone();
-        div().flex().flex_none().when_some(width, |d, w| d.w(px(w)).overflow_hidden()).opacity(shown).child(
-            content
-                .relative()
+    let slot =
+        |width: Option<f32>,
+         shown: f32,
+         (inset, under): (f32, Option<Div>),
+         (content, fading_in): (Div, f32),
+         was: Option<(Div, f32)>,
+         measure: fn(&mut Overlay, f32)| {
+            let o4 = overlay.clone();
+            let inside =
+                div()
+                    .relative()
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .when_some(width, |d, w| d.w(px((w - inset).max(0.))).overflow_hidden())
+                    .children(under.map(|box_| box_.absolute().inset_0()))
+                    .children(was.map(|(was, shown)| {
+                        let was = was.flex_none();
+                        div().absolute().inset_0().flex().items_center().justify_center().opacity(shown).child(was)
+                    }))
+                    .child(content.relative().flex_none().opacity(fading_in).child(measured(move |b, cx| {
+                        o4.update(cx, |o, _| measure(o, f32::from(b.size.width) + inset))
+                    })));
+            div()
+                .flex()
                 .flex_none()
-                .child(measured(move |b, cx| o4.update(cx, |o, _| measure(o, f32::from(b.size.width))))),
-        )
-    };
+                .when_some(width, |d, w| d.w(px(w)).overflow_hidden())
+                .opacity(shown)
+                .child(div().flex_none().w(px(width.map_or(inset, |w| inset.min(w)))))
+                .child(inside)
+        };
+    let name = |name: Option<SharedString>| div().max_w(px(240.)).truncate().children(name);
     let first = group(vec![
         help_button,
         mic_button(overlay, o),
@@ -2454,13 +2486,27 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             slot(
                 o.label.width(scale),
                 o.label.shown(),
-                div().max_w(px(240.)).truncate().children(o.label.shows().cloned()),
+                (0., None),
+                (name(o.label.shows().cloned()), o.label.fading_in()),
+                o.label.was().map(|(was, shown)| (name(Some(was.clone())), shown)),
                 |o, width| o.label.measured(width),
             )
             .into_any_element(),
             Box::new(|o, _, _| o.click_list()),
         ),
     ]);
+    // A tool's icon and name: in its button, and fading out for another.
+    let face = |tool: Tool| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .text_size(px(12.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(Emphasis::On.ink(t))
+            .child(icon(tool_icon(tool), Emphasis::On.ink(t)))
+            .child(tool.label())
+    };
     let badge = o.badge.shows().copied().map(|tool| {
         let back = if tool == Tool::Shot { session.previous_tool } else { Tool::Annotate };
         let name = format!(
@@ -2473,13 +2519,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             "tool",
             name,
             Emphasis::On,
-            div()
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .child(icon(tool_icon(tool), Emphasis::On.ink(t)))
-                .child(tool.label())
-                .into_any_element(),
+            face(tool).into_any_element(),
             // Shrinking away, it's already put down.
             Box::new(move |o, _, _| {
                 if o.session.tool == tool {
@@ -2487,9 +2527,18 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 }
             }),
         );
-        slot(o.badge.width(scale), o.badge.shown(), div().flex().pl(px(PILL_GAP)).child(badge), |o, width| {
-            o.badge.measured(width)
-        })
+        // Its box eases with the slot, one tool's name fading into the other's inside it: drawn by
+        // the button, another tool's name was cut off at the box's edge, then the box moved what
+        // came after it as the slot eased, a jump more than a change of length.
+        let under = div().rounded(px(8.)).border_1().bg(t.selected).border_color(t.selected_stroke);
+        slot(
+            o.badge.width(scale),
+            o.badge.shown(),
+            (PILL_GAP, Some(under)),
+            (div().flex().child(badge), o.badge.fading_in()),
+            o.badge.was().map(|(&was, shown)| (face(was), shown)),
+            |o, width| o.badge.measured(width),
+        )
     });
     // The tool goes by the first buttons, the gap before it its own, for it to grow in from
     // nothing.
@@ -2967,6 +3016,36 @@ fn toolbar_panel(
         .into_any_element()
 }
 
+/// The notes by the pill a step on (`Note::step`), to say what's `wanted` (the toast, the tip): drawn
+/// again while they change; faded out, they go, and come back at their own width.
+fn step_notes(overlay: &Entity<Overlay>, wanted: [Option<SharedString>; 2], scale: f32) -> impl IntoElement {
+    let overlay = overlay.clone();
+    canvas(
+        move |_, window, cx| {
+            let again = overlay.update(cx, |o, _| {
+                let mut again = false;
+                for (note, wanted) in o.notes.iter_mut().zip(&wanted) {
+                    if note.is_none() {
+                        *note = wanted.clone().map(Note::new);
+                    }
+                    if let Some(n) = note {
+                        again |= n.step(wanted.as_ref(), scale);
+                        if n.gone() {
+                            *note = None;
+                        }
+                    }
+                }
+                again
+            });
+            if again {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+}
+
 /// The pill's window follows the pill at once (`windows::follow_now`), unless it's about to.
 fn follow_soon(overlay: &Entity<Overlay>, cx: &mut App) {
     if overlay.update(cx, |o, _| !std::mem::replace(&mut o.following, true)) {
@@ -3165,30 +3244,70 @@ impl ScreenView {
         let tip = (!o.keys_sheet.is_open() && !o.list.is_open())
             .then(|| o.hint.as_ref().map(|(_, name)| name.clone()))
             .flatten();
-        let small = |text: SharedString| {
-            frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), 7.)
+        let wanted = [toast, tip];
+        let scale = o.session.screens[self.screen].screen.scale as f32;
+        let (x, y) = (pill.x - ox, pill.y - oy);
+        let below = y + pill.height / 2.0 < wh / 2.0;
+        // Its words as wide as they're drawn (cut off on both sides while they're narrower), noting
+        // the width they take, over what it said, fading from one to the other. Both stay in its
+        // middle, which stays put (under the pill's), as its sides ease. It takes the room it shows
+        // in (`Note::room`): a note going, the other one stayed where it was until it had gone,
+        // then jumped to its place.
+        let small = |i: usize| {
+            let note = o.notes[i].as_ref();
+            let text = note.map_or(wanted[i].as_ref(), |n| n.says()).cloned()?;
+            let measure = self.overlay.clone();
+            let words = div()
+                .flex_none()
+                .whitespace_nowrap()
+                .relative()
+                .opacity(note.map_or(1.0, |n| n.fading_in()))
+                .child(text)
+                .child(measured(move |b, cx| {
+                    measure.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.measured(f32::from(b.size.width))));
+                }));
+            let said = note.and_then(|n| n.said()).map(|(said, shown)| {
+                let said = div().flex_none().whitespace_nowrap().child(said.clone());
+                div().absolute().inset_0().flex().justify_center().opacity(shown).child(said)
+            });
+            let size = self.overlay.clone();
+            let glass = frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), 7.)
                 .px(px(9.))
                 .py(px(5.))
                 .font_family(".SystemUIFont")
                 .text_color(o.theme.primary.opacity(0.86))
                 .text_size(px(12.))
-                .child(text)
+                .opacity(note.map_or(0.0, |n| n.shown()))
+                .child(
+                    div()
+                        .relative()
+                        .flex()
+                        .justify_center()
+                        .when_some(note.and_then(|n| n.width(scale)), |d, w| d.w(px(w)))
+                        .overflow_hidden()
+                        .children(said)
+                        .child(words),
+                )
+                .child(measured(move |b, cx| {
+                    size.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.sized(f32::from(b.size.height))));
+                }));
+            let placed = div().absolute().left_0().right_0().flex().justify_center().child(glass);
+            let placed = if below { placed.top_0() } else { placed.bottom_0() };
+            Some(div().relative().w_full().h(px(note.map_or(0.0, |n| n.room(8.)))).child(placed))
         };
-        let (x, y) = (pill.x - ox, pill.y - oy);
         let notes = div()
             .absolute()
             .left(px((x + pill.width / 2.0 - 320.0) as f32))
             .w(px(640.))
             .flex()
             .flex_col()
-            .items_center()
-            .gap(px(8.))
             // The tip keeps its place (and doesn't fade again) as it names the next button.
-            .children(toast.map(|t| fade_in(small(t), "toast", 0.)))
-            .children(tip.map(|t| fade_in(small(t), "tip", 0.)));
-        let notes = match y + pill.height / 2.0 < wh / 2.0 {
-            true => notes.top(px((y + pill.height + 8.0) as f32)).justify_start(),
-            false => notes.bottom(px((wh - y + 8.0) as f32)).justify_end(),
+            .children(small(0))
+            .children(small(1))
+            .child(step_notes(&self.overlay, wanted, scale));
+        let notes = match below {
+            true => notes.top(px((y + pill.height + 8.0) as f32)),
+            false => notes.bottom(px((wh - y + 8.0) as f32)),
         };
         Some(notes.into_any_element())
     }
