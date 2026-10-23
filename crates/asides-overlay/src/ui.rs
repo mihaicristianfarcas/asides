@@ -1179,6 +1179,8 @@ impl Overlay {
             if key == "space" && plain && (self.space_hold.is_some() || self.recording.is_none()) {
                 if !e.is_held && self.space_hold.is_none() {
                     self.space_hold = Some((Instant::now(), false));
+                    // Nothing shows yet: the clock only learns when it's long enough (`due`).
+                    wake_clock();
                 }
                 cx.stop_propagation();
                 return;
@@ -1357,15 +1359,18 @@ impl Overlay {
         }
     }
 
-    /// Space held in a card long enough: talking about its annotation until it's let go.
-    fn space_talks(&mut self) {
-        let Some((since, false)) = self.space_hold else { return };
-        let Some(key) = self.card.as_ref().map(|c| c.key) else { return };
-        if since.elapsed() >= SPACE_HOLD && self.recording.is_none() && !self.needs_model() {
-            self.space_hold = Some((since, true));
-            self.talking = true;
-            io::emit(&Event::Talk { down: true, annotation: Some(key) });
+    /// Space held in a card long enough: talking about its annotation until it's let go. Whether
+    /// it started (what shows changes only then).
+    fn space_talks(&mut self) -> bool {
+        let Some((since, false)) = self.space_hold else { return false };
+        let Some(key) = self.card.as_ref().map(|c| c.key) else { return false };
+        if since.elapsed() < SPACE_HOLD || self.recording.is_some() || self.needs_model() {
+            return false;
         }
+        self.space_hold = Some((since, true));
+        self.talking = true;
+        io::emit(&Event::Talk { down: true, annotation: Some(key) });
+        true
     }
 
     /// The card's dots (⌘1–⌘4): a second click on the chosen one clears it.
@@ -1500,10 +1505,9 @@ impl Overlay {
             self.shown_seconds = seconds;
             changed = true;
         }
-        if self.space_hold.is_some_and(|(_, talking)| !talking) {
-            self.space_talks();
-            changed = true;
-        }
+        // Only once it talks: a change each tick ran the clock again at once, thousands of times a
+        // second while Space was down, and a tap's release waited behind it until it talked.
+        changed |= self.space_talks();
         if self.awaiting.is_some_and(|(_, at)| at.elapsed() >= AWAIT_TRANSCRIPT) {
             self.awaiting = None;
             changed = true;

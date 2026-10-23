@@ -190,6 +190,9 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 
 ### GPUI
 
+- The overlay's clock runs again at once when `tick` reports a change. A change true on every tick
+  spun it: Space down in a card ran it 10,000 times a second, libdispatch never let the run loop
+  take the key-up, and a tap talked. Report a change once.
 - GPUI owns `NSApplication` and the event loop, like tao: hence a second process. It makes its app
   regular (a Dock icon): `native::accessory` undoes it, and `native::stay_accessory_at_launch` stops
   its launch-time call (else a second Dock tile stayed until quit). The asides window's process
