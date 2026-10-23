@@ -729,7 +729,8 @@ pub mod synthetic {
     /// A mouse event at `(x, y)` (window points, y down).
     pub fn mouse(window: usize, kind: Mouse, (x, y): (f64, f64), shift: bool, alt: bool, cmd: bool) {
         let Some(view) = view(window) else { return };
-        let height = view.window().map_or(0.0, |w| w.contentLayoutRect().size.height);
+        // The view's own height: the asides window's runs under its title bar.
+        let height = view.frame().size.height;
         let number = view.window().map_or(0, |w| w.windowNumber());
         let at = NSPoint::new(x, height - y);
         // Events made this way have no button number, so a right-click is sent as a

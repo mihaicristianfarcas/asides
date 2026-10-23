@@ -840,8 +840,10 @@ impl AsidesWindow {
     /// keyboard).
     fn set_editing(&mut self, id: &str, edit: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !edit {
-            self.editing = None;
-            window.focus(&self.focus);
+            // Out of the editor, the window has the keyboard; already out, it stays where it is.
+            if self.editing.take().is_some() {
+                window.focus(&self.focus);
+            }
             return cx.notify();
         }
         let Some(aside) = self.asides.iter().find(|a| a.id == id) else { return };
