@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "asides-app"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "anyhow",
  "asides-core",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "asides-cli"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "anyhow",
  "asides-core",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "asides-core"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "chrono",
  "libc",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "asides-overlay"
-version = "1.0.7"
+version = "1.0.8"
 dependencies = [
  "anyhow",
  "asides-core",
