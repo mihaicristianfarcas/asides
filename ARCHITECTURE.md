@@ -95,8 +95,9 @@ crates/
     stt.rs            model downloads, whisper-rs, language choice
     macos.rs          microphone permission, sounds, frontmost app, the command link, opening at login
     update.rs         the updater (check, download, verify), the swap script, Flow (its states)
+    sounds/           its sounds (embedded by macos.rs), made by scripts/make-sounds.py
 packaging/            Info.plist, icon, entitlements, Cloudflare Workers (download/, site/)
-scripts/              e2e, fixtures, signing, release, dmg, website images, icon
+scripts/              e2e, fixtures, signing, release, dmg, website images, icon, sounds
 docs/                 the website
 guide/                user documentation
 Casks/asides.rb       the Homebrew cask (the repository is a tap)
