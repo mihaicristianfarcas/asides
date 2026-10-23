@@ -1405,7 +1405,7 @@ impl App {
             .collect();
         let joined = takes::join(&parts);
         drop(parts);
-        let (mut pictures, mut texts, pins) = inspection_parts(outcome, images, |time| joined.offset(time));
+        let (mut pictures, mut texts, pins) = inspection_parts(outcome, images, |time| joined.place(time));
         texts.extend(dictations.into_iter().map(|(time, text)| (joined.offset(time), text)));
         let started = takes.first().map_or(opened, |t| t.started.min(opened));
         for (take, start) in takes.into_iter().zip(starts) {

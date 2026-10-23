@@ -71,6 +71,16 @@ impl Joined {
         previous.1 + (time - previous.0)
     }
 
+    /// Where something made at a moment of the session goes in the recording (`offset`), except
+    /// what was there as it opened (at 0 seconds: the screens it froze, measurements put back):
+    /// before anything said. The screens were taken before the first take began, though it began
+    /// a moment before the session's clock, and Whisper times a first word from the recording's
+    /// start.
+    pub fn place(&self, time: f32) -> f32 {
+        let offset = self.offset(time);
+        if time <= 0.0 { offset.min(0.0) } else { offset }
+    }
+
     /// Where each take is in the recording: its start and length, in seconds.
     pub fn takes(&self) -> Vec<(f32, f32)> {
         self.spans.iter().map(|&(_, audio, length)| (audio, length)).collect()
@@ -131,6 +141,30 @@ mod tests {
         assert_eq!([at(0.0), at(2.0), at(3.0), at(6.5), at(10.5), at(12.0)], [-1.0, 1.0, 2.0, 3.0, 4.5, 6.0]);
         assert!(at(3.5) < at(6.5) && at(6.5) < at(9.9) && at(9.9) < at(10.0));
         assert_eq!(joined.takes(), [(0.0, 2.0), (4.0, 1.0)]);
+    }
+
+    #[test]
+    fn what_asides_opened_on_goes_before_anything_said() {
+        // The mic started a moment before the session's clock; Whisper times the first word at 0.
+        let samples = vec![0.0; 16_000 * 3];
+        let joined = join(&[Take { start: -0.05, samples: &samples, sample_rate: 16_000 }]);
+        assert!((joined.offset(0.0) - 0.05).abs() < 1e-4);
+        assert_eq!(joined.place(0.0), 0.0);
+        assert!((joined.place(0.8) - 0.85).abs() < 1e-4);
+        let word = |start: f32, text: &str| Word { start, text: text.into() };
+        let words = vec![word(0.0, "There's"), word(0.6, "a"), word(0.9, "bug")];
+        let said = [Segment { start: 0.0, end: 1.5, text: "There's a bug".into(), words }];
+        let shot = Attachment {
+            offset: joined.place(0.0),
+            rel_path: "images/1.png".into(),
+            label: "Screenshot 1".into(),
+            text: None,
+        };
+        let pin = Attachment { offset: joined.place(0.8), text: Some("### 1. a".into()), ..Attachment::default() };
+        assert_eq!(
+            compose_message(&said, &[shot, pin]),
+            "![Screenshot 1](images/1.png)\n\nThere's a [1] bug\n\n### 1. a"
+        );
     }
 
     fn said(start: f32, end: f32, text: &str) -> Segment {
