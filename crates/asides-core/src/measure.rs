@@ -8,10 +8,11 @@
 //! change even where they change fast. Nor are changes the eye can't see, however far apart the
 //! channels are: a screen shows colors sRGB can't, and in sRGB their clipped channels jump by
 //! several levels from one pixel to the next. A faint change is an edge only where it goes on along
-//! a contour, the further the fainter (and further still where it doesn't stand out from grain
-//! around it), or touches one that does, as the eye sees a faint outline but not a speck: grain, what
-//! compression left and dust in a photo aren't edges, a dot, a faint card's border and its rounded
-//! corners are. Raising the tolerance also looks through faint borders and hard shadows.
+//! a contour, the further the fainter, standing out from the grain around it all along (or further
+//! still where it doesn't: grain stands out on a line now and then, by chance), or touches one that
+//! does, as the eye sees a faint outline but not a speck: grain, what compression left and dust in a
+//! photo aren't edges, a dot, a faint card's border and its rounded corners are. Raising the
+//! tolerance also looks through faint borders and hard shadows.
 
 use std::collections::HashMap;
 use std::ops::{Range, RangeInclusive};
@@ -364,8 +365,8 @@ impl Change {
 }
 
 /// Changes this visible are edges even on a single pixel (a dot, a flower in a field); a fainter one
-/// must go on along a contour, the further the fainter (see [`lines_needed`]), and as far as
-/// [`THROUGH_GRAIN`] when it doesn't stand out from the grain around it (see [`stands_out`]).
+/// must go on along a contour, the further the fainter (see [`lines_needed`]), standing out from the
+/// grain around it on each of those lines (see [`stands_out`]), or else as far as [`THROUGH_GRAIN`].
 const STRONG: f32 = 0.05;
 /// Channels further apart than this always look that different, so their colors aren't compared.
 const SURELY_STRONG: u8 = 64;
@@ -402,12 +403,14 @@ fn goes_on(line: &Line, to: u32, threshold: u8) -> bool {
 }
 
 /// Whether a change that must cross `lines` lines (see [`lines_needed`]) goes on along a contour as
-/// far as it must (see [`continues`]): across [`THROUGH_GRAIN`] when it doesn't stand out from the
-/// grain around it (see [`stands_out`]), which is only worth knowing when it goes on across `lines`.
+/// far as it must (see [`continues`]): standing out from the grain around it on each of them (see
+/// [`stands_out`]), or else across [`THROUGH_GRAIN`]. A faint card's border on a flat background
+/// stands out on every line; grain only now and then, by chance (standing out on its own line was
+/// enough for gray grain 4 levels either way to stop measuring every few pixels).
 fn goes_far(line: &Line, change: Change, lines: u32, threshold: u8) -> bool {
     lines <= 1
-        || (continues(line, change, lines, threshold)
-            && (stands_out(line, change) || continues(line, change, THROUGH_GRAIN, threshold)))
+        || (stands_out(line, change) && continues(line, change, lines, true, threshold))
+        || continues(line, change, THROUGH_GRAIN, false, threshold)
 }
 
 /// Whether a faint change that doesn't go on along the lines beside it touches an edge across them
@@ -503,13 +506,18 @@ fn spread(line: &Line, change: Change, threshold: u8) -> Option<(u32, u32)> {
 /// Whether a faint change goes on across the lines beside it, `lines` in all, each line's like the
 /// one before (see [`near`]): following a contour, however it turns. An object's outline does, and
 /// so does a hairline across the line, however faint; a speck of grain doesn't, nor a few in a row.
-fn continues(line: &Line, change: Change, lines: u32, threshold: u8) -> bool {
+/// With `standing_out`, only as far as each line's change stands out from its line around it (see
+/// [`stands_out`]) or is [`STRONG`].
+fn continues(line: &Line, change: Change, lines: u32, standing_out: bool, threshold: u8) -> bool {
     let mut found = 1;
     for d in [-1, 1] {
         let (mut on, mut at) = (*line, change);
         while found < lines {
             let Some(next) = on.beside(d) else { break };
-            let Some(beside) = near(&next, at, threshold) else { break };
+            let Some((beside, needed)) = near(&next, at, threshold) else { break };
+            if standing_out && needed > 1 && !stands_out(&next, beside) {
+                break;
+            }
             (on, at, found) = (next, beside, found + 1);
         }
     }
@@ -517,12 +525,13 @@ fn continues(line: &Line, change: Change, lines: u32, threshold: u8) -> bool {
 }
 
 /// The first change on `line` (see [`change_into`]) like `change` on the line beside it (see
-/// [`Change::like`]), ending from where it starts to a pixel after where it ends. That follows a
-/// contour as steep as a pixel a line; one nearer the line's way crosses the lines across it more
-/// steeply (see [`joins`]). A wider window let grain line up by chance.
-fn near(line: &Line, change: Change, threshold: u8) -> Option<Change> {
+/// [`Change::like`]), ending from where it starts to a pixel after where it ends, and how many lines
+/// it must cross. That follows a contour as steep as a pixel a line; one nearer the line's way
+/// crosses the lines across it more steeply (see [`joins`]). A wider window let grain line up by
+/// chance.
+fn near(line: &Line, change: Change, threshold: u8) -> Option<(Change, u32)> {
     (change.from.max(1)..=(change.to + 1).min(line.len - 1))
-        .find_map(|to| change_into(line, to, threshold).map(|(found, _)| found).filter(|f| change.like(f.colors)))
+        .find_map(|to| change_into(line, to, threshold).filter(|(found, _)| change.like(found.colors)))
 }
 
 /// How many lines [`boundaries`] follows contours across at a time, and how many pixels along them:
@@ -534,9 +543,10 @@ const TILE: u32 = 1024;
 /// A change [`change`] found, as [`Contours`] keeps it: the pixel it ends at and how many before it
 /// starts (one or two), its two colors, which channel changes most, which way and by how much, how
 /// many pixels it spreads over before and after its end, how many lines it must cross to be an edge
-/// for how far apart its colors look, how many lines its contour goes on across before its own and
-/// after it (as many as an edge needs at most), and whether that's as far as it must (see
-/// [`goes_far`]).
+/// for how far apart its colors look, whether it stands out from its line around it or is
+/// [`STRONG`] (see [`stands_out`]), how many lines its contour goes on across before its own and
+/// after it (as many as an edge needs at most), how many of those in a row stand out too, and whether
+/// that's as far as it must (see [`goes_far`]).
 #[derive(Clone, Copy)]
 struct Found {
     to: u32,
@@ -548,8 +558,11 @@ struct Found {
     first: u8,
     last: u8,
     lines: u8,
+    stands_out: bool,
     before: u8,
     after: u8,
+    standing_before: u8,
+    standing_after: u8,
     edge: bool,
 }
 
@@ -578,9 +591,10 @@ impl Found {
 }
 
 /// The changes on some lines (rows or columns), one ending at a pixel at most (see [`change_into`]),
-/// each with how far its contour goes on across the lines before and after it: what [`continues`]
-/// follows from each change on its own, found for all of them at once, a line after another, one
-/// way then the other. It also holds the lines and pixels around them that those contours reach.
+/// each with how far its contour goes on across the lines before and after it, and how far standing
+/// out: what [`continues`] follows from each change on its own, found for all of them at once, a line
+/// after another, one way then the other. It also holds the lines and pixels around them that those
+/// contours reach.
 struct Contours {
     rows: bool,
     lines: Range<u32>,
@@ -651,8 +665,11 @@ impl Contours {
                     first: (to - c.extent.0) as u8,
                     last: (c.extent.1 - to) as u8,
                     lines: needed as u8,
+                    stands_out: needed <= 1 || stands_out(&line, c),
                     before: 0,
                     after: 0,
+                    standing_before: 0,
+                    standing_after: 0,
                     edge: false,
                 });
             }
@@ -661,14 +678,16 @@ impl Contours {
         let [differs, _] = differs;
         contours.differs = differs;
         // How far each change's contour goes on before its line, a line after another from the first,
-        // then after it, from the last.
+        // then after it, from the last, and how far standing out.
         let starts = &contours.starts;
+        let go_on = |f: &Found, on: u8| if f.stands_out { (on + 1).min(reach as u8) } else { 0 };
         for k in 1..lines.len() {
             let (done, rest) = contours.found.split_at_mut(starts[k]);
             let (before, mut from) = (&done[starts[k - 1]..], 0);
             for f in &mut rest[..starts[k + 1] - starts[k]] {
                 if let Some(b) = f.near(before, &mut from, len) {
                     f.before = (b.before + 1).min(reach as u8);
+                    f.standing_before = go_on(b, b.standing_before);
                 }
             }
         }
@@ -678,16 +697,15 @@ impl Contours {
             for f in &mut rest[starts[k]..] {
                 if let Some(a) = f.near(after, &mut from, len) {
                     f.after = (a.after + 1).min(reach as u8);
+                    f.standing_after = go_on(a, a.standing_after);
                 }
             }
         }
         // Which go on as far as they must.
-        for (k, l) in lines.enumerate() {
-            let line = if rows { Line::row(frame, l) } else { Line::column(frame, l) };
-            for f in &mut contours.found[starts[k]..starts[k + 1]] {
-                let (across, lines) = (1 + f.before as u32 + f.after as u32, f.lines as u32);
-                f.edge = lines <= 1 || (across >= lines && (across >= THROUGH_GRAIN || stands_out(&line, f.change())));
-            }
+        for f in &mut contours.found {
+            let (across, lines) = (1 + f.before as u32 + f.after as u32, f.lines as u32);
+            let standing = f.stands_out && 1 + f.standing_before as u32 + f.standing_after as u32 >= lines;
+            f.edge = lines <= 1 || standing || across >= THROUGH_GRAIN;
         }
         contours
     }
@@ -1653,6 +1671,57 @@ mod tests {
         assert!(spans.iter().filter(|&&n| n >= 50).count() >= 40, "{spans:?}");
     }
 
+    /// Gray grain, 300 × 200: every channel lighter or darker alike by up to 4 levels, as in a photo or
+    /// a noise texture; on it, a card 24 levels darker at (100, 60), 100 × 80.
+    fn gray_grain() -> Frame {
+        let mut seed = 5u32;
+        let mut grain = move || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 16) % 9
+        };
+        let mut frame = Frame::filled(300, 200, 0);
+        for y in 0..200 {
+            for x in 0..300 {
+                let card = (100..200).contains(&x) && (60..140).contains(&y);
+                let level = 232 + grain() - if card { 24 } else { 0 };
+                frame.fill(Rect::new(x, y, 1, 1), level << 16 | level << 8 | (level + 1));
+            }
+        }
+        frame
+    }
+
+    #[test]
+    fn looks_past_gray_grain() {
+        // No change in the grain is strong, and now and then one stands out from the pixels around it
+        // by chance, but not all along a contour (1.0.8 stopped at those every few pixels). From the
+        // open grain: to the frame's edges or the card, past every speck.
+        let frame = gray_grain();
+        let span = |start, end| Span { start, end };
+        for (x, y, across, down) in [
+            (30, 30, span(0, 300), span(0, 200)),
+            (250, 40, span(0, 300), span(0, 200)),
+            (40, 170, span(0, 300), span(0, 200)),
+            (260, 180, span(0, 300), span(0, 200)),
+            (60, 100, span(0, 100), span(0, 200)),
+            (240, 100, span(200, 300), span(0, 200)),
+            (150, 20, span(0, 300), span(0, 60)),
+            (150, 180, span(0, 300), span(140, 200)),
+        ] {
+            let d = distance_at(&frame, x, y, Tolerance::DEFAULT, &Stops::default()).unwrap();
+            assert_eq!((d.horizontal, d.vertical), (across, down), "from ({x}, {y})");
+        }
+        // Inside the card, its sides from nearly every row and column: where grain leaves a pixel of
+        // its border too little changed, that one isn't.
+        let measure = |x, y| distance_at(&frame, x, y, Tolerance::DEFAULT, &Stops::default()).unwrap();
+        let rows = (62..138).filter(|&y| measure(150, y).horizontal == span(100, 200)).count();
+        let columns = (102..198).filter(|&x| measure(x, 100).vertical == span(60, 140)).count();
+        assert!(rows >= 74 && columns >= 94, "{rows} of 76 rows, {columns} of 96 columns");
+        assert_eq!(
+            snap_area(&frame, Rect::new(80, 40, 140, 120), Tolerance::DEFAULT),
+            Some(Rect::new(100, 60, 100, 80))
+        );
+    }
+
     /// Grain, faint and strong shapes, sharp and soft, slanted, 700 × 420.
     fn shapes_on_grain() -> Frame {
         let mut frame = grainy_sky(700, 420, 2);
@@ -1672,13 +1741,15 @@ mod tests {
     #[test]
     fn snapping_finds_the_edges_measuring_does() {
         // Contours followed for a block of lines at a time, across blocks and threads, find what
-        // following each from its change does, within an area.
-        let frame = shapes_on_grain();
+        // following each from its change does, within an area, on grain of every kind.
         let threshold = Tolerance::DEFAULT.threshold();
-        for rect in [Rect::new(0, 0, 700, 420), Rect::new(37, 61, 300, 150), Rect::new(600, 300, 100, 120)] {
-            let out = edges_in(&frame, rect, threshold);
+        let (sky, gray) = (shapes_on_grain(), gray_grain());
+        let on_sky = [Rect::new(0, 0, 700, 420), Rect::new(37, 61, 300, 150), Rect::new(600, 300, 100, 120)];
+        let on_gray = [Rect::new(0, 0, 300, 200), Rect::new(37, 41, 150, 120), Rect::new(150, 90, 150, 110)];
+        for (frame, rect) in on_sky.map(|r| (&sky, r)).into_iter().chain(on_gray.map(|r| (&gray, r))) {
+            let out = edges_in(frame, rect, threshold);
             for rows in [true, false] {
-                let line_of = |l| if rows { Line::row(&frame, l) } else { Line::column(&frame, l) };
+                let line_of = |l| if rows { Line::row(frame, l) } else { Line::column(frame, l) };
                 let (lines, positions) = match rows {
                     true => (rect.y..rect.bottom(), rect.x..rect.right()),
                     false => (rect.x..rect.right(), rect.y..rect.bottom()),
