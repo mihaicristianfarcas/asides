@@ -11,14 +11,19 @@
 //! Started with `--window`, it's the asides window instead (`window.rs`): History, Sessions,
 //! Settings and Help.
 
+// A Windows app has no console window of its own.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod assets;
 mod controls;
+#[cfg_attr(windows, path = "win/export.rs")]
 mod export;
 mod finish;
 mod glass;
 mod help;
 mod input;
 mod io;
+#[cfg_attr(windows, path = "win/native.rs")]
 mod native;
 mod replay;
 mod style;

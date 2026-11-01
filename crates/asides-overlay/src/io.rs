@@ -2,6 +2,7 @@
 //! (see `asides_core::helper`).
 
 use std::io::{BufRead, Write};
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -48,13 +49,36 @@ pub fn pixels(dir: &Path, screen: &SpecScreen) -> anyhow::Result<Frame> {
             .enumerate()
             .map(|(i, chunk)| {
                 let file = &file;
-                scope.spawn(move || file.read_exact_at(chunk, (i * part) as u64))
+                scope.spawn(move || read_exact_at(file, chunk, (i * part) as u64))
             })
             .collect();
         reads.into_iter().try_for_each(|read| read.join().unwrap_or_else(|_| Err(std::io::Error::other("panicked"))))
     })
     .with_context(|| format!("could not read {}", screen.pixels))?;
     Ok(Frame { width: screen.width, height: screen.height, rgba })
+}
+
+/// Fills `buffer` from `file` at `offset`, without moving a cursor others share.
+#[cfg(unix)]
+fn read_exact_at(file: &std::fs::File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    file.read_exact_at(buffer, offset)
+}
+
+/// Fills `buffer` from `file` at `offset`. Windows' positioned reads move the file's cursor, which
+/// the threads reading other parts don't rely on.
+#[cfg(windows)]
+fn read_exact_at(file: &std::fs::File, mut buffer: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buffer.is_empty() {
+        match file.seek_read(buffer, offset)? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => {
+                buffer = &mut buffer[n..];
+                offset += n as u64;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// How many threads share copying a screen's pixels.

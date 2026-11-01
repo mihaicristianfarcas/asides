@@ -1,4 +1,5 @@
-//! The log, `~/Library/Logs/asides/asides.log` (Console lists it under Log Reports): a line for
+//! The log, `~/Library/Logs/asides/asides.log` (Console lists it under Log Reports; on Windows
+//! `%LOCALAPPDATA%\asides\Logs\asides.log`): a line for
 //! what went wrong and what matters around it, from the app, the overlay and the asides window.
 //! Each process's standard error goes there too (`capture_stderr`), so what anything prints,
 //! whisper.cpp included, is kept; panics are written with where they happened (`init`). A
@@ -88,17 +89,58 @@ fn append(path: &Path, bytes: &[u8], max_len: u64) -> std::io::Result<()> {
 /// someone reads it there).
 pub fn capture_stderr() -> std::io::Result<()> {
     use std::io::IsTerminal;
-    use std::os::fd::AsRawFd;
     if std::io::stderr().is_terminal() {
         return Ok(());
     }
     let (reader, writer) = std::io::pipe()?;
+    redirect_stderr(writer)?;
+    std::thread::Builder::new().name("asides-log".into()).spawn(move || relay(reader, |line| write(line)))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn redirect_stderr(writer: std::io::PipeWriter) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
     // SAFETY: both descriptors are this process's; standard error is replaced in one step.
     if unsafe { libc::dup2(writer.as_raw_fd(), libc::STDERR_FILENO) } < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    drop(writer);
-    std::thread::Builder::new().name("asides-log".into()).spawn(move || relay(reader, |line| write(line)))?;
+    Ok(())
+}
+
+/// Windows has two standard errors: the process's handle (Rust's, and what the processes it
+/// starts inherit) and the C runtime's descriptor 2 (whisper.cpp's). Both become the pipe, which
+/// stays open for as long as the process runs.
+#[cfg(windows)]
+fn redirect_stderr(writer: std::io::PipeWriter) -> std::io::Result<()> {
+    use std::os::windows::io::{AsRawHandle, IntoRawHandle};
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Console::{STD_ERROR_HANDLE, SetStdHandle};
+    let handle = writer.as_raw_handle();
+    // SAFETY: the handle is this process's pipe, kept open (`into_raw_handle`) for its life.
+    unsafe { SetStdHandle(STD_ERROR_HANDLE, HANDLE(handle)) }.map_err(std::io::Error::other)?;
+    // SAFETY: the C runtime gets a descriptor of its own for the same pipe (a duplicate), then
+    // makes it descriptor 2.
+    unsafe {
+        let mut duplicate = HANDLE::default();
+        let process = windows::Win32::System::Threading::GetCurrentProcess();
+        let duplicated = windows::Win32::Foundation::DuplicateHandle(
+            process,
+            HANDLE(handle),
+            process,
+            &mut duplicate,
+            0,
+            false,
+            windows::Win32::Foundation::DUPLICATE_SAME_ACCESS,
+        );
+        if duplicated.is_ok() {
+            let fd = libc::open_osfhandle(duplicate.0 as libc::intptr_t, 0);
+            if fd >= 0 {
+                libc::dup2(fd, 2);
+            }
+        }
+    }
+    let _ = writer.into_raw_handle();
     Ok(())
 }
 

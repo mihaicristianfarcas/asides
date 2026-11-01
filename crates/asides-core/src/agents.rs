@@ -40,26 +40,35 @@ enum Process {
 
 impl Process {
     fn matches(&self, executable: &str, args: &[&str]) -> bool {
-        let base = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
-        let first = args.first().map(|a| base(a));
+        let first = args.first().map(|a| program_name(a));
         match *self {
             Process::Executable(name) => {
-                base(executable) == name
+                program_name(executable) == name
                     || first.as_deref() == Some(name)
-                    || executable.contains(&format!("/{name}/versions/"))
+                    || executable.replace('\\', "/").contains(&format!("/{name}/versions/"))
             }
             Process::Script(word) => {
                 let runtime = |n: &str| matches!(n, "node" | "bun");
-                (runtime(&base(executable)) || first.as_deref().is_some_and(runtime))
+                (runtime(&program_name(executable)) || first.as_deref().is_some_and(runtime))
                     && args.get(1).is_some_and(|script| script.to_ascii_lowercase().contains(word))
             }
         }
     }
 }
 
+/// A program's name from its path, without Windows' `.exe`: `/opt/homebrew/bin/node` and
+/// `C:\Program Files\nodejs\node.exe` are both `node`.
+fn program_name(path: &str) -> String {
+    let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    match base.len().checked_sub(4).filter(|&at| base.is_char_boundary(at)) {
+        Some(at) if base[at..].eq_ignore_ascii_case(".exe") => base[..at].to_string(),
+        _ => base.to_string(),
+    }
+}
+
 /// Whether `executable` runs scripts (Node, Bun): agents installed with npm run in one.
 pub fn is_runtime(executable: &str) -> bool {
-    matches!(executable.rsplit('/').next().unwrap_or(executable), "node" | "bun")
+    matches!(program_name(executable).as_str(), "node" | "bun")
 }
 
 const FACTS: [Facts; 6] = [
@@ -253,6 +262,20 @@ mod tests {
             Some(AgentKind::Codex)
         );
         assert!(is_runtime("/opt/homebrew/bin/node") && is_runtime("bun") && !is_runtime("claude"));
+        assert!(is_runtime(r"C:\Program Files\nodejs\node.exe") && !is_runtime(r"C:\x\claude.exe"));
+    }
+
+    #[test]
+    fn recognizes_agent_processes_on_windows() {
+        let claude = r"C:\Users\me\.local\bin\claude.exe";
+        assert_eq!(AgentKind::of_process(claude, &[claude]), Some(AgentKind::Claude));
+        let versioned = r"C:\Users\me\.local\share\claude\versions\2.1.303.exe";
+        assert_eq!(AgentKind::of_process(versioned, &[]), Some(AgentKind::Claude));
+        let npm = r"C:\Users\me\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js";
+        assert_eq!(AgentKind::of_process(r"C:\Program Files\nodejs\node.exe", &["node", npm]), Some(AgentKind::Claude));
+        assert_eq!(AgentKind::of_process("Codex.EXE", &[]), None);
+        assert_eq!(AgentKind::of_process("codex.EXE", &[]), Some(AgentKind::Codex));
+        assert_eq!(AgentKind::of_process(r"C:\x\pwsh.exe", &[]), None);
     }
 
     #[test]

@@ -97,7 +97,9 @@ mod tests {
             })
         };
         let started = Instant::now();
-        let found = until(dir.path(), started + Duration::from_secs(10), || std::fs::read_to_string(&path).ok());
+        // Created, then written: what's there is read as each happens (Windows tells both).
+        let read = || std::fs::read_to_string(&path).ok().filter(|text| !text.is_empty());
+        let found = until(dir.path(), started + Duration::from_secs(10), read);
         writer.join().unwrap();
         assert_eq!(found.as_deref(), Some("42"));
         assert!(started.elapsed() < Duration::from_secs(5));

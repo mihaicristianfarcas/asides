@@ -33,8 +33,8 @@ use futures::StreamExt;
 use gpui::{
     AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
     ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, PromptButton, PromptLevel,
-    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowOptions, actions, div, img, point, prelude::*, px, size,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowOptions,
+    actions, div, img, point, prelude::*, px, size,
 };
 
 actions!(
@@ -420,21 +420,21 @@ pub fn run() {
         // quits asides (the menu bar's too), ⌘W closes the window. Tab and ⇧Tab go through what can
         // be clicked.
         cx.bind_keys([
-            KeyBinding::new("cmd-,", ShowSettings, None),
-            KeyBinding::new("cmd-1", ShowHistory, None),
-            KeyBinding::new("cmd-2", ShowSessions, None),
-            KeyBinding::new("cmd-3", ShowGeneral, None),
-            KeyBinding::new("cmd-4", ShowKeys, None),
-            KeyBinding::new("cmd-5", ShowVoice, None),
-            KeyBinding::new("cmd-6", ShowPins, None),
+            KeyBinding::new("secondary-,", ShowSettings, None),
+            KeyBinding::new("secondary-1", ShowHistory, None),
+            KeyBinding::new("secondary-2", ShowSessions, None),
+            KeyBinding::new("secondary-3", ShowGeneral, None),
+            KeyBinding::new("secondary-4", ShowKeys, None),
+            KeyBinding::new("secondary-5", ShowVoice, None),
+            KeyBinding::new("secondary-6", ShowPins, None),
             KeyBinding::new("tab", FocusNext, None),
             KeyBinding::new("shift-tab", FocusPrevious, None),
-            KeyBinding::new("cmd-?", ShowHelp, None),
-            KeyBinding::new("cmd-q", QuitAsides, None),
-            KeyBinding::new("cmd-h", HideAsides, None),
-            KeyBinding::new("cmd-m", Minimize, None),
-            KeyBinding::new("cmd-w", CloseWindow, None),
-            KeyBinding::new("cmd-s", SaveAside, None),
+            KeyBinding::new("secondary-?", ShowHelp, None),
+            KeyBinding::new("secondary-q", QuitAsides, None),
+            KeyBinding::new("secondary-h", HideAsides, None),
+            KeyBinding::new("secondary-m", Minimize, None),
+            KeyBinding::new("secondary-w", CloseWindow, None),
+            KeyBinding::new("secondary-s", SaveAside, None),
         ]);
         cx.on_action(|_: &QuitAsides, cx| {
             let _ = send_link(&Link::Quit);
@@ -495,11 +495,12 @@ pub fn run() {
             show: true,
             window_min_size: Some(size(px(920.), px(600.))),
             // Glass, as the overlay's surfaces: the window blurs what's behind it (`Theme`'s tints).
-            window_background: WindowBackgroundAppearance::Blurred,
+            window_background: native::window_glass(),
             ..WindowOptions::default()
         };
         let opened = cx.open_window(options, move |window, cx| {
             let theme = Theme::of(window.appearance());
+            native::dress(window);
             cx.new(|cx| {
                 cx.observe_window_appearance(window, move |this: &mut AsidesWindow, window, cx| {
                     this.theme = Theme::of(window.appearance());
@@ -1013,7 +1014,10 @@ impl AsidesWindow {
             Recording::Key(_) => Some(chord.to_config()),
         };
         let Some(text) = text else {
-            self.toast("A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone.");
+            self.toast(match cfg!(windows) {
+                true => "A shortcut needs Ctrl.",
+                false => "A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone.",
+            });
             return cx.notify();
         };
         let other = self.also_does(&chord, recording);
@@ -1207,18 +1211,37 @@ fn send_link(link: &Link) -> std::io::Result<()> {
     if std::env::var_os("ASIDES_WINDOW_REPLAY").is_some() {
         return Ok(());
     }
-    let mut open = Command::new("open");
-    open.arg("-g");
-    let bundle = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
-    match bundle.filter(|b| b.extension().is_some_and(|e| e == "app")) {
-        Some(app) => open.arg("-a").arg(app),
-        None => open.args(["-b", paths::BUNDLE_ID]),
-    };
-    open.arg(link.to_url()).status().map(drop)
+    // Windows: the app beside this window takes it (a second copy hands it to the one running).
+    #[cfg(windows)]
+    {
+        let app = std::env::current_exe()?.with_file_name("asides-app.exe");
+        Command::new(app).arg(link.to_url()).spawn().map(drop)
+    }
+    #[cfg(not(windows))]
+    {
+        let mut open = Command::new("open");
+        open.arg("-g");
+        let bundle = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
+        match bundle.filter(|b| b.extension().is_some_and(|e| e == "app")) {
+            Some(app) => open.arg("-a").arg(app),
+            None => open.args(["-b", paths::BUNDLE_ID]),
+        };
+        open.arg(link.to_url()).status().map(drop)
+    }
 }
 
 fn open_url(url: &str) {
-    let _ = Command::new("open").arg(url).status();
+    // Explorer opens a link with what the user opens links with.
+    let opener = if cfg!(windows) { "explorer" } else { "open" };
+    let _ = Command::new(opener).arg(url).status();
+}
+
+/// Shows a file in Finder (Explorer on Windows), selected.
+fn reveal(file: &Path) {
+    let _ = match cfg!(windows) {
+        true => Command::new("explorer").arg(format!("/select,{}", file.display())).status(),
+        false => Command::new("open").arg("-R").arg(file).status(),
+    };
 }
 
 /// When what `ago(at)` says next changes.
@@ -1365,7 +1388,7 @@ impl Render for AsidesWindow {
                 if this.recording.is_some() {
                     let key = e.keystroke.key.as_str();
                     this.recorded_by_key = matches!(key, "enter" | "space");
-                    this.record(key, Mods { cmd: m.platform, shift: m.shift, alt: m.alt, ctrl: m.control }, cx);
+                    this.record(key, Mods::of(m.platform, m.control, m.alt, m.shift), cx);
                     cx.stop_propagation();
                 } else if this.page == Page::Setup
                     && e.keystroke.key == "enter"
@@ -1379,8 +1402,8 @@ impl Render for AsidesWindow {
                     cx.stop_propagation();
                 } else if this.page == Page::History
                     && e.keystroke.key == "backspace"
-                    && m.platform
-                    && !(m.shift || m.alt || m.control)
+                    && m.secondary()
+                    && !(m.shift || m.alt || (m.control && !cfg!(windows)) || (m.platform && cfg!(windows)))
                     && this.editing.is_none()
                     && let Some(aside) = this.selected().cloned()
                 {
@@ -1408,8 +1431,30 @@ impl Render for AsidesWindow {
             .font_family(font())
             .text_color(t.primary)
             .text_size(px(Type::BODY))
+            // Windows: the strip along the top moves the window (under what's on it).
+            .children(cfg!(windows).then(|| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(CAPTION_HEIGHT))
+                    .window_control_area(WindowControlArea::Drag)
+            }))
             .children(sidebar)
-            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(surface).child(content))
+            // Windows: the page starts below the caption buttons' strip, which moves the window.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .bg(surface)
+                    .children(cfg!(windows).then(|| div().flex_none().h(px(CAPTION_HEIGHT))))
+                    .child(content),
+            )
+            .children(caption_buttons(window, t))
             .children(self.toast.as_ref().map(|(text, _)| {
                 div().absolute().bottom(px(18.)).left_0().right_0().flex().justify_center().child(fade_in(
                     floating(t)
@@ -1919,15 +1964,13 @@ impl AsidesWindow {
         );
         let dir = aside.dir.clone();
         actions.push(
-            icon_button("reveal", "folder", "Show in Finder", t)
-                .on_click(move |_, _, _| {
-                    let _ = Command::new("open").arg("-R").arg(dir.join(history::MESSAGE_FILE)).status();
-                })
+            icon_button("reveal", "folder", if cfg!(windows) { "Show in Explorer" } else { "Show in Finder" }, t)
+                .on_click(move |_, _, _| reveal(&dir.join(history::MESSAGE_FILE)))
                 .into_any_element(),
         );
         let deleted = aside.clone();
         actions.push(
-            icon_button("delete", "trash", "Delete (⌘⌫)", t)
+            icon_button("delete", "trash", if cfg!(windows) { "Delete (Ctrl+Backspace)" } else { "Delete (⌘⌫)" }, t)
                 .on_click(cx.listener(move |this, _, window, cx| this.ask_delete(deleted.clone(), window, cx)))
                 .into_any_element(),
         );
@@ -2062,7 +2105,9 @@ impl AsidesWindow {
                     })
                     .into_any_element()
             }
-            (true, true) => footnote("Ready to save: ⌘S.", t).text_color(t.fresh).into_any_element(),
+            (true, true) => {
+                footnote(format!("Ready to save: {}S.", keys::COMMAND), t).text_color(t.fresh).into_any_element()
+            }
             (true, false) => footnote("As saved.", t).into_any_element(),
         };
         let leading = self.mode_switch(aside, true, changed, cx);
@@ -2357,7 +2402,7 @@ impl AsidesWindow {
                     "Where it goes",
                     format!(
                         "To the agent session you typed into last: Claude Code, Codex, OpenCode and more, in \
-                         Terminal, Ghostty or Diri. {next} picks the next one. Point at its name for the list \
+                         {AGENT_TERMINALS}. {next} picks the next one. Point at its name for the list \
                          ({sessions} opens it for the arrows and ⏎): a new session in a folder, or History only, \
                          to send it later."
                     ),
@@ -2368,8 +2413,9 @@ impl AsidesWindow {
                     format!(
                         "Click a pin's number, or press it, to open its card (with the microphone off, each new \
                          pin opens it); Tab goes on to the next pin's. Type there, or hold {talk} to talk about that \
-                         pin alone. ⌘1 to ⌘4 say what it is: a fix, a change, a question, an approval. Its pencil \
-                         and ruler pick Draw and Measure."
+                         pin alone. {c}1 to {c}4 say what it is: a fix, a change, a question, an approval. Its \
+                         pencil and ruler pick Draw and Measure.",
+                        c = keys::COMMAND,
                     ),
                     Some(card),
                 ))
@@ -2377,8 +2423,9 @@ impl AsidesWindow {
                     "Measure, draw, take a screenshot",
                     format!(
                         "{measure} measures: move for the distances to the nearest edges, drag for the size of \
-                         what's inside. {draw} draws: circle or underline, ⇧-drag for an arrow. {shot}, then a \
-                         drag, adds a screenshot of part of the screen. {annotate} goes back to pins."
+                         what's inside. {draw} draws: circle or underline, {shift}drag for an arrow. {shot}, then \
+                         a drag, adds a screenshot of part of the screen. {annotate} goes back to pins.",
+                        shift = if cfg!(windows) { "Shift+" } else { "⇧-" },
                     ),
                     Some(tools),
                 ))
@@ -2395,16 +2442,21 @@ impl AsidesWindow {
                     "Every key",
                     format!(
                         "Point at the pill's ? (or press {keys}) for every key. {undo} takes back what's under the \
-                         pointer, {clear} clears everything, and a right-click has more (the arrows and ⏎ pick \
-                         there). Change any of them under Keys."
+                         pointer, {clear} clears everything, and a right-click has more (the arrows and {ret} \
+                         pick there). Change any of them under Keys.",
+                        ret = keys::RETURN,
                     ),
                     Some(sheet),
                 ))
                 .child(topic(
                     "This window, by keyboard",
-                    "Tab and ⇧Tab go through what can be clicked, Space or ⏎ presses it, and the arrows move in \
-                     lists and choices. ⌘1 to ⌘6 open History, Sessions and each setting, ⌘? this page."
-                        .into(),
+                    format!(
+                        "Tab and {s}Tab go through what can be clicked, Space or {r} presses it, and the arrows move \
+                         in lists and choices. {c}1 to {c}6 open History, Sessions and each setting, {c}? this page.",
+                        s = keys::SHIFT,
+                        r = keys::RETURN,
+                        c = keys::COMMAND,
+                    ),
                     None,
                 ))
                 .child(topic("Afterwards", String::new(), Some(after.into_any_element()))),
@@ -2585,9 +2637,11 @@ impl AsidesWindow {
             .child(
                 div().pt(px(6.)).max_w(px(420.)).child(
                     footnote(
-                        "A minute: how it works, where sessions open, what each pin says, what macOS must allow, and \
-                         the voice model. Skipped, asides asks for each when it first needs it; everything is in \
-                         Settings and Help later.",
+                        format!(
+                            "A minute: how it works, where sessions open, what each pin says, what {SYSTEM} must allow, \
+                             and the voice model. Skipped, asides asks for each when it first needs it; everything is \
+                             in Settings and Help later."
+                        ),
                         t,
                     )
                     .text_center(),
@@ -2630,10 +2684,12 @@ impl AsidesWindow {
                 let detail = match name {
                     "Diri" => "Types without asking for any permission.",
                     "Ghostty" => "asides asks once to type there (Automation).",
+                    "Windows Terminal" => "A tab of its own, in a new window.",
+                    "Console" => "A console window of its own.",
                     _ => "macOS's own. asides asks once to type there (Automation).",
                 };
                 let pick = self.setter(cx, move |c, _: ()| {
-                    c.agents.terminal = if name == "Terminal" { String::new() } else { name.to_string() };
+                    c.agents.terminal = if name == deliver::TERMINALS[0] { String::new() } else { name.to_string() };
                 });
                 let id = SharedString::from(format!("setup-terminal-{name}"));
                 let row = choice_row(id.clone(), t, "terminal", name, detail, name == current);
@@ -2667,9 +2723,11 @@ impl AsidesWindow {
             .child(page_header(
                 "Where asides goes",
                 Some(
-                    "Each aside is typed into the agent session you typed into last: Claude Code, Codex or \
-                     OpenCode, in Terminal, Ghostty or Diri. Or it starts a new one."
-                        .into(),
+                    format!(
+                        "Each aside is typed into the agent session you typed into last: Claude Code, Codex \
+                         or OpenCode, in {AGENT_TERMINALS}. Or it starts a new one."
+                    )
+                    .into(),
                 ),
                 t,
             ))
@@ -2741,24 +2799,29 @@ impl AsidesWindow {
                 .into_any_element(),
         };
         let open = pretty_shortcut(&self.config.shortcuts.asides);
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(20.))
-            .child(page_header(
-                "What macOS must allow",
-                Some("Each is asked once; after that, it's in System Settings → Privacy & Security.".into()),
-                t,
-            ))
-            .child(rows(
-                [
+        // Windows asks for none of the others: seeing the screen, naming what's pinned (UI
+        // Automation) and typing into a console need no permission.
+        let (needs, why) = match cfg!(windows) {
+            true => (
+                vec![self.permission_row(Need::Microphone, cx), typing],
+                "Only the microphone, which is in Settings → Privacy & security → Microphone.",
+            ),
+            false => (
+                vec![
                     self.permission_row(Need::Microphone, cx),
                     self.permission_row(Need::Screen, cx),
                     typing,
                     self.permission_row(Need::Accessibility, cx),
                 ],
-                t,
-            ))
+                "Each is asked once; after that, it's in System Settings → Privacy & Security.",
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(page_header(format!("What {SYSTEM} must allow"), Some(why.into()), t))
+            .child(rows(needs, t))
             .child(footnote(format!("Nothing is recorded or sent until you press {open}."), t))
             .into_any_element()
     }
@@ -2772,7 +2835,7 @@ impl AsidesWindow {
             Need::Microphone => (
                 "mic",
                 "Microphone".into(),
-                "To hear what you say: it's transcribed on this Mac.".into(),
+                format!("To hear what you say: it's transcribed on {THIS_COMPUTER}."),
                 "Microphone",
                 Permission::Microphone,
                 self.state.microphone.as_str(),
@@ -2809,8 +2872,11 @@ impl AsidesWindow {
             (false, _) => chip("Looking…", t.tertiary).into_any_element(),
             (true, "granted") => chip("Allowed", t.fresh).into_any_element(),
             (true, _) if asked || status == "denied" => {
-                let url = format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}");
-                button(SharedString::from(format!("settings-{}", ask.as_str())), "Open System Settings…", t)
+                let url = match cfg!(windows) {
+                    true => "ms-settings:privacy-microphone".to_string(),
+                    false => format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"),
+                };
+                button(SharedString::from(format!("settings-{}", ask.as_str())), format!("Open {SETTINGS_APP}…"), t)
                     .on_click(move |_, _, _| open_url(&url))
                     .into_any_element()
             }
@@ -2846,12 +2912,14 @@ impl AsidesWindow {
         let open_at_login = self.state.open_at_login;
         let ask = |open: bool| send_link(&Link::Login { open, request: None });
         if open_at_login == LoginItem::NeedsApproval {
-            let open = button(SharedString::from(format!("{id}-settings")), "Open System Settings…", t).on_click(
-                move |_, _, _| {
+            let open = button(SharedString::from(format!("{id}-settings")), format!("Open {SETTINGS_APP}…"), t)
+                .on_click(move |_, _, _| {
                     let _ = ask(true);
-                },
-            );
-            let why = "Turned off in System Settings → General → Login Items.";
+                });
+            let why = match cfg!(windows) {
+                true => "Turned off in Settings → Apps → Startup.",
+                false => "Turned off in System Settings → General → Login Items.",
+            };
             return setting("Open at login", Some(why), open, t);
         }
         let this = cx.weak_entity();
@@ -2922,7 +2990,7 @@ impl AsidesWindow {
             .gap(px(20.))
             .child(page_header(
                 "Your voice",
-                Some("Transcribed on this Mac by Whisper, word for word: nothing leaves it.".into()),
+                Some(format!("Transcribed on {THIS_COMPUTER} by Whisper, word for word: nothing leaves it.").into()),
                 t,
             ))
             .child(section("Voice model", t).child(models))
@@ -3119,7 +3187,10 @@ impl AsidesWindow {
         if running.is_empty() {
             running.push(setting(
                 "No agent sessions running",
-                Some("Start Claude Code, Codex or OpenCode in Terminal, Ghostty or Diri, or start one from the pill: New session in…"),
+                Some(&format!(
+                    "Start Claude Code, Codex or OpenCode in {AGENT_TERMINALS}, or start one from the pill: New \
+                     session in…"
+                )),
                 div(),
                 t,
             ));
@@ -3296,17 +3367,22 @@ impl AsidesWindow {
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
         let auto_update = self.setter(cx, |c, on| c.auto_update = on);
-        let mut permissions = vec![
-            self.permission_row(Need::Microphone, cx),
-            self.permission_row(Need::Screen, cx),
-            self.permission_row(Need::Accessibility, cx),
-        ];
+        // Windows asks for none but the microphone.
+        let mut permissions = vec![self.permission_row(Need::Microphone, cx)];
+        if !cfg!(windows) {
+            permissions.push(self.permission_row(Need::Screen, cx));
+            permissions.push(self.permission_row(Need::Accessibility, cx));
+        }
         for app in deliver::installed_terminals() {
             if deliver::automated_bundle(app).is_some() {
                 permissions.push(self.permission_row(Need::Automation(app), cx));
             }
         }
-        let login = self.login_row("open-at-login", "asides starts in the menu bar, so its shortcuts always work.", cx);
+        let login = self.login_row(
+            "open-at-login",
+            &format!("asides starts in {STATUS_PLACE}, so its shortcuts always work."),
+            cx,
+        );
         let set_up = button("set-up-again", "Set Up Again…", t).on_click(cx.listener(|this, _, _, cx| {
             this.setup = SetupStep::Basics;
             this.clips_since = Instant::now();
@@ -3328,7 +3404,7 @@ impl AsidesWindow {
                         [
                             setting(
                                 "Keep asides for",
-                                Some("In ~/.asides/history."),
+                                Some(if cfg!(windows) { "In ~\\.asides\\history." } else { "In ~/.asides/history." }),
                                 select("keep", keep_labels.map(Choice::new).to_vec(), keep.iter().position(|d| *d == c.history_days), t)
                                     .width(120.)
                                     .on_select(pick_keep),
@@ -3336,7 +3412,7 @@ impl AsidesWindow {
                             ),
                             setting(
                                 "Keep what was said as audio",
-                                Some("An .m4a with each aside."),
+                                Some(if cfg!(windows) { "A .wav with each aside." } else { "An .m4a with each aside." }),
                                 switch("keep-audio", c.keep_audio, t).on_toggle(audio),
                                 t,
                             ),
@@ -3363,24 +3439,31 @@ impl AsidesWindow {
                         t,
                     )),
                 )
-                .child(
-                    section("Updates", t).child(rows(
-                        [
+                .child(section("Updates", t).child(rows(
+                    // Windows copies don't update themselves (yet): only the version, and why.
+                    (!cfg!(windows))
+                        .then(|| {
                             setting(
                                 "Update automatically",
                                 Some("Looks for a new asides every 6 hours, downloads it, and installs it when asides quits."),
                                 switch("auto-update", c.auto_update, t).on_toggle(auto_update),
                                 t,
-                            ),
-                            self.update_row(cx),
-                        ],
-                        t,
-                    )),
-                )
+                            )
+                        })
+                        .into_iter()
+                        .chain([self.update_row(cx)]),
+                    t,
+                )))
                 .child(
                     section("Permissions", t)
                         .child(rows(permissions, t))
-                        .child(footnote("macOS asks for each the first time asides needs it.", t)),
+                        .child(footnote(
+                            match cfg!(windows) {
+                                true => "Freezing the screen, naming what's pinned and typing in need no permission.",
+                                false => "macOS asks for each the first time asides needs it.",
+                            },
+                            t,
+                        )),
                 )
                 .child(
                     section("Setup", t).child(rows(
@@ -3540,7 +3623,7 @@ impl AsidesWindow {
                 .gap(px(20.))
                 .child(page_header(
                     "Voice",
-                    Some("What you say is transcribed on this Mac by Whisper, word for word.".into()),
+                    Some(format!("What you say is transcribed on {THIS_COMPUTER} by Whisper, word for word.").into()),
                     t,
                 ))
                 .child(
@@ -3780,8 +3863,69 @@ fn choice_row(
 
 /// The terminal app new sessions open in, as Settings has it ("" is Terminal).
 fn terminal_app(configured: &str) -> &'static str {
-    deliver::TERMINALS.iter().copied().find(|n| n.eq_ignore_ascii_case(configured.trim())).unwrap_or("Terminal")
+    let first = deliver::installed_terminals().first().copied().unwrap_or(deliver::TERMINALS[0]);
+    deliver::TERMINALS.iter().copied().find(|n| n.eq_ignore_ascii_case(configured.trim())).unwrap_or(first)
 }
+
+/// The height of Windows' caption buttons, as Windows 11 draws them, and each one's width.
+const CAPTION_HEIGHT: f32 = 32.;
+const CAPTION_BUTTON: f32 = 46.;
+
+/// Windows: minimize, maximize (or restore) and close at the window's top right, in Windows' own
+/// glyphs (`native::caption_font`), and its red under the close button; Windows handles the presses
+/// (the maximize button's snap layouts too). Its title bar would sit opaque above the glass. A Mac
+/// has its traffic lights.
+fn caption_buttons(window: &Window, t: Theme) -> Option<AnyElement> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let ink = if window.is_window_active() { t.primary } else { t.tertiary };
+    let button = |id: &'static str, glyph: &'static str, area: WindowControlArea| {
+        let close = area == WindowControlArea::Close;
+        div()
+            .id(id)
+            .occlude()
+            .window_control_area(area)
+            .w(px(CAPTION_BUTTON))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.))
+            .text_color(ink)
+            .hover(move |s| match close {
+                true => s.bg(hex(0xc42b1c, 1.0)).text_color(gpui::white()),
+                false => s.bg(t.hover),
+            })
+            .child(glyph)
+    };
+    let (zoom, zoom_glyph) =
+        if window.is_maximized() { ("caption-restore", "\u{e923}") } else { ("caption-maximize", "\u{e922}") };
+    Some(
+        div()
+            .absolute()
+            .top_0()
+            .right_0()
+            .h(px(CAPTION_HEIGHT))
+            .flex()
+            .font_family(native::caption_font())
+            .child(button("caption-minimize", "\u{e921}", WindowControlArea::Min))
+            .child(button(zoom, zoom_glyph, WindowControlArea::Max))
+            .child(button("caption-close", "\u{e8bb}", WindowControlArea::Close))
+            .into_any_element(),
+    )
+}
+
+/// The system, by name: what must allow what, where its settings are.
+const SYSTEM: &str = if cfg!(windows) { "Windows" } else { "macOS" };
+/// Where the agents asides types into run.
+const AGENT_TERMINALS: &str = if cfg!(windows) { "any terminal" } else { "Terminal, Ghostty or Diri" };
+/// Where asides' mark is while it runs.
+const STATUS_PLACE: &str = if cfg!(windows) { "the notification area" } else { "the menu bar" };
+/// This computer, as its owner calls it.
+const THIS_COMPUTER: &str = if cfg!(windows) { "this PC" } else { "this Mac" };
+/// Where the system's settings are.
+const SETTINGS_APP: &str = if cfg!(windows) { "Settings" } else { "System Settings" };
 
 /// An icon on a quiet square.
 fn tile(t: Theme, glyph: &str) -> impl IntoElement + use<> {

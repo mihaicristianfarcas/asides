@@ -442,6 +442,13 @@ pub fn pretty_shortcut(shortcut: &str) -> String {
     let mut mods = String::new();
     let mut key = String::new();
     let tokens: Vec<String> = shortcut.split('+').map(|t| t.trim().to_ascii_lowercase()).collect();
+    // Windows writes them out: `Ctrl+Alt+Space`.
+    let names = |symbol: &str| match symbol {
+        "⌃" => "Ctrl+",
+        "⌥" => "Alt+",
+        "⇧" => "Shift+",
+        _ => "Win+",
+    };
     for symbol in ["⌃", "⌥", "⇧", "⌘"] {
         let present = tokens.iter().any(|t| match symbol {
             "⌃" => t == "ctrl" || t == "control",
@@ -450,7 +457,7 @@ pub fn pretty_shortcut(shortcut: &str) -> String {
             _ => t == "cmd" || t == "command" || t == "super",
         });
         if present {
-            mods.push_str(symbol);
+            mods.push_str(if cfg!(windows) { names(symbol) } else { symbol });
         }
     }
     if let Some(last) = shortcut.split('+').map(str::trim).next_back() {
@@ -473,7 +480,17 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(windows)]
     fn pretty_prints_shortcuts() {
+        assert_eq!(pretty_shortcut("ctrl+alt+Space"), "Ctrl+Alt+Space");
+        assert_eq!(pretty_shortcut("cmd+shift+KeyN"), "Shift+Win+N");
+        assert_eq!(pretty_shortcut("Escape"), "Esc");
+        assert_eq!(pretty_shortcut("option+F5"), "Alt+F5");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn pretty_prints_shortcuts_as_macos_does() {
         assert_eq!(pretty_shortcut("ctrl+alt+Space"), "⌃⌥Space");
         assert_eq!(pretty_shortcut("cmd+shift+KeyN"), "⇧⌘N");
         assert_eq!(pretty_shortcut("Escape"), "Esc");

@@ -257,7 +257,7 @@ mod tests {
     #[test]
     #[ignore]
     fn prints_the_place_in_front() {
-        let front = crate::macos::frontmost_app().unwrap();
+        let front = crate::system::frontmost_app().unwrap();
         println!("front: {:?}", place(front, true));
         for app in objc2_app_kit::NSWorkspace::sharedWorkspace().runningApplications() {
             if app.bundleIdentifier().is_some_and(|id| id.to_string() == "com.apple.Safari") {

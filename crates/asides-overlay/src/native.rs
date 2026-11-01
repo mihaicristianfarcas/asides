@@ -529,6 +529,20 @@ pub fn monitor_keys() {
     std::mem::forget(monitor);
 }
 
+/// The asides window's glass: GPUI puts an `NSVisualEffectView` under its view, blurring the
+/// whole window.
+pub fn window_glass() -> gpui::WindowBackgroundAppearance {
+    gpui::WindowBackgroundAppearance::Blurred
+}
+
+/// Once the asides window is open: nothing more on macOS (Windows sets its acrylic).
+pub fn dress(_window: &Window) {}
+
+/// Windows' caption buttons' font: a Mac has its traffic lights.
+pub fn caption_font() -> &'static str {
+    ""
+}
+
 /// GPUI blends alpha by adding it (its pipelines' destination alpha factor is one): what's partly
 /// drawn over the window's glass (a menu or a page fading in) hid the blur behind it before its
 /// color showed, a dark square for a moment. Its pipelines blend alpha as they blend color ("over"),

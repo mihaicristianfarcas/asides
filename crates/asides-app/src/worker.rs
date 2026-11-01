@@ -259,13 +259,15 @@ fn encode_audio(pcm: &[f32]) -> Result<(Vec<u8>, &'static str)> {
     }
     writer.finalize()?;
     let m4a = dir.join("aside.m4a");
-    let converted = Command::new("afconvert")
-        // 32 kbps: the AAC encoder rejects higher bit rates for 16 kHz mono.
-        .args(["-f", "m4af", "-d", "aac", "-b", "32000"])
-        .arg(&wav)
-        .arg(&m4a)
-        .status()
-        .is_ok_and(|s| s.success());
+    // macOS's encoder; elsewhere the WAV is kept.
+    let converted = cfg!(target_os = "macos")
+        && Command::new("afconvert")
+            // 32 kbps: the AAC encoder rejects higher bit rates for 16 kHz mono.
+            .args(["-f", "m4af", "-d", "aac", "-b", "32000"])
+            .arg(&wav)
+            .arg(&m4a)
+            .status()
+            .is_ok_and(|s| s.success());
     let result = if converted { (fs::read(&m4a)?, "m4a") } else { (fs::read(&wav)?, "wav") };
     let _ = fs::remove_dir_all(&dir);
     Ok(result)

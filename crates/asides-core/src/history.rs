@@ -101,10 +101,16 @@ impl Aside {
         markdown::message_parts(&self.message())
             .into_iter()
             .map(|part| match part {
-                Part::Image(rel) => Part::Image(self.dir.join(rel).to_string_lossy().into_owned()),
+                Part::Image(rel) => Part::Image(self.on_disk(&rel).to_string_lossy().into_owned()),
                 text => text,
             })
             .collect()
+    }
+
+    /// Where a file its message names (`images/1.png`, a URL's slashes) is, in the system's own
+    /// path (`…\images\1.png` on Windows).
+    pub fn on_disk(&self, rel: &str) -> PathBuf {
+        rel.split('/').fold(self.dir.clone(), |path, part| path.join(part))
     }
 
     /// The message as Markdown with its screenshots' absolute paths, for the clipboard.
@@ -326,7 +332,7 @@ mod tests {
 
         let parts = aside.parts();
         assert_eq!(parts[0], Part::Text("The save button is too low.".into()));
-        assert_eq!(parts[1], Part::Image(aside.dir.join("images/1.png").to_string_lossy().into_owned()));
+        assert_eq!(parts[1], Part::Image(aside.dir.join("images").join("1.png").to_string_lossy().into_owned()));
 
         let delivery =
             Delivery { at_ms: 1, to: "Claude Code (shop)".into(), app: "Terminal".into(), ..Default::default() };

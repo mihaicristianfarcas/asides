@@ -989,7 +989,7 @@ impl Overlay {
     fn set_modifiers(&mut self, m: &Modifiers) {
         let measure = !m.control;
         self.session.crosshair = m.shift && measure;
-        self.session.snapping = !(m.platform && measure);
+        self.session.snapping = !(m.secondary() && measure);
         self.session.alternate = m.alt && measure;
     }
 
@@ -1274,10 +1274,10 @@ impl Overlay {
         }
         let key = keys::normalize(&e.keystroke.key);
         let m = &e.keystroke.modifiers;
-        let mods = Mods { cmd: m.platform, shift: m.shift, alt: m.alt, ctrl: m.control };
+        let mods = Mods::of(m.platform, m.control, m.alt, m.shift);
         self.session.clock = self.elapsed();
         // ⌘1–⌘4: what the annotation asks for (the card's dots; with no card, the last one's).
-        let intent = (m.platform && !m.shift && !m.alt)
+        let intent = (mods.cmd && !m.shift && !m.alt)
             .then(|| key.parse::<usize>().ok().and_then(|n| n.checked_sub(1)).and_then(|i| Intent::ALL.get(i)))
             .flatten()
             .copied();
@@ -2804,16 +2804,20 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
 fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let t = o.theme;
     let k = |c: Cmd| o.keys.label(c);
+    let where_it_goes = format!("Where it goes (↑ ↓, {})", keys::RETURN);
     let left: Vec<(&str, Vec<(&str, String)>)> = vec![
         (
             "Pins",
             vec![
                 ("Annotate (click, or drag)", k(Cmd::Tool(Tool::Annotate))),
-                ("Draw (⇧ for an arrow)", k(Cmd::Tool(Tool::Draw))),
+                (
+                    if cfg!(windows) { "Draw (Shift for an arrow)" } else { "Draw (⇧ for an arrow)" },
+                    k(Cmd::Tool(Tool::Draw)),
+                ),
                 ("Screenshot", k(Cmd::Tool(Tool::Shot))),
                 ("Move it: drag a pin's number", String::new()),
                 ("A pin's card (Tab: the next)", "1 9".into()),
-                ("The last pin's type", "⌘1 ⌘4".into()),
+                ("The last pin's type", format!("{c}1 {c}4", c = keys::COMMAND)),
             ],
         ),
         (
@@ -2843,7 +2847,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Talk while muted (hold)", keys::label(&o.keys.talk)),
                 ("Mute or listen", k(Cmd::Mic)),
                 ("Next session", k(Cmd::Target)),
-                ("Where it goes (↑ ↓, ⏎)", k(Cmd::Sessions)),
+                (&where_it_goes, k(Cmd::Sessions)),
                 ("Live or frozen", o.spec.freeze_shortcut.clone()),
                 ("Send", format!("{} {}", k(Cmd::Done), o.spec.record_shortcut)),
                 ("Start over", k(Cmd::Restart)),
@@ -3179,7 +3183,16 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
 /// hairline around it. No shadow: GPUI fills one under the whole surface too, between the blur and
 /// the tint, and it darkened the glass to near black.
 fn glass_panel(t: Theme) -> Div {
-    div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(t.sidebar)
+    div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
+}
+
+/// The pill's tint. Windows blurs nothing behind the pill's window (`windows.rs`): there it's
+/// nearly solid, as Windows' own acrylic is without its blur, or a page reads through the list.
+fn pill_tint(t: Theme) -> Hsla {
+    match cfg!(windows) {
+        true => Hsla { a: 0.95, ..t.sidebar },
+        false => t.sidebar,
+    }
 }
 
 /// A surface on a frozen screen (a window `offset` points into screen `screen`), glass like the
@@ -3633,7 +3646,7 @@ impl ScreenView {
         let dots = Intent::ALL.into_iter().enumerate().map(|(i, intent)| {
             let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
             let on = card.intent == Some(intent);
-            let name: SharedString = format!("{} ⌘{}", capitalized(intent.as_str()), i + 1).into();
+            let name: SharedString = format!("{} {}{}", capitalized(intent.as_str()), keys::COMMAND, i + 1).into();
             div()
                 .id(SharedString::from(format!("intent-{}", intent.as_str())))
                 .size(px(20.))

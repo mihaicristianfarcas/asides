@@ -1,5 +1,6 @@
 //! Putting the `asides` command on the PATH when the app was installed by hand, from the disk image
-//! or the zip. The Homebrew cask and `make install` link it themselves.
+//! or the zip. The Homebrew cask and `make install` link it themselves. On Windows the app's folder
+//! goes on the user's PATH instead (the app does it, `windows/system.rs`).
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +15,8 @@ pub fn command_dirs(home: &Path) -> Vec<PathBuf> {
 
 /// Whether one of `dirs` has an `asides` command that works (a file, or a link that resolves to one).
 pub fn command_installed(dirs: &[PathBuf]) -> bool {
-    dirs.iter().any(|dir| dir.join("asides").is_file())
+    let name = format!("asides{}", std::env::consts::EXE_SUFFIX);
+    dirs.iter().any(|dir| dir.join(&name).is_file())
 }
 
 /// The CLI inside the bundle at `app`, if the bundle is installed in an Applications folder. Not
@@ -31,6 +33,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(unix)]
     #[test]
     fn finds_an_installed_command() {
         let tmp = tempfile::tempdir().unwrap();

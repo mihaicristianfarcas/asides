@@ -12,6 +12,7 @@
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
+#[cfg(target_os = "macos")]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -20,8 +21,10 @@ use std::time::{Duration, Instant};
 
 use asides_core::history;
 use asides_core::paths;
+#[cfg(target_os = "macos")]
+use asides_core::update::UNNOTARIZED_ENV;
 use asides_core::update::{
-    self, EVERY, FEED_ENV, FEED_URL, Feed, MAX_FEED, Notes, Phase, Release, Status, Step, UNNOTARIZED_ENV, Version,
+    self, EVERY, FEED_ENV, FEED_URL, Feed, MAX_FEED, Notes, Phase, Release, Status, Step, Version,
 };
 use sha2::{Digest, Sha256};
 
@@ -281,6 +284,13 @@ struct Running {
 }
 
 impl Running {
+    /// Windows copies are updated by installing the new release: they don't swap themselves.
+    #[cfg(windows)]
+    fn find() -> Result<Running, String> {
+        Err("on Windows, install each new release over this one".into())
+    }
+
+    #[cfg(target_os = "macos")]
     fn find() -> Result<Running, String> {
         if cfg!(feature = "dev-hooks") {
             return Err("this is a test build".into());
@@ -361,6 +371,7 @@ impl Running {
 }
 
 /// `…/asides.app/Contents/MacOS/asides-app` → `…/asides.app`.
+#[cfg(target_os = "macos")]
 fn enclosing_bundle(exe: &Path) -> Option<PathBuf> {
     let macos = exe.parent()?;
     let contents = macos.parent()?;
@@ -533,6 +544,13 @@ fn check_zip(path: &Path) -> Result<(), String> {
 /// `reopen`: what to open then (`asides://window`, or `""` for asides alone); `None` leaves it
 /// closed (an update installed as asides quits). The script's output goes to `install.log` in the
 /// update's folder.
+#[cfg(windows)]
+pub fn install(_: &Staged, _: Option<&str>) -> Result<(), String> {
+    Err("on Windows, install each new release over this one".into())
+}
+
+/// Starts the script that swaps the update in once asides has quit; the app must quit right after.
+#[cfg(target_os = "macos")]
 pub fn install(staged: &Staged, reopen: Option<&str>) -> Result<(), String> {
     writable(&staged.bundle)?;
     let script = staged.dir.join("install.sh");
@@ -555,6 +573,7 @@ pub fn install(staged: &Staged, reopen: Option<&str>) -> Result<(), String> {
 /// The swap, as a script for `/bin/sh`. The update is copied beside the app while asides still
 /// runs; once it has quit, the app's path only changes by renaming, so it's never missing or half
 /// copied, and if anything fails the old app goes back.
+#[cfg_attr(windows, allow(dead_code))]
 fn script_text(pid: u32, staged: &Path, target: &Path, reopen: Option<&str>) -> String {
     let quote = |text: &str| format!("'{}'", text.replace('\'', r"'\''"));
     let staged = quote(&staged.to_string_lossy());
@@ -725,6 +744,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn finds_the_app_around_its_binary() {
         let found = enclosing_bundle(Path::new("/Applications/asides.app/Contents/MacOS/asides-app"));
         assert_eq!(found, Some(PathBuf::from(TARGET)));
@@ -773,6 +793,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_script_copies_first_then_waits_then_renames() {
         let text = script(Some(""));
         let copy = text.find("/usr/bin/ditto \"$staged\" \"$next\"").unwrap();
@@ -800,6 +821,7 @@ mod tests {
         assert!(quoted.contains("target='/Applications/My Apps/asides.app'"));
     }
 
+    #[cfg(unix)]
     fn fake_app(dir: &Path, name: &str, marker: &str) -> PathBuf {
         let app = dir.join(name);
         fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
@@ -807,16 +829,19 @@ mod tests {
         app
     }
 
+    #[cfg(unix)]
     fn marker(app: &Path) -> String {
         fs::read_to_string(app.join("Contents/MacOS/asides-app")).unwrap()
     }
 
     /// The script as shipped, but saying it reopens rather than opening anything.
+    #[cfg(unix)]
     fn run_script(pid: u32, staged: &Path, target: &Path) -> std::process::Output {
         let text = script_text(pid, staged, target, Some("")).replace("/usr/bin/open", "echo reopened");
         Command::new("/bin/sh").args(["-c", &text]).output().unwrap()
     }
 
+    #[cfg(unix)]
     fn quit_pid() -> u32 {
         let mut child = Command::new("/usr/bin/true").spawn().unwrap();
         let pid = child.id();
@@ -825,6 +850,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_script_swaps_the_app() {
         let dir = tempfile::tempdir().unwrap();
         let staged = fake_app(dir.path(), "staged.app", "new");
@@ -838,6 +864,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_script_keeps_the_old_app_when_the_copy_fails() {
         let dir = tempfile::tempdir().unwrap();
         let target = fake_app(dir.path(), "asides.app", "old");
@@ -848,6 +875,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_script_never_touches_an_app_still_running() {
         let dir = tempfile::tempdir().unwrap();
         let staged = fake_app(dir.path(), "staged.app", "new");
@@ -865,6 +893,7 @@ mod tests {
     /// While asides runs, its app stays whole; once it quits, the new one replaces it by renaming
     /// (never missing for the length of a copy).
     #[test]
+    #[cfg(unix)]
     fn the_app_is_never_missing_for_a_copy() {
         let dir = tempfile::tempdir().unwrap();
         let staged = fake_app(dir.path(), "staged.app", "new");
@@ -922,6 +951,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn unpacks_the_one_app_in_an_update() {
         let dir = tempfile::tempdir().unwrap();
         let zip = zip_of(dir.path(), &[("asides.app/Contents/MacOS/asides-app", None)]);
@@ -957,6 +987,7 @@ mod tests {
     /// it against the signature releases carry, and swap it over a copy of 0.7.3 in a temporary
     /// folder.
     #[test]
+    #[cfg(target_os = "macos")]
     #[ignore = "downloads two releases (17 MB) from GitHub"]
     fn updates_a_real_release() {
         let dir = tempfile::tempdir().unwrap();

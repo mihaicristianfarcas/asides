@@ -29,3 +29,38 @@ jobs:
         run: cargo test --workspace
       - name: Bundle
         run: make bundle
+
+  windows:
+    # x64: whisper.cpp builds with MSVC (on Arm64, ggml needs clang-cl: CONTRIBUTING.md).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # whisper.cpp's bindings need libclang (LLVM is on the runner).
+      - name: LLVM
+        shell: pwsh
+        run: '"LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV'
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      # A debug build, its installer uncompressed: the packaging is what's checked.
+      - name: Package
+        shell: pwsh
+        env:
+          ASIDES_PROFILE: dev
+        run: ./scripts/package-windows.ps1
+      - name: One archive and one installer, with the three programs
+        shell: pwsh
+        run: |
+          $zips = @(Get-ChildItem dist -Filter *.zip)
+          $setups = @(Get-ChildItem dist -Filter *-setup.exe)
+          if ($zips.Count -ne 1 -or $setups.Count -ne 1) { throw "$($zips.Count) archives and $($setups.Count) installers, not one of each" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $names = [IO.Compression.ZipFile]::OpenRead($zips[0].FullName).Entries.FullName
+          foreach ($file in 'asides-app.exe', 'asides-overlay.exe', 'asides.exe') {
+            if ($names -notcontains $file) { throw "no $file in $($zips[0].Name)" }
+          }

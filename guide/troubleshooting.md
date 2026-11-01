@@ -1,9 +1,10 @@
 # Troubleshooting
 
 **The aside didn't reach my agent.** The menu (and History in the asides window) says why. asides
-can type into Terminal, Ghostty and Diri; the first time, allow it to control Terminal or Ghostty
-(System Settings → Privacy & Security → Automation). Every aside stays in History: send it again
-from there, or with `asides send`.
+can type into Terminal, Ghostty and Diri (on Windows, any console: Windows Terminal, VS Code's
+terminal…); the first time, allow it to control Terminal or Ghostty (System Settings → Privacy &
+Security → Automation). Every aside stays in History: send it again from there, or with `asides
+send`.
 
 **It went to the wrong session.** It goes to the session you typed into last. Press `Tab` on the
 frozen screen, or click the session's name on the pill, to pick another before sending.
@@ -45,5 +46,8 @@ The update installs only once asides has quit.
 once, or use an Apple Development or Developer ID certificate (see
 [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
+**Windows says it protected your PC.** The Windows build isn't signed yet: click **More info**,
+then **Run anyway**.
+
 Still stuck? [Open an issue](https://github.com/mihaicristianfarcas/asides/issues/new?template=bug_report.md)
-with your macOS version and the output of `asides status`.
+with your macOS or Windows version and the output of `asides status`.

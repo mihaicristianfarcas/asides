@@ -18,6 +18,12 @@
 //!   Return finds nothing to send yet) and the text 1.5 s after.
 //! - Codex gets Tab instead of Return (`AgentKind::submit_key`): Return joins the turn it's working
 //!   on, and it may answer only the newer message.
+//! - **A console on Windows** (Windows Terminal, a console window, VS Code's terminal): its input
+//!   is written as keys pressed there (`Step::Console`, the app's `WriteConsoleInput`), whichever
+//!   app shows it. Text goes between bracketed-paste markers, so its new lines don't send it, then
+//!   Return; a screenshot's path is pasted on its own first, as in Terminal. Codex reads keys there
+//!   without bracketed paste (an Esc would interrupt it): its text is typed in one burst, which it
+//!   takes for a paste, new lines and all.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -42,6 +48,12 @@ pub enum Step {
     /// Puts back what the clipboard held before.
     RestoreClipboard,
     Wait(Duration),
+    /// Types `text` into the console of process `pid` (Windows), each character a key pressed there:
+    /// `\r` is Return, `\t` Tab, `\x1b` Esc.
+    Console {
+        pid: i32,
+        text: String,
+    },
 }
 
 /// How long an agent takes to read the clipboard after Ctrl+V, or to attach a pasted path.
@@ -60,6 +72,7 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
         Host::Diri { session: id } => Ok(diri(id, &parts, submit, dirijor)),
         Host::Ghostty => Ok(vec![Step::Script(ghostty(&session.dir, &parts, submit))]),
         Host::Terminal => Ok(terminal(session.agent, &session.tty, &parts, submit)),
+        Host::Console { .. } => Ok(console(session.agent, session.pid, &parts, submit)),
         Host::Other { name } => {
             Err(format!("asides can't type into {name}. Run the agent in Terminal, Ghostty or Diri."))
         }
@@ -167,9 +180,47 @@ fn terminal(agent: AgentKind, tty: &str, parts: &[&Part], submit: SubmitKey) -> 
     steps
 }
 
+/// Bracketed-paste markers around `text`; its new lines as Return (what a terminal sends for them).
+fn pasted(text: &str) -> String {
+    format!("\x1b[200~{}\x1b[201~", text.replace("\r\n", "\r").replace('\n', "\r"))
+}
+
+fn console(agent: AgentKind, pid: i32, parts: &[&Part], submit: SubmitKey) -> Vec<Step> {
+    // Codex on Windows reads keys without bracketed paste: a burst of keys is its paste.
+    let paste = |text: &str| match agent {
+        AgentKind::Codex => text.replace("\r\n", "\r").replace('\n', "\r"),
+        _ => pasted(text),
+    };
+    let mut steps = Vec::new();
+    let mut texts: Vec<&str> = Vec::new();
+    for part in parts {
+        match part {
+            // Attached a moment after it's pasted: on its own, ahead of the text.
+            Part::Image(path) => {
+                steps.push(Step::Console { pid, text: paste(path) });
+                steps.push(Step::Wait(ATTACH));
+            }
+            Part::Text(text) => texts.push(text),
+        }
+    }
+    if !texts.is_empty() {
+        steps.push(Step::Console { pid, text: paste(&texts.join("\n\n")) });
+    }
+    steps.push(Step::Wait(BEFORE_SUBMIT));
+    let key = if submit == SubmitKey::Tab { "\t" } else { "\r" };
+    steps.push(Step::Console { pid, text: key.into() });
+    steps
+}
+
 /// The apps new sessions open in, which asides can also type into, as Settings offers them. Terminal
 /// is the default.
+#[cfg(not(windows))]
 pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "Diri"];
+
+/// The apps new sessions open in on Windows: Windows Terminal (the default where it's installed),
+/// or a console window of their own.
+#[cfg(windows)]
+pub const TERMINALS: &[&str] = &["Windows Terminal", "Console"];
 
 /// The bundle ID of the terminal app `name`, one of [`TERMINALS`].
 pub fn bundle_id(name: &str) -> Option<&'static str> {
@@ -197,8 +248,17 @@ pub fn app_bundle(name: &str) -> Option<PathBuf> {
 }
 
 /// The apps of [`TERMINALS`] that are installed.
+#[cfg(not(windows))]
 pub fn installed_terminals() -> Vec<&'static str> {
     TERMINALS.iter().copied().filter(|name| app_bundle(name).is_some()).collect()
+}
+
+/// The apps of [`TERMINALS`] that are installed: Windows Terminal (its `wt` command), and the
+/// console window, always there.
+#[cfg(windows)]
+pub fn installed_terminals() -> Vec<&'static str> {
+    let terminal = crate::launch::find_program(&crate::launch::user_path(), "wt").is_some();
+    TERMINALS.iter().copied().filter(|name| *name != "Windows Terminal" || terminal).collect()
 }
 
 /// The first message of a new session, as text: its screenshots as paths the agent can read.
@@ -234,13 +294,7 @@ pub fn launch_script(
     launch: &str,
     readable: &[PathBuf],
 ) -> String {
-    let mut words = agent.command(message, extra);
-    if agent == AgentKind::Claude {
-        // Its screenshots are outside the repo: readable without asking.
-        for dir in readable {
-            words.splice(1..1, ["--add-dir".to_string(), dir.to_string_lossy().into_owned()]);
-        }
-    }
+    let words = launch_words(agent, message, extra, readable);
     let command = words.iter().map(|w| sh_quote(w)).collect::<Vec<_>>().join(" ");
     format!(
         "#!/bin/sh\n# Started by asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-/bin/zsh}}\" -ilc 'printf %s \"$PATH\"' \
@@ -252,6 +306,19 @@ pub fn launch_script(
         var = crate::agents::LAUNCH_VAR,
         launch = sh_quote(launch),
     )
+}
+
+/// The command line that starts `agent` with `message` as its first message (and the user's extra
+/// arguments): its program, then its arguments. Claude Code may read `readable` without asking.
+pub fn launch_words(agent: AgentKind, message: &str, extra: &[String], readable: &[PathBuf]) -> Vec<String> {
+    let mut words = agent.command(message, extra);
+    if agent == AgentKind::Claude {
+        // Its screenshots are outside the repo: readable without asking.
+        for dir in readable {
+            words.splice(1..1, ["--add-dir".to_string(), dir.to_string_lossy().into_owned()]);
+        }
+    }
+    words
 }
 
 /// The line typed into the user's shell (bash, zsh or fish alike) to run a launch script.
@@ -323,6 +390,34 @@ mod tests {
                 Step::RestoreClipboard,
                 Step::Wait(BEFORE_SUBMIT),
                 key(&["tab"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn types_into_a_windows_console_as_keys() {
+        let into =
+            |agent| plan(&session(agent, Host::Console { name: "Windows Terminal".into() }), &parts(), Path::new(""));
+        let keys = |text: &str| Step::Console { pid: 42, text: text.into() };
+        assert_eq!(
+            into(AgentKind::Claude).unwrap(),
+            [
+                keys("\x1b[200~/h/1.png\x1b[201~"),
+                Step::Wait(ATTACH),
+                keys("\x1b[200~The \"Pay\" button is too low.\r\r### 1. button\x1b[201~"),
+                Step::Wait(BEFORE_SUBMIT),
+                keys("\r"),
+            ]
+        );
+        // Codex: a burst of keys, no markers (an Esc would interrupt it); Tab queues it.
+        assert_eq!(
+            into(AgentKind::Codex).unwrap(),
+            [
+                keys("/h/1.png"),
+                Step::Wait(ATTACH),
+                keys("The \"Pay\" button is too low.\r\r### 1. button"),
+                Step::Wait(BEFORE_SUBMIT),
+                keys("\t"),
             ]
         );
     }

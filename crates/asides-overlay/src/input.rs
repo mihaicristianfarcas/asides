@@ -67,20 +67,20 @@ pub fn bind_keys(cx: &mut App) {
             KeyBinding::new("delete", Delete, context),
             KeyBinding::new("alt-backspace", DeleteWordLeft, context),
             KeyBinding::new("alt-delete", DeleteWordRight, context),
-            KeyBinding::new("cmd-backspace", DeleteToStart, context),
-            KeyBinding::new("cmd-delete", DeleteToEnd, context),
+            KeyBinding::new("secondary-backspace", DeleteToStart, context),
+            KeyBinding::new("secondary-delete", DeleteToEnd, context),
             KeyBinding::new("left", Left, context),
             KeyBinding::new("right", Right, context),
             KeyBinding::new("shift-left", SelectLeft, context),
             KeyBinding::new("shift-right", SelectRight, context),
-            KeyBinding::new("cmd-a", SelectAll, context),
-            KeyBinding::new("cmd-v", Paste, context),
-            KeyBinding::new("cmd-c", Copy, context),
-            KeyBinding::new("cmd-x", Cut, context),
+            KeyBinding::new("secondary-a", SelectAll, context),
+            KeyBinding::new("secondary-v", Paste, context),
+            KeyBinding::new("secondary-c", Copy, context),
+            KeyBinding::new("secondary-x", Cut, context),
             KeyBinding::new("home", Home, context),
-            KeyBinding::new("cmd-left", Home, context),
+            KeyBinding::new("secondary-left", Home, context),
             KeyBinding::new("end", End, context),
-            KeyBinding::new("cmd-right", End, context),
+            KeyBinding::new("secondary-right", End, context),
         ]);
     }
     // ⌘Z stays the overlay's (it removes the last pin) in a card's field.
@@ -92,10 +92,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", Down, context),
         KeyBinding::new("shift-up", SelectUp, context),
         KeyBinding::new("shift-down", SelectDown, context),
-        KeyBinding::new("cmd-up", Top, context),
-        KeyBinding::new("cmd-down", Bottom, context),
-        KeyBinding::new("cmd-z", Undo, context),
-        KeyBinding::new("cmd-shift-z", Redo, context),
+        KeyBinding::new("secondary-up", Top, context),
+        KeyBinding::new("secondary-down", Bottom, context),
+        KeyBinding::new("secondary-z", Undo, context),
+        KeyBinding::new("secondary-shift-z", Redo, context),
     ]);
 }
 

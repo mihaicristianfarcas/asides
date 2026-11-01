@@ -1,7 +1,10 @@
 mod mcp;
 mod measure;
+#[cfg(windows)]
+mod windows;
 
 use std::path::PathBuf;
+#[cfg(not(windows))]
 use std::process::Command as Process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -10,7 +13,9 @@ use asides_core::config::{Config, pretty_shortcut};
 use asides_core::history::{self, Aside};
 use asides_core::link::Link;
 use asides_core::markdown::Part;
-use asides_core::paths::{self, BUNDLE_ID, tilde};
+#[cfg(not(windows))]
+use asides_core::paths::BUNDLE_ID;
+use asides_core::paths::{self, tilde};
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
 use clap::{Parser, Subcommand};
@@ -115,12 +120,23 @@ enum Command {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Windows, for the app: type standard input into the console of process PID.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    TypeInto { pid: u32 },
+    /// Windows, for the app: start a new session's agent, as the file says.
+    #[cfg(windows)]
+    #[command(hide = true)]
+    Launch { file: PathBuf },
 }
 
 fn main() {
     // `asides history | head`: a closed pipe ends it quietly, as it does other commands.
     // SAFETY: before any thread exists.
-    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL)
+    };
     let cli = Cli::parse();
     if let Err(err) = run(cli) {
         eprintln!("asides: {err:#}");
@@ -169,6 +185,10 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", measure::describe(&frame, &name, target, tolerance, scale)?);
             Ok(())
         }
+        #[cfg(windows)]
+        Some(Command::TypeInto { pid }) => windows::type_into(pid),
+        #[cfg(windows)]
+        Some(Command::Launch { file }) => windows::launch(&file),
         Some(Command::SimulateMeasure { image, script, to }) => {
             let request = request_id();
             let image = image.canonicalize().context("image not found")?;
@@ -359,7 +379,10 @@ fn status() -> Result<()> {
 
 fn log(count: usize, days: i64) -> Result<()> {
     let path = asides_core::log::path();
-    println!("{} (Console lists it under Log Reports)", tilde(&path));
+    match cfg!(target_os = "macos") {
+        true => println!("{} (Console lists it under Log Reports)", tilde(&path)),
+        false => println!("{}", tilde(&path)),
+    }
     let problems = asides_core::log::recent_problems(days);
     match problems.is_empty() {
         true => println!("\nNo problems in the last {days} days."),
@@ -445,13 +468,26 @@ fn crash_reports(days: i64) -> Vec<Crashes> {
     crashes
 }
 
+#[cfg(windows)]
+pub(crate) fn is_running(pid: u32) -> bool {
+    windows::is_running(pid)
+}
+
+#[cfg(not(windows))]
 pub(crate) fn is_running(pid: u32) -> bool {
     pid != 0 && Process::new("kill").args(["-0", &pid.to_string()]).output().is_ok_and(|o| o.status.success())
+}
+
+/// Hands the link to the app: the copy beside this command, which hands it to the one running.
+#[cfg(windows)]
+pub(crate) fn send(link: &Link) -> Result<()> {
+    windows::send(link)
 }
 
 /// Hands the link to the app via Launch Services (launching it if needed, without stealing focus):
 /// the copy `ASIDES_APP` names, or the one this command ships in. Several copies share the bundle
 /// ID, and Launch Services, left to pick, may start another one beside the running one.
+#[cfg(not(windows))]
 pub(crate) fn send(link: &Link) -> Result<()> {
     let mut open = Process::new("open");
     open.arg("-g");
@@ -470,6 +506,7 @@ pub(crate) fn send(link: &Link) -> Result<()> {
 }
 
 /// The app this command ships in (`asides.app/Contents/Helpers/asides`), when it runs from one.
+#[cfg(not(windows))]
 fn own_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let helpers = exe.parent()?;

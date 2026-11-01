@@ -9,6 +9,10 @@ Recording). A clip is the frames captured, cropped to the part that matters, and
 happens between them: where the pointer goes (the window draws it gliding there), what it clicks or
 drags, the key pressed, what's said. Needs Pillow.
 
+On Windows it writes Windows' clips (crates/asides-overlay/help-windows/, which Windows builds embed):
+the same desktop with Edge and Windows Terminal, the real overlay as Windows draws it, at the
+display's scale (100% gives 1× clips; the window needs 1512 × 945 points of screen).
+
 Usage: python3 scripts/make-help.py [--keep DIR]  (--keep: the full captures too, to look at)
 """
 
@@ -22,17 +26,20 @@ import subprocess
 import sys
 import tempfile
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
-OUT = ROOT / "crates" / "asides-overlay" / "help"
-FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
+WINDOWS = sys.platform == "win32"
+OUT = ROOT / "crates" / "asides-overlay" / ("help-windows" if WINDOWS else "help")
+FIREFOX = os.environ.get("FIREFOX", r"C:\Program Files\Mozilla Firefox\firefox.exe" if WINDOWS
+                         else "/Applications/Firefox.app/Contents/MacOS/firefox")
+OVERLAY = ROOT / "target" / "debug" / ("asides-overlay.exe" if WINDOWS else "asides-overlay")
 # The screen, the demo's 14-inch MacBook Pro, in points, drawn at 2×; its menu bar.
 WIDTH, HEIGHT = 1512, 945
 MENU_BAR = 37
 
-page = (DOCS / "index.html").read_text()
+page = (DOCS / "index.html").read_text(encoding="utf-8")
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
 desk = re.search(r'<div class="desk".*?(?=<div class="hud")', page, re.S).group(0)
 
@@ -53,6 +60,56 @@ html, body {{ margin: 0; overflow: hidden; }}
 </style></head><body><div class="display">{markup}</div></body></html>"""
 
 
+# Windows: Edge (vertical tabs: one row) and Windows Terminal, with Windows' caption buttons, its
+# corners and fonts. Where the page's content is doesn't change. No menu bar: the clips start below it.
+CAPTION = '<span class="caption"><i>\ue921</i><i>\ue922</i><i>\ue8bb</i></span>'
+WINDOWS_STYLE = """
+.menubar { display: none !important; }
+.win { border-radius: calc(8 * var(--u)) !important;
+  box-shadow: 0 0 0 calc(1 * var(--u)) rgba(0, 0, 0, 0.3), 0 calc(8 * var(--u)) calc(32 * var(--u)) rgba(0, 0, 0, 0.35) !important; }
+.bar .caption { display: flex; align-self: stretch; margin-left: auto; margin-right: calc(-12 * var(--u)); }
+.bar .caption i { display: flex; align-items: center; justify-content: center; width: calc(46 * var(--u));
+  font: normal calc(10 * var(--u)) "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
+.safari .bar { padding-left: calc(12 * var(--u)) !important; }
+.safari .bar .url { width: calc(600 * var(--u)); margin: 0 0 0 calc(10 * var(--u)); justify-content: flex-start;
+  padding-left: calc(14 * var(--u)); border-radius: calc(8 * var(--u)); }
+.term { background: #0c0c0c !important; }
+.term .bar { height: calc(34 * var(--u)) !important; padding: 0 calc(12 * var(--u)) 0 calc(8 * var(--u)) !important;
+  background: #202020 !important; border: 0 !important; align-items: flex-end; }
+.term .bar .caption { align-self: flex-start; height: 100%; color: #ccc; }
+.term .tab { display: flex; align-items: center; gap: calc(8 * var(--u)); width: calc(190 * var(--u));
+  height: calc(28 * var(--u)); padding: 0 calc(10 * var(--u)); color: #fff; background: #0c0c0c;
+  border-radius: calc(6 * var(--u)) calc(6 * var(--u)) 0 0; }
+.term .tab svg { width: calc(14 * var(--u)) !important; height: calc(14 * var(--u)) !important; padding: 0 !important; }
+.term .tab i { margin-left: auto; font: normal calc(8 * var(--u)) "Segoe Fluent Icons", "Segoe MDL2 Assets"; color: #aaa; }
+.term .newtab { align-self: center; margin-left: calc(8 * var(--u)); color: #ccc;
+  font: normal calc(10 * var(--u)) "Segoe Fluent Icons", "Segoe MDL2 Assets"; }
+.term .screen { height: calc(526 * var(--u)) !important; background: #0c0c0c;
+  font-family: "Cascadia Mono", Consolas, monospace !important; }
+"""
+
+
+def windows_desk(markup):
+    markup = re.sub(r'(<div class="win safari">\s*<div class="bar">)\s*<span class="lights">.*?</svg>',
+                    r"\1", markup, count=1, flags=re.S)
+    refresh = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">'
+               '<path d="M19 12a7 7 0 1 1-2.05-4.95M19 4.5v4h-4"/></svg>')
+    markup = replace(markup, '<span class="url">', refresh + '<span class="url">')
+    markup = re.sub(r'(<span class="url">[^<]*</span>)\s*<svg.*?</svg>\s*<svg.*?</svg>', r"\1" + CAPTION,
+                    markup, count=1, flags=re.S)
+    terminal = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" '
+                'stroke-linejoin="round"><path d="m5 8 4 4-4 4M11 16h7"/></svg>')
+    markup = re.sub(r'<span class="lights"><i></i><i></i><i></i></span>\s*<span class="term-title">[^<]*</span>',
+                    f'<span class="tab">{terminal}Claude Code<i>\ue8bb</i></span><span class="newtab">\ue710</span>'
+                    + CAPTION, markup, count=1)
+    markup = replace(markup, "**In:** Safari", "**In:** Microsoft Edge")
+    return replace(markup, "Built-in Retina Display, 1512 × 945 pt, @2x", "Generic Monitor, 1512 × 945 pt")
+
+
+if WINDOWS:
+    style += WINDOWS_STYLE
+    desk = windows_desk(desk)
+
 # The demo's last frame: the aside in Claude Code's chat, in Terminal beside Safari, still in front.
 sent = desk
 # Before it: nothing sent yet. The real overlay draws on it.
@@ -61,7 +118,8 @@ safari = re.sub(r'<p class="reply">.*?</p>\s*', "", safari, flags=re.S)
 
 # Where the demo's styles put things, in points: after changing the demo, look at the frames
 # (--keep).
-page_of = {"app": "Safari", "window": "Checkout · meadow", "url": "localhost:5173/checkout"}
+APP = "Microsoft Edge" if WINDOWS else "Safari"
+page_of = {"app": APP, "window": "Checkout · meadow", "url": "localhost:5173/checkout"}
 card = {**page_of, "name": 'group "Order summary"', "selector": "main > aside.summary",
         "frame": {"x": 584, "y": 170, "width": 320, "height": 319.5}}
 pay = {**page_of, "name": 'button "Pay now · $72.00"', "selector": "aside.summary > button.pay",
@@ -79,11 +137,15 @@ NAME = [104, 20]
 # The pointer out of the way: on the page, under the summary card.
 REST = [880, 540]
 CLOSE = [{"key": "escape"}, {"key": "escape", "wait": 300}]
+# How long a replay waits for the overlay's windows first (a debug build on Windows takes longer).
+START = 1500 if WINDOWS else 600
+# Between the steps of a drag: measuring works out the edges as it goes, slower in Windows' debug build.
+DRAG_WAIT = 500 if WINDOWS else 120
 
 
 def drag(path, element=None, held=None):
     """Drags along `path`; `held`: a capture before letting go (measuring, the size drawn shows then)."""
-    steps = [{"move": path[0]}, {"down": path[0]}, *({"drag": p} for p in path[1:])]
+    steps = [{"move": path[0]}, {"down": path[0]}, *({"drag": p, "wait": DRAG_WAIT} for p in path[1:])]
     if held:
         steps += [{"wait": 250}, {"capture": held}]
     steps += [{"up": path[-1], "wait": 250}]
@@ -99,20 +161,20 @@ def click(at, element=None):
 # Each run: the screen, and the replay (captures named for the clip's frames), in the screen's points.
 RUNS = {
     "basics": ("safari", [
-        {"wait": 600}, {"recording": 2}, {"move": REST, "wait": 200}, {"capture": "basics-0.png"},
+        {"wait": START}, {"recording": 2}, {"move": REST, "wait": 200}, {"capture": "basics-0.png"},
         *click(CARD, card), {"capture": "basics-1.png"},
         *drag(AREA, pay), {"capture": "basics-2.png"},
         {"recording": 9}, {"level": 0.55}, {"move": REST, "wait": 250}, {"capture": "basics-3.png"},
         *CLOSE,
     ]),
     "target": ("safari", [
-        {"wait": 600}, {"recording": 3}, {"move": REST, "wait": 200}, {"capture": "target-0.png"},
+        {"wait": START}, {"recording": 3}, {"move": REST, "wait": 200}, {"capture": "target-0.png"},
         {"key": "tab", "wait": 500}, {"capture": "target-1.png"},
         {"move": NAME, "toolbar": True, "wait": 500}, {"capture": "target-2.png"},
         *CLOSE,
     ]),
     "card": ("safari", [
-        {"wait": 600}, {"recording": 4}, *click(CARD, card), {"move": REST, "wait": 200}, {"capture": "card-0.png"},
+        {"wait": START}, {"recording": 4}, *click(CARD, card), {"move": REST, "wait": 200}, {"capture": "card-0.png"},
         *click(CARD), {"capture": "card-1.png"},
         {"type": "Give it room under the header", "wait": 300}, {"capture": "card-2.png"},
         {"key": "cmd+2", "wait": 300}, {"capture": "card-3.png"},
@@ -120,14 +182,14 @@ RUNS = {
     ]),
     "tools": ("safari", [
         # Listening, as asides opens by default: muted, the circle drawn would open its card.
-        {"wait": 600}, {"recording": 5}, {"move": REST}, {"key": "m", "wait": 200}, {"move": FIELD, "wait": 300},
+        {"wait": START}, {"recording": 5}, {"move": REST}, {"key": "m", "wait": 200}, {"move": FIELD, "wait": 300},
         {"capture": "tools-0.png"},
         *drag(FIELD_DRAG, held="tools-1.png"),
         {"key": "d", "wait": 200}, *drag(CIRCLE), {"move": REST, "wait": 300}, {"capture": "tools-2.png"},
         *CLOSE,
     ]),
     "keys": ("safari", [
-        {"wait": 600}, {"move": REST, "wait": 200}, {"key": "?", "wait": 400}, {"capture": "keys-0.png"},
+        {"wait": START}, {"move": REST, "wait": 200}, {"key": "?", "wait": 800 if WINDOWS else 400}, {"capture": "keys-0.png"},
         *CLOSE,
     ]),
 }
@@ -163,7 +225,7 @@ CLIPS = {
         {"image": "card-0", "pointer": REST, "hold": 1300},
         {"image": "card-1", "pointer": CARD, "click": True, "hold": 1000},
         {"image": "card-2", "pointer": REST, "hold": 1200},
-        {"image": "card-3", "key": "⌘2", "hold": 2600},
+        {"image": "card-3", "key": "Ctrl+2" if WINDOWS else "⌘2", "hold": 2600},
     ]),
     "tools": ((60, 36, 918, 520), [
         {"image": "tools-0", "pointer": FIELD, "key": "measure", "hold": 1800},
@@ -178,7 +240,7 @@ def screenshot(markup, out, tmp):
     profile = tmp / "profile"
     profile.mkdir(exist_ok=True)
     source = tmp / "desk.html"
-    source.write_text(html(markup))
+    source.write_text(html(markup), encoding="utf-8")
     subprocess.run(
         [FIREFOX, "--headless", "--no-remote", "--profile", str(profile),
          f"--window-size={WIDTH * 2},{HEIGHT * 2}", "--screenshot", str(out), source.as_uri()],
@@ -190,34 +252,37 @@ def run(name, screen, replay, tmp):
     run_dir = tmp / name
     run_dir.mkdir()
     (run_dir / "screen-0.rgba").write_bytes(Image.open(tmp / f"{screen}.png").convert("RGBA").tobytes())
+    home = r"C:\Users\me\code" if WINDOWS else "/Users/me/Developer"
+    apps = ["Windows Terminal", "VS Code", "Windows Terminal"] if WINDOWS else ["Terminal", "Ghostty", "Diri"]
     spec = {
         "screens": [{
-            "display": 1, "screen": {"name": "Built-in Retina Display", "width": WIDTH, "height": HEIGHT, "scale": 2},
+            "display": 1, "screen": {"name": "Generic Monitor" if WINDOWS else "Built-in Retina Display",
+                                     "width": WIDTH, "height": HEIGHT, "scale": 2},
             "origin": [0, 0], "frame": {"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT},
             "pixels": "screen-0.rgba", "width": WIDTH * 2, "height": HEIGHT * 2,
-            "place": "Safari · \"Checkout · meadow\"", "menu_bar": MENU_BAR,
+            "place": f"{APP} · \"Checkout · meadow\"", "menu_bar": MENU_BAR,
         }],
         "color": "#FF2D55", "tolerance": 2, "identify": True,
-        "record_shortcut": "⌃⌥Space", "freeze_shortcut": "⌃⌥P", "listen": True,
+        "record_shortcut": "Ctrl+Alt+Space" if WINDOWS else "⌃⌥Space",
+        "freeze_shortcut": "Ctrl+Alt+P" if WINDOWS else "⌃⌥P", "listen": True,
         "model": {"ready": True, "label": "English, 190 MB"},
         "targets": {
             "sessions": [
-                {"id": "200", "label": "Claude Code (shop)", "app": "Terminal"},
-                {"id": "201", "label": "Codex (api)", "app": "Ghostty"},
-                {"id": "202", "label": "OpenCode (blog)", "app": "Diri"},
+                {"id": "200", "label": "Claude Code (shop)", "app": apps[0]},
+                {"id": "201", "label": "Codex (api)", "app": apps[1]},
+                {"id": "202", "label": "OpenCode (blog)", "app": apps[2]},
             ],
-            "folders": [{"path": "/Users/me/Developer/shop", "name": "shop"},
-                        {"path": "/Users/me/Developer/api", "name": "api"},
-                        {"path": "/Users/me/Developer/blog", "name": "blog"}],
+            "folders": [{"path": os.path.join(home, name) if WINDOWS else f"{home}/{name}", "name": name}
+                        for name in ("shop", "api", "blog")],
             "agents": ["claude", "codex", "opencode"], "chosen": {"kind": "session", "id": "200"},
         },
         # The window shows the part of the screen it covers: all of it, at the screen's origin.
         "windowed": {"x": 0, "y": 0, "width": WIDTH, "height": HEIGHT},
         "replay": replay,
     }
-    (run_dir / "session.json").write_text(json.dumps(spec, ensure_ascii=False))
+    (run_dir / "session.json").write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
     # The overlay dark, whatever the Mac's appearance, as the clips always were.
-    subprocess.run([ROOT / "target" / "debug" / "asides-overlay", run_dir], check=True, timeout=60,
+    subprocess.run([OVERLAY, run_dir], check=True, timeout=60,
                    stdout=subprocess.DEVNULL, env={**os.environ, "ASIDES_WINDOW_APPEARANCE": "dark"})
     for png in run_dir.glob("*.png"):
         shutil.copy(png, tmp / "frames" / png.name)
@@ -226,10 +291,18 @@ def run(name, screen, replay, tmp):
 def pill_box(frame, desk):
     """The pill on `frame` (pixels): where it differs from the desktop, near the top, as tall as it is
     from its bottom (over a dark sky, its top edge hardly differs)."""
-    top = (0, 0, frame.width, 400)
-    changed = ImageChops.difference(frame.crop(top), desk.crop(top)).convert("L").point(lambda v: 255 if v > 24 else 0)
+    scale = frame.width / WIDTH
+    top = (0, 0, frame.width, round(200 * scale))
+    frame, threshold = frame.crop(top), 24
+    if desk.size != (frame.width, round(HEIGHT * scale)):
+        # Scaled down by the overlay and by Pillow, the desktop differs a little everywhere: blurred,
+        # only the pill stands out.
+        desk = desk.resize((frame.width, round(HEIGHT * scale)), Image.LANCZOS)
+        frame, desk, threshold = frame.filter(ImageFilter.GaussianBlur(1)), desk.filter(ImageFilter.GaussianBlur(1)), 40
+    desk = desk.crop(top)
+    changed = ImageChops.difference(frame, desk).convert("L").point(lambda v: 255 if v > threshold else 0)
     x0, _, x1, y1 = changed.getbbox()
-    return x0 / 2, y1 / 2 - PILL_HEIGHT, (x1 - x0) / 2, PILL_HEIGHT
+    return x0 / scale, y1 / scale - PILL_HEIGHT, (x1 - x0) / scale, PILL_HEIGHT
 
 
 def cut_corners(image, radius):
@@ -269,12 +342,16 @@ def main():
                 box = pill_box(Image.open(tmp / "frames" / f"{frames[0]['image']}.png").convert("RGB"), desk)
             x, y, w, h = box
             listed = []
-            for i, frame in enumerate(frames):
-                image = Image.open(tmp / "frames" / f"{frame['image']}.png").convert("RGB")
+            images = [Image.open(tmp / "frames" / f"{f['image']}.png").convert("RGB") for f in frames]
+            # The overlay's captures are at the display's scale, Firefox's at 2×: all at the least.
+            scale = min(image.width / WIDTH for image in images)
+            for i, (frame, image) in enumerate(zip(frames, images)):
                 out = f"{name}-{i}.webp" if len(frames) > 1 else f"{name}.webp"
-                image = image.crop((round(x * 2), round(y * 2), round((x + w) * 2), round((y + h) * 2)))
+                at = image.width / WIDTH
+                image = image.crop((round(x * at), round(y * at), round((x + w) * at), round((y + h) * at)))
+                image = image.resize((round(w * scale), round(h * scale)), Image.LANCZOS) if at != scale else image
                 if options.get("bare"):
-                    image = cut_corners(image, options["radius"] * 2)
+                    image = cut_corners(image, options["radius"] * scale)
                 image.save(OUT / out, quality=84 if image.mode == "RGB" else 92, method=6)
                 entry = {"image": out, "hold": frame["hold"]}
                 if "pointer" in frame:
@@ -293,7 +370,7 @@ def main():
             + ",\n".join("    " + json.dumps(f, ensure_ascii=False) for f in clip["frames"]) + "\n  ]}"
             for name, clip in manifest.items()
         )
-        (OUT / "clips.json").write_text("{\n" + clips + "\n}\n")
+        (OUT / "clips.json").write_text("{\n" + clips + "\n}\n", encoding="utf-8")
     total = sum(f.stat().st_size for f in OUT.iterdir())
     print(f"Wrote {OUT} ({total // 1024} KB)")
 

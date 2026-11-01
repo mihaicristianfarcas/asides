@@ -1,15 +1,18 @@
 //! Wispr Flow's dictation history, read from the app's local `flow.sqlite` with the system's
-//! `sqlite3`, read-only. The schema is Wispr Flow's own and changes between its versions, so
-//! columns are discovered at run time and the optional ones may be missing.
+//! `sqlite3` (Windows has none: SQLite built in, `rusqlite`), read-only. The schema is Wispr Flow's
+//! own and changes between its versions, so columns are discovered at run time and the optional
+//! ones may be missing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Command;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 
+#[cfg(not(windows))]
 const SQLITE3: &str = "/usr/bin/sqlite3";
 /// The most recent rows looked at each time; far more than anyone dictates between two changes.
 const RECENT_ROWS: u32 = 50;
@@ -18,8 +21,13 @@ const WINDOW: Duration = Duration::minutes(15);
 /// Rows with text Wispr Flow delivered: formatted, or raw when formatting was skipped.
 const DONE: &[&str] = &["formatted", "raw_transcript"];
 
-/// `~/Library/Application Support/Wispr Flow/flow.sqlite`
+/// `~/Library/Application Support/Wispr Flow/flow.sqlite`: Electron's folder for the app's data.
+/// On Windows, Electron's is `%APPDATA%\Wispr Flow`.
 pub fn default_db() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(roaming) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+        return PathBuf::from(roaming).join("Wispr Flow").join("flow.sqlite");
+    }
     std::env::home_dir().expect("HOME is not set").join("Library/Application Support/Wispr Flow/flow.sqlite")
 }
 
@@ -180,7 +188,37 @@ fn parse_timestamp(value: &Value) -> Option<DateTime<Utc>> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f").ok().map(|at| at.and_utc())
 }
 
+/// Runs one read-only query on a database another app writes; rows come back as JSON objects, as
+/// `sqlite3 -json` gives them.
+#[cfg(windows)]
+pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
+    use rusqlite::types::ValueRef;
+    let failed = |e: rusqlite::Error| format!("could not read Wispr Flow's history: {e}");
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let connection = rusqlite::Connection::open_with_flags(db, flags).map_err(failed)?;
+    connection.busy_timeout(std::time::Duration::from_secs(3)).map_err(failed)?;
+    let mut statement = connection.prepare(sql).map_err(failed)?;
+    let names: Vec<String> = statement.column_names().into_iter().map(String::from).collect();
+    let mut rows = statement.query([]).map_err(failed)?;
+    let mut found = Vec::new();
+    while let Some(row) = rows.next().map_err(failed)? {
+        let mut object = serde_json::Map::new();
+        for (i, name) in names.iter().enumerate() {
+            let value = match row.get_ref(i).map_err(failed)? {
+                ValueRef::Null | ValueRef::Blob(_) => Value::Null,
+                ValueRef::Integer(n) => Value::from(n),
+                ValueRef::Real(x) => Value::from(x),
+                ValueRef::Text(t) => Value::from(String::from_utf8_lossy(t).into_owned()),
+            };
+            object.insert(name.clone(), value);
+        }
+        found.push(object);
+    }
+    Ok(found)
+}
+
 /// Runs one read-only query on a database another app writes; rows come back as JSON objects.
+#[cfg(not(windows))]
 pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
     let out = Command::new(SQLITE3)
         .args(["-readonly", "-json", "-cmd", ".timeout 3000"])
@@ -206,9 +244,16 @@ mod tests {
         \"timestamp\" DATETIME, app VARCHAR(255), url TEXT, status VARCHAR(255), formattedText TEXT, asrText TEXT, \
         isArchived TINYINT(1) DEFAULT 0, audio BLOB);";
 
+    #[cfg(not(windows))]
     fn exec(db: &Path, sql: &str) {
         let ok = Command::new(SQLITE3).arg(db).arg(sql).status().unwrap().success();
         assert!(ok, "sqlite3 failed: {sql}");
+    }
+
+    #[cfg(windows)]
+    fn exec(db: &Path, sql: &str) {
+        let connection = rusqlite::Connection::open(db).unwrap();
+        connection.execute_batch(sql).unwrap_or_else(|e| panic!("sqlite failed: {sql}: {e}"));
     }
 
     fn stamp(at: DateTime<Utc>) -> String {

@@ -19,6 +19,7 @@ const RED: [u8; 3] = [255, 59, 48];
 pub struct StatusIcon {
     pub icon: Icon,
     /// Template icons are tinted by the system (black/white); colored ones are not.
+    #[cfg_attr(not(target_os = "macos"), expect(dead_code, reason = "Windows tints no icon: `template_ink`"))]
     pub template: bool,
 }
 
@@ -236,9 +237,19 @@ fn digit(d: u32, x: f64, y: f64) -> Vec<Shape> {
 }
 
 /// Straight-alpha RGBA pixels of the mark on the status-item canvas, black unless `color` is given.
+/// The ink of an icon the system tints (a template): black, which macOS tints for the menu bar. On
+/// Windows, which tints nothing, the taskbar's own: white on a dark one, black on a light one.
+fn template_ink() -> [u8; 3] {
+    #[cfg(windows)]
+    if !crate::system::light_taskbar() {
+        return [255, 255, 255];
+    }
+    [0, 0, 0]
+}
+
 fn draw(mark: Mark, color: Option<[u8; 3]>) -> Vec<u8> {
     let shapes = shapes(mark);
-    let [r, g, b] = color.unwrap_or([0, 0, 0]);
+    let [r, g, b] = color.unwrap_or_else(template_ink);
     let (width, height) = ((width(mark) * SCALE) as usize, (CANVAS_PT * SCALE) as usize);
     let mut rgba = Vec::with_capacity(width * height * 4);
     for y in 0..height {
