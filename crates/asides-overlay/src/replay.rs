@@ -170,13 +170,13 @@ pub fn run_window(view: usize, steps: serde_json::Value, dir: std::path::PathBuf
 
 /// Where the window with view `view` is on screen, captured as it shows (glass shows what's behind).
 #[cfg(windows)]
-fn capture_window(view: usize, path: &std::path::Path) {
+pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
     let captured = crate::native::frame(view).is_some_and(|f| crate::native::capture(f, path));
     eprintln!("captured {} ({captured})", path.display());
 }
 
 #[cfg(not(windows))]
-fn capture_window(view: usize, path: &std::path::Path) {
+pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
     let main = crate::native::screens().into_iter().find(|(_, f)| f.x == 0.0 && f.y == 0.0).map(|(_, f)| f.height);
     let Some((f, main)) = crate::native::frame(view).zip(main) else { return };
     let rect = format!("{},{},{},{}", f.x, main - f.y - f.height, f.width, f.height);

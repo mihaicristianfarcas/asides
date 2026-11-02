@@ -61,8 +61,8 @@ actions!(
 
 use crate::controls::{
     self, ButtonKind, Choice, Glide, Metrics, Radius, Theme, Type, button, chip, choice_setting, fade_in, floating,
-    font, footnote, hex, icon, icon_button, key_recorder, label_stack, page_header, rows, scrollbar, section,
-    segmented, select, setting, stepper, swatches, switch, toolbar_row,
+    font, footnote, hex, icon, icon_button, key_recorder, label_stack, page_header, page_strip, rows, scrollbar,
+    section, segmented, select, setting, stepper, swatches, switch, toolbar_row,
 };
 use crate::input::{Look, TextInput};
 use crate::{assets, help, native, style};
@@ -71,8 +71,6 @@ use crate::{assets, help, native, style};
 const TOAST: Duration = Duration::from_millis(2500);
 /// History's list of asides.
 const LIST: f32 = 300.0;
-/// An aside's Markdown, edited: its font.
-const EDITOR_FONT: &str = "Menlo";
 /// What edited Markdown can't be, at most, listed under it.
 const PROBLEMS_SHOWN: usize = 4;
 /// Setup's column, and its How it works step's (the clip beside its steps).
@@ -474,6 +472,7 @@ pub fn run() {
         ]);
         // The settings' fields edit as the card's does.
         crate::input::bind_keys(cx);
+        controls::init_fonts(cx);
         // The app's commands (`show general`), as they come.
         let (tx, mut commands) = futures::channel::mpsc::unbounded::<String>();
         std::thread::spawn(move || {
@@ -483,7 +482,19 @@ pub fn run() {
                 }
             }
         });
-        let bounds = Bounds::centered(None, size(px(1240.), px(780.)), cx);
+        // On a small screen, it fits in what the taskbar or the Dock and menu bar leave, a little
+        // inset (helio's; GPUI 0.2.2 doesn't say what they leave: room for them).
+        let (wanted, min) = (size(px(1240.), px(780.)), size(px(920.), px(600.)));
+        let bounds = match cx.primary_display().map(|d| d.bounds()) {
+            Some(screen) => Bounds::centered_at(
+                screen.center(),
+                size(
+                    wanted.width.min(screen.size.width - px(24.)).max(min.width),
+                    wanted.height.min(screen.size.height - px(96.)).max(min.height),
+                ),
+            ),
+            None => Bounds::centered(None, wanted, cx),
+        };
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
@@ -493,7 +504,7 @@ pub fn run() {
             }),
             focus: true,
             show: true,
-            window_min_size: Some(size(px(920.), px(600.))),
+            window_min_size: Some(min),
             // Glass, as the overlay's surfaces: the window blurs what's behind it (`Theme`'s tints).
             window_background: native::window_glass(),
             ..WindowOptions::default()
@@ -582,8 +593,8 @@ pub fn run() {
 /// Development (`ASIDES_WINDOW_CAPTURE=<dir>`): each page in each appearance, captured to
 /// `<dir>/<page>-<dark|light>.png` (setup's steps, `setup-<step>-…`; a long page screen by screen,
 /// `<page>-2-…` and on), then it quits. With `ASIDES_WINDOW_PAGE`, only that page (`setup`: every
-/// step; `setup-voice`: that one); with `ASIDES_WINDOW_RECORD=<seconds>`, each is recorded that long
-/// (`.mov`), to watch its clips play.
+/// step; `setup-voice`: that one); with `ASIDES_WINDOW_RECORD=<seconds>`, on a Mac, each is
+/// recorded that long (`.mov`), to watch its clips play.
 fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mut App) {
     let pages = [
         (Page::History, "history"),
@@ -622,15 +633,21 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
                     let p = |v: gpui::Pixels| f32::from(v);
                     let rect = format!("{},{},{},{}", p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
                     let shot = if part == 1 { format!("{name}-{look}") } else { format!("{name}-{part}-{look}") };
-                    let mut capture = Command::new("screencapture");
-                    match &record {
-                        Some(seconds) => {
-                            capture.args(["-x", "-v", "-V", seconds, "-R", &rect]).arg(dir.join(shot + ".mov"))
-                        }
-                        None => capture.args(["-x", "-o", "-R", &rect]).arg(dir.join(shot + ".png")),
-                    };
-                    // Off the main thread: the window goes on drawing meanwhile.
-                    let _ = cx.background_executor().spawn(async move { capture.status() }).await;
+                    if cfg!(windows) {
+                        // Read from the screen (`replay::capture_window`); no recordings.
+                        let view = handle.update(cx, |_, window, _| native::view_pointer(window)).unwrap_or(0);
+                        crate::replay::capture_window(view, &dir.join(shot + ".png"));
+                    } else {
+                        let mut capture = Command::new("screencapture");
+                        match &record {
+                            Some(seconds) => {
+                                capture.args(["-x", "-v", "-V", seconds, "-R", &rect]).arg(dir.join(shot + ".mov"))
+                            }
+                            None => capture.args(["-x", "-o", "-R", &rect]).arg(dir.join(shot + ".png")),
+                        };
+                        // Off the main thread: the window goes on drawing meanwhile.
+                        let _ = cx.background_executor().spawn(async move { capture.status() }).await;
+                    }
                     // More below: the next screen of it.
                     let more = handle.update(cx, |this, _, cx| {
                         let scroll = &this.page_scroll;
@@ -850,7 +867,7 @@ impl AsidesWindow {
         let Some(aside) = self.asides.iter().find(|a| a.id == id) else { return };
         let message = aside.message();
         let draft = self.drafts.entry(id.to_string()).or_insert_with(|| {
-            let draft = cx.new(|cx| TextInput::area(&message, EDITOR_FONT, cx));
+            let draft = cx.new(|cx| TextInput::area(&message, &controls::mono_font(), cx));
             draft.update(cx, |d, _| d.look = editor_look(self.theme));
             // Tab reaches it (and leaves it: it types no tabs).
             let _ = draft.read(cx).focus_handle(cx).tab_stop(true);
@@ -1431,29 +1448,10 @@ impl Render for AsidesWindow {
             .font_family(font())
             .text_color(t.primary)
             .text_size(px(Type::BODY))
-            // Windows: the strip along the top moves the window (under what's on it).
-            .children(cfg!(windows).then(|| {
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(CAPTION_HEIGHT))
-                    .window_control_area(WindowControlArea::Drag)
-            }))
             .children(sidebar)
-            // Windows: the page starts below the caption buttons' strip, which moves the window.
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .bg(surface)
-                    .children(cfg!(windows).then(|| div().flex_none().h(px(CAPTION_HEIGHT))))
-                    .child(content),
-            )
+            // Each page has its strip along the top (`page_strip`); on Windows the caption buttons
+            // are over it, and it moves the window.
+            .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(surface).child(content))
             .children(caption_buttons(window, t))
             .children(self.toast.as_ref().map(|(text, _)| {
                 div().absolute().bottom(px(18.)).left_0().right_0().flex().justify_center().child(fade_in(
@@ -1554,12 +1552,19 @@ impl AsidesWindow {
             .bg(t.sidebar)
             .border_r_1()
             .border_color(t.hairline)
-            .child(div().flex_none().h(px(Metrics::TOOLBAR)))
+            // The title bar's lane: on a Mac the traffic lights'. On Windows (their caption buttons
+            // are over the page) the first row is as far from the top as the foot's line is from
+            // the bottom, as helio's.
+            .child(controls::drag_area().flex_none().h(px(if cfg!(windows) {
+                Metrics::SIDEBAR_EDGE - Metrics::NAV_TOP
+            } else {
+                Metrics::TITLE_BAR
+            })))
             .child(
                 div()
                     .flex_1()
                     .px(px(8.))
-                    .pt(px(6.))
+                    .pt(px(Metrics::NAV_TOP))
                     .flex()
                     .flex_col()
                     .gap(px(2.))
@@ -1792,6 +1797,8 @@ impl AsidesWindow {
                     .flex_col()
                     .border_r_1()
                     .border_color(t.hairline)
+                    // Windows: its strip of actions under the caption buttons' (as helio's chat).
+                    .when(cfg!(windows), |d| d.child(page_strip()))
                     .child(toolbar_row(
                         Some(
                             div()
@@ -1833,7 +1840,16 @@ impl AsidesWindow {
                         t,
                     )),
             )
-            .child(div().flex_1().min_w_0().h_full().flex().flex_col().children(detail))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .when(cfg!(windows), |d| d.child(page_strip()))
+                    .children(detail),
+            )
             .into_any_element()
     }
 
@@ -2575,7 +2591,17 @@ impl AsidesWindow {
             .size_full()
             .flex()
             .flex_col()
-            .child(div().flex_none().h(px(Metrics::TOOLBAR)).flex().items_center().justify_center().child(progress))
+            .child(
+                // The steps, between two halves that move the window.
+                div()
+                    .flex_none()
+                    .h(px(Metrics::TITLE_BAR))
+                    .flex()
+                    .items_center()
+                    .child(controls::drag_area().flex_1().h_full())
+                    .child(progress)
+                    .child(controls::drag_area().flex_1().h_full()),
+            )
             .child(scrolled(
                 div().id("setup").size_full().overflow_y_scroll().track_scroll(&self.page_scroll).child(
                     div()
@@ -3781,7 +3807,7 @@ fn page(id: &'static str, scroll: &ScrollHandle, t: Theme, content: impl IntoEle
         .size_full()
         .flex()
         .flex_col()
-        .child(div().flex_none().h(px(Metrics::TOOLBAR)))
+        .child(page_strip())
         .child(scrolled(
             div().id(id).size_full().overflow_y_scroll().track_scroll(scroll).child(
                 div()
@@ -3806,12 +3832,24 @@ fn scrolled(area: impl IntoElement, bar: SharedString, scroll: &ScrollHandle, t:
 
 /// A page with nothing on it yet, under `mark`, and a way on.
 fn empty_with_action(t: Theme, mark: AnyElement, title: &str, text: &str, action: AnyElement) -> AnyElement {
-    empty_div(t, mark, title, text).child(div().pt(px(10.)).child(action)).into_any_element()
+    below_strip(empty_div(t, mark, title, text).child(div().pt(px(10.)).child(action)))
 }
 
 /// A page with nothing on it yet, under `mark`.
 fn empty_with(t: Theme, mark: AnyElement, title: &str, text: &str) -> AnyElement {
-    empty_div(t, mark, title, text).into_any_element()
+    below_strip(empty_div(t, mark, title, text))
+}
+
+/// A page centered in the window: on Windows under the strip along the top (`page_strip`), which
+/// the caption buttons are over and which moves the window. A Mac's title bar is over the page.
+fn below_strip(content: impl IntoElement) -> AnyElement {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .when(cfg!(windows), |d| d.child(page_strip()))
+        .child(div().flex_1().min_h_0().child(content))
+        .into_any_element()
 }
 
 fn empty_div(t: Theme, mark: AnyElement, title: &str, text: &str) -> gpui::Div {
@@ -3867,8 +3905,7 @@ fn terminal_app(configured: &str) -> &'static str {
     deliver::TERMINALS.iter().copied().find(|n| n.eq_ignore_ascii_case(configured.trim())).unwrap_or(first)
 }
 
-/// The height of Windows' caption buttons, as Windows 11 draws them, and each one's width.
-const CAPTION_HEIGHT: f32 = 32.;
+/// Each of Windows' caption buttons' width, as Windows 11 draws them (46 × 32).
 const CAPTION_BUTTON: f32 = 46.;
 
 /// Windows: minimize, maximize (or restore) and close at the window's top right, in Windows' own
@@ -3897,6 +3934,10 @@ fn caption_buttons(window: &Window, t: Theme) -> Option<AnyElement> {
                 true => s.bg(hex(0xc42b1c, 1.0)).text_color(gpui::white()),
                 false => s.bg(t.hover),
             })
+            .active(move |s| match close {
+                true => s.bg(hex(0xc42b1c, 0.9)).text_color(gpui::white()),
+                false => s.bg(t.pressed),
+            })
             .child(glyph)
     };
     let (zoom, zoom_glyph) =
@@ -3906,7 +3947,7 @@ fn caption_buttons(window: &Window, t: Theme) -> Option<AnyElement> {
             .absolute()
             .top_0()
             .right_0()
-            .h(px(CAPTION_HEIGHT))
+            .h(px(Metrics::TITLE_BAR))
             .flex()
             .font_family(native::caption_font())
             .child(button("caption-minimize", "\u{e921}", WindowControlArea::Min))

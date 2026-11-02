@@ -3234,7 +3234,7 @@ fn toolbar_panel(
         .when(o.list_left, |d| d.items_end())
         .when(!o.list_left, |d| d.items_start())
         .gap(px(LIST_GAP as f32))
-        .font_family(".SystemUIFont")
+        .font_family(controls::font())
         .child(
             glass_panel(o.theme)
                 .id("toolbar")
@@ -3537,7 +3537,7 @@ impl ScreenView {
             let glass = frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), 7.)
                 .px(px(9.))
                 .py(px(5.))
-                .font_family(".SystemUIFont")
+                .font_family(controls::font())
                 .text_color(o.theme.primary.opacity(0.86))
                 .text_size(px(12.))
                 .opacity(note.map_or(0.0, |n| n.shown()))
@@ -3801,7 +3801,7 @@ impl ScreenView {
             .top(px(y as f32))
             .w(px(MENU_WIDTH as f32))
             .p(px(4.))
-            .font_family(".SystemUIFont")
+            .font_family(controls::font())
             .text_color(t.primary)
             .children(rows);
         fade_in(surface, SharedString::from(format!("menu-{}-{}", menu.at.0, menu.at.1)), -4.).into_any_element()

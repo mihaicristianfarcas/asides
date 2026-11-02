@@ -365,6 +365,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   or show windows. Run the app and `type-into` in the user's session (a scheduled task, Limited,
   Interactive); Task Scheduler finds `wt.exe` only by its full path (an app alias). SSH's
   PowerShell prints in the OEM code page: `×` showed as `x`. Check text by its code points.
+  Windows PowerShell reads a `.ps1` without a BOM as ANSI: what a script types comes out garbled
+  (`é` as `Ã©`); save it with one.
 - Extracting with `tar` keeps the archive's mtimes: cargo saw old files as built (`tar -m`).
 - Starting a program waits while Defender scans it, the first time after a build or an update:
   1.2 s for the overlay, 10 s for the x64 build under emulation, on the main thread until the
