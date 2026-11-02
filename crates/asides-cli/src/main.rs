@@ -225,7 +225,8 @@ fn list_sessions(json: bool) -> Result<()> {
         return Ok(());
     }
     if found.is_empty() {
-        println!("No agent sessions are running. Start Claude Code, Codex or OpenCode in Terminal, Ghostty or Diri.");
+        let terminals = if cfg!(windows) { "any terminal" } else { "Terminal, Ghostty or Diri" };
+        println!("No agent sessions are running. Start Claude Code, Codex or OpenCode in {terminals}.");
         return Ok(());
     }
     let default = sessions::latest(&found).map(AgentSession::id);
