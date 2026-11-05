@@ -20,14 +20,32 @@ use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
 use clap::{Parser, Subcommand};
 
+/// The long help, in each system's words: its shortcut, terminals and history folder.
+macro_rules! long_about {
+    ($keys:literal, $terminals:literal, $history:literal) => {
+        concat!(
+            "asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.\n\n",
+            $keys,
+            " opens asides over any app: click to pin an element, drag an area, talk, and press ",
+            $keys,
+            " again. The aside is typed into the agent session you last typed into (Claude Code, Codex, OpenCode… in ",
+            $terminals,
+            "), as your own message, and kept in ",
+            $history,
+            ". Run `asides` to open the asides window."
+        )
+    };
+}
+
 /// asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.
-///
-/// `⌃⌥Space` opens asides over any app: click to pin an element, drag an area, talk, and press
-/// `⌃⌥Space` again. The aside is typed into the agent session you last typed into (Claude Code,
-/// Codex, OpenCode… in Terminal, Ghostty or Diri), as your own message, and kept in
-/// ~/.asides/history. Run `asides` to open the asides window.
 #[derive(Parser)]
 #[command(name = "asides", version)]
+#[cfg_attr(
+    target_os = "macos",
+    command(long_about = long_about!("`⌃⌥Space`", "Terminal, Ghostty or Diri", "~/.asides/history"))
+)]
+#[cfg_attr(windows, command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "%USERPROFILE%\\.asides\\history")))]
+#[cfg_attr(target_os = "linux", command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "~/.asides/history")))]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -35,9 +53,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open asides on the screen, as ⌃⌥Space does (open, it sends the aside).
+    #[cfg_attr(
+        target_os = "macos",
+        command(about = "Open asides on the screen, as ⌃⌥Space does (open, it sends the aside)")
+    )]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        command(about = "Open asides on the screen, as Ctrl+Alt+Space does (open, it sends the aside)")
+    )]
     Open,
-    /// Open asides over the live screen, as ⌃⌥P does (open, it switches between frozen and live).
+    #[cfg_attr(
+        target_os = "macos",
+        command(about = "Open asides over the live screen, as ⌃⌥P does (open, it switches between frozen and live)")
+    )]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        command(
+            about = "Open asides over the live screen, as Ctrl+Alt+P does (open, it switches between frozen and live)"
+        )
+    )]
     Live,
     /// List the agent sessions asides can send asides to (the default first).
     Sessions {
@@ -81,7 +115,8 @@ enum Command {
         #[arg(long, default_value_t = 7)]
         days: i64,
     },
-    /// Quit the menu-bar app.
+    #[cfg_attr(target_os = "macos", command(about = "Quit the menu-bar app"))]
+    #[cfg_attr(not(target_os = "macos"), command(about = "Quit asides"))]
     Quit,
     /// Run the MCP server (stdio): agents can measure screenshots and read your asides.
     Mcp,
