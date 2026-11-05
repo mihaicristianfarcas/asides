@@ -33,6 +33,29 @@ How asides fits together, for anyone changing it, and why it works this way.
 - **The CLI and the window** are remote controls: `asides://` links in, `state.json` and the history
   out. `asides mcp` only reads the history and measures images.
 
+### On Windows
+
+The same processes and protocol; what touches the system is Win32. Each platform's modules have
+the same names and functions, picked at compile time (`#[cfg_attr(windows, path = "windows/…")]`
+in `asides-app`, `win/` in `asides-overlay`).
+
+- **One app per user**: Windows starts `asides-app.exe <link>` for each `asides://` link (the CLI
+  does too). The first copy owns a named pipe (`windows/instance.rs`); a later one hands it its
+  links and ends.
+- **Sessions** come from a Toolhelp snapshot and each agent's process memory (its command line,
+  folder and environment: `sessions_windows.rs`); the console's host app from `WT_SESSION` or
+  `TERM_PROGRAM`.
+- **Typing in**: `asides type-into <pid>` attaches to the agent's console and writes its input
+  (`WriteConsoleInputW`): any terminal, nothing to allow. New sessions open in Windows Terminal
+  (`wt.exe … asides launch <file>`), which starts the agent without a shell and ends.
+- **Freezing**: GDI captures each monitor; UI Automation names what's under a pin; the overlay's
+  windows are topmost tool windows, the pill left out of captures, and a keyboard hook holds back
+  the Windows key and Alt+Tab while frozen (`win/native.rs`). Frames stay in AppKit's coordinates
+  (points, y up), converted per monitor (`display.rs`).
+- **The asides window** is laid out as helio's: the system's acrylic, its own caption buttons over
+  each page's strip along the top (32 pt, which moves the window), the sidebar's first row as near
+  the top as its foot is to the bottom, Segoe UI Variable and Cascadia Mono (`controls::init_fonts`).
+
 ## Code map
 
 ```
@@ -61,10 +84,14 @@ crates/
     resample.rs       resampling to 16 kHz
     update.rs         updating asides: the feed, versions, the status shown, release notes
     paths.rs          bundle ID, URL scheme, paths
+    sessions_windows.rs  Windows: sessions from processes' memory, their consoles, their last input
+    display.rs        monitors: AppKit's coordinates ↔ Windows' pixels
+    launch.rs         Windows: finding and starting an agent without a shell (npm's shims)
   asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
     mcp.rs            asides mcp: get_aside, list_asides, measure_image
     measure.rs        asides measure and measure_image
+    windows.rs        Windows: links to the app, type-into (a console's input), launch
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
@@ -81,7 +108,9 @@ crates/
     io.rs             stdin/stdout protocol, spec and pixels
     replay.rs         development: replays AppKit events and captures windows
     assets.rs         SVG icons, and help/ (embedded by build.rs)
+    win/              Windows' native.rs (Win32 windows, focus, kiosk hook) and export.rs (tiny-skia)
     help/             the clips' frames and clips.json, made by scripts/make-help.py
+    help-windows/     the same, made on Windows (Edge, Windows Terminal, Windows' keys)
   asides-app/      the menu-bar app (asides-app, renamed asides in the bundle)
     main.rs           App: event loop, recording, overlay sessions, sending
     tray.rs, icons.rs the status item, its menu and its icons
@@ -98,8 +127,11 @@ crates/
     macos.rs          microphone permission, sounds, frontmost app, the command link, opening at login
     update.rs         the updater (check, download, verify), the swap script, Flow (its states)
     sounds/           its sounds (embedded by macos.rs), made by scripts/make-sounds.py
-packaging/            Info.plist, icon, entitlements, Cloudflare Workers (download/, site/)
-scripts/              e2e, fixtures, signing, release, dmg, website images, icon, sounds
+    windows/          Windows' system.rs (macos.rs's), instance.rs (one copy, links), capture.rs
+                      (GDI), elements.rs (UI Automation), clipboard.rs, terminal.rs (consoles)
+packaging/            Info.plist, icons, entitlements, Cloudflare Workers (download/, site/),
+                      windows/asides.iss (the Windows installer)
+scripts/              e2e, fixtures, signing, release, dmg, Windows package, website images, icon, sounds
 docs/                 the website
 guide/                user documentation
 Casks/asides.rb       the Homebrew cask (the repository is a tap)
@@ -206,12 +238,16 @@ notes it was handed (`Status::handed_over`) until they're seen (`whats_new_seen`
 
 Break these only on purpose, and update this list.
 
-1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates.
+1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates. On Windows it reads
+   what only the system knows through Win32 (processes, monitors, the registry's PATH), behind
+   `cfg(windows)`.
 2. **Nothing polls.** Everything waits on what happens (input, notifications, FSEvents through
    `watch.rs`, kqueue, a process ending, a channel) or sleeps until the exact time something is
    due. A timer only where nothing says, and the code says why (the update check, the watchdog's
    deadline: a stuck thread can't say so).
-3. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted).
+3. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted);
+   on Windows, each window's messages on the thread that made it (UI Automation on a thread of its
+   own).
 4. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
    file renamed over the old), an edit in History (only a message `markdown::check_message`
    passes), deletion, or pruning.
@@ -221,22 +257,24 @@ Break these only on purpose, and update this list.
    words in testing).
 8. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together.
 9. **Launch Services launches the app**, never a terminal (or the terminal gets the microphone
-   permission, and the app dies with it).
+   permission, and the app dies with it). On Windows, one copy runs per user (`instance.rs`).
 10. **Binary names differ by more than case** (case-insensitive APFS).
 11. **Stable signing identity, hardened runtime**: permissions follow the identity; every capability
     needs an entitlement.
 12. **No new permissions without discussion.** Today: Microphone, Screen Recording, Accessibility
-    (optional), Automation for Terminal and Ghostty. Not Input Monitoring.
+    (optional), Automation for Terminal and Ghostty. Not Input Monitoring. On Windows, only the
+    microphone.
 13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so).
 14. **The overlay needs no permission**: the app captures and identifies. Its stdout carries only
     protocol lines.
 15. **Measuring logic stays in `asides-core`**, shared by the overlay, `asides measure` and
     `measure_image`.
 16. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
-    offscreen), following `style.rs`.
+    offscreen), following `style.rs`; on Windows, tiny-skia (`win/export.rs`).
 17. **Each aside goes to one place**: a session, a new session, or the history.
 18. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
-    only once it has quit. Copies that aren't notarized never update themselves.
+    only once it has quit. Copies that aren't notarized never update themselves, nor, for now, do
+    Windows copies.
 19. **What goes wrong is in the log**: errors as problems (`log::problem`, `App::fail`), panics,
     standard error, how an overlay ended, slow and stuck main threads, the overlay's clock spinning.
     A frozen overlay stuck 10 s ends itself (`abort`: macOS keeps a report of where it was).

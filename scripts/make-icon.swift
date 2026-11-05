@@ -1,6 +1,8 @@
 // Draws the app icon, the asides mark: the letter a in brackets, white on a black rounded square, on
 // Apple's macOS icon grid (an 824-point body on a 1024-point canvas, with its drop shadow). Writes
-// packaging/asides.icns, which `make bundle` copies into the app.
+// packaging/asides.icns, which `make bundle` copies into the app, and packaging/asides.ico, Windows'
+// (the same square filling its canvas, as Windows' icons do, without the shadow), which the Windows
+// programs carry (crates/asides-app/build.rs).
 //
 // Usage: swift scripts/make-icon.swift  (needs only the Command Line Tools)
 //
@@ -11,7 +13,7 @@ import AppKit
 
 let root = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().deletingLastPathComponent()
 
-func png(size: Int) -> Data {
+func png(size: Int, windows: Bool = false) -> Data {
     let ctx = CGContext(
         data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -20,13 +22,21 @@ func png(size: Int) -> Data {
     ctx.scaleBy(x: scale, y: scale)
     ctx.translateBy(x: 0, y: 1024)
     ctx.scaleBy(x: 1, y: -1)
+    if windows {
+        // The 824-point body from 32 to 992.
+        ctx.translateBy(x: 32, y: 32)
+        ctx.scaleBy(x: 960 / 824, y: 960 / 824)
+        ctx.translateBy(x: -100, y: -100)
+    }
 
     let body = CGPath(
         roundedRect: CGRect(x: 100, y: 100, width: 824, height: 824), cornerWidth: 185, cornerHeight: 185,
         transform: nil)
     // Apple's template shadow: 10 pt down, 10 pt blur, black at 30%. Shadows ignore the CTM.
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10 * scale), blur: 20 * scale, color: CGColor(gray: 0, alpha: 0.3))
+    if !windows {
+        ctx.setShadow(offset: CGSize(width: 0, height: -10 * scale), blur: 20 * scale, color: CGColor(gray: 0, alpha: 0.3))
+    }
     ctx.addPath(body)
     ctx.setFillColor(CGColor(gray: 0, alpha: 1))
     ctx.fillPath()
@@ -82,3 +92,22 @@ try! iconutil.run()
 iconutil.waitUntilExit()
 precondition(iconutil.terminationStatus == 0, "iconutil failed")
 print("Wrote \(out.path)")
+
+// Windows' icon: an ICO of PNGs (Windows Vista and later read them), at the sizes Windows shows.
+let sizes = [16, 20, 24, 32, 40, 48, 64, 256]
+let images = sizes.map { png(size: $0, windows: true) }
+var ico = Data()
+func le16(_ v: Int) { ico.append(contentsOf: [UInt8(v & 0xff), UInt8(v >> 8 & 0xff)]) }
+func le32(_ v: Int) { le16(v & 0xffff); le16(v >> 16 & 0xffff) }
+le16(0); le16(1); le16(sizes.count)
+var offset = 6 + 16 * sizes.count
+for (size, image) in zip(sizes, images) {
+    // 256 is written as 0.
+    ico.append(contentsOf: [UInt8(size & 0xff), UInt8(size & 0xff), 0, 0])
+    le16(1); le16(32); le32(image.count); le32(offset)
+    offset += image.count
+}
+images.forEach { ico.append($0) }
+let icoOut = root.appendingPathComponent("packaging/asides.ico")
+try! ico.write(to: icoOut)
+print("Wrote \(icoOut.path)")

@@ -169,7 +169,14 @@ pub fn run_window(view: usize, steps: serde_json::Value, dir: std::path::PathBuf
 }
 
 /// Where the window with view `view` is on screen, captured as it shows (glass shows what's behind).
-fn capture_window(view: usize, path: &std::path::Path) {
+#[cfg(windows)]
+pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
+    let captured = crate::native::frame(view).is_some_and(|f| crate::native::capture(f, path));
+    eprintln!("captured {} ({captured})", path.display());
+}
+
+#[cfg(not(windows))]
+pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
     let main = crate::native::screens().into_iter().find(|(_, f)| f.x == 0.0 && f.y == 0.0).map(|(_, f)| f.height);
     let Some((f, main)) = crate::native::frame(view).zip(main) else { return };
     let rect = format!("{},{},{},{}", f.x, main - f.y - f.height, f.width, f.height);
@@ -215,6 +222,23 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
             }
         });
     }
+    #[cfg(windows)]
+    if let Some(path) = &step.capture {
+        // A screen's window as it shows, or the pill's window alone; the pill kept in captures.
+        let o = overlay.read(cx);
+        let pill = o.toolbar_window.as_ref().map(|w| w.view);
+        if let Some(view) = pill {
+            crate::native::show_in_captures(view);
+        }
+        let view = match step.toolbar {
+            false => o.windows.get(step.screen).map(|w| w.view).or(pill),
+            true => pill,
+        };
+        let path = o.dir().join(path);
+        let captured = view.and_then(crate::native::frame).is_some_and(|f| crate::native::capture(f, &path));
+        eprintln!("captured {} ({captured})", path.display());
+    }
+    #[cfg(not(windows))]
     if let Some(path) = &step.capture {
         let o = overlay.read(cx);
         let mut args = vec!["-x".to_string(), "-o".into()];

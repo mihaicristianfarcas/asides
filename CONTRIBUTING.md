@@ -21,6 +21,28 @@ make fixtures    # once: test audio from the macOS voices
   Manage Voices…). The files are gitignored: macOS voices may not be redistributed.
 - `make test-speech` and `make e2e` need large-v3-turbo: `asides download large-v3-turbo`.
 
+### Windows
+
+Windows 10 (2004) or 11 (a VM works: UTM runs Windows 11 for Arm on a Mac), stable Rust's MSVC
+toolchain, Visual Studio 2022's Build Tools (C++, the Windows SDK; on Arm64 also its Clang), CMake,
+LLVM (`winget install LLVM.LLVM`, for whisper.cpp's bindings) and, on Arm64, Ninja. ggml refuses
+MSVC on Arm64, so there whisper.cpp is built with clang-cl:
+
+```powershell
+$env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'; $env:Path += ";$env:LIBCLANG_PATH"
+# Arm64 only:
+$env:CMAKE_GENERATOR_aarch64_pc_windows_msvc = 'Ninja'
+$env:CC_aarch64_pc_windows_msvc = 'clang-cl'; $env:CXX_aarch64_pc_windows_msvc = 'clang-cl'
+$env:CXXFLAGS_aarch64_pc_windows_msvc = '/EHsc'
+cargo build -p asides-app -p asides-overlay -p asides-cli --features asides-app/dev-hooks
+target\debug\asides-app.exe
+```
+
+`scripts\package-windows.ps1` builds the zip and the installer (Inno Setup 6) in `dist\`. Over SSH
+there's no desktop: run the app, and anything that types into a console, in the signed-in user's
+session (a scheduled task does), and read output as code points (SSH's PowerShell prints in the OEM
+code page).
+
 ## Before a pull request
 
 ```bash
@@ -30,8 +52,8 @@ make test
 make e2e          # if CLI or app behavior changed
 ```
 
-CI runs formatting, clippy, the unit tests and the bundle. `main` only takes pull requests that
-pass it.
+CI runs formatting, clippy, the unit tests and the bundle, and on Windows clippy, the unit tests
+and the package. `main` only takes pull requests that pass it.
 
 ## Development loop
 
@@ -42,7 +64,7 @@ pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys), `ASIDES_WINDOW_REPLAY=<steps.json>` (a replay's key and mouse steps in the window, captures beside it; it quits after, and sends the app nothing) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s on a Mac, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys), `ASIDES_WINDOW_REPLAY=<steps.json>` (a replay's key and mouse steps in the window, captures beside it; it quits after, and sends the app nothing) |
 | the overlay | a replay (below) |
 | the app | `make install`, then use it (it quits and replaces the running asides); dev-hooks builds open setup only with `ASIDES_SETUP=1` |
 
@@ -92,7 +114,7 @@ ASIDES_BENCH=~/bench ASIDES_BENCH_MODELS="small.en=$M/ggml-small.en-q5_1.bin,lar
 | `ASIDES_ICON_DUMP=/tmp/i cargo test -p asides-app icons` | the menu-bar icons (RGBA) |
 | `asides simulate-measure shot.png script.json` | a scripted session on a screenshot (dev-hooks build; actions in `overlay::Action`) |
 | `python3 scripts/make-screenshot.py` | `guide/overlay.png`, the README's picture (Firefox, Pillow, Screen Recording) |
-| `python3 scripts/make-help.py` | `crates/asides-overlay/help/`, Help's clips: the real overlay on the demo, frame by frame, and `clips.json` (what happens between frames; Firefox, Pillow, Screen Recording) |
+| `python3 scripts/make-help.py` | `crates/asides-overlay/help/`, Help's clips: the real overlay on the demo, frame by frame, and `clips.json` (what happens between frames; Firefox, Pillow, Screen Recording). On Windows (at 100%, with nothing else open over the top left), `help-windows/` |
 
 **Replays.** `target/debug/asides-overlay <dir>` runs the real overlay on a session directory:
 `session.json` (`helper::Spec`) with a screen whose `pixels` file is raw RGBA, `windowed` for a
@@ -155,6 +177,13 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
 - [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart
   to update** reopens asides on it, with its window if it was open, and **What's new**.
+- [ ] **Windows**: the installer installs and opens asides, and `asides` works in a new terminal;
+  `[a]` in the notification area, its menu; `Ctrl+Alt+Space` freezes every monitor at its own
+  scale and takes the keyboard without a click; the Windows key and `Alt+Tab` held back while
+  frozen; the pill out of a freeze taken live; talking (Settings' microphone switch off asks there);
+  sending to Claude Code and Codex in Windows Terminal, VS Code's terminal and a console, and a new
+  session in each terminal setting; the asides window's acrylic, light and dark; uninstalling
+  removes the PATH entry and the `asides://` links.
 
 ## Common changes
 
@@ -172,7 +201,8 @@ Run what your change touches, and say in the pull request what you tried.
   images by Ctrl+V and by path) before writing the plan, and note the results in `deliver.rs`'s
   module docs.
 - **A voice model**: `MODELS` in `models.rs`, with the exact size and SHA-256 from Hugging Face.
-- **The icon**: `swift scripts/make-icon.swift` writes `packaging/asides.icns`. The same mark is in
+- **The icon**: `swift scripts/make-icon.swift` writes `packaging/asides.icns` and Windows'
+  `packaging/asides.ico`. The same mark is in
   `icons.rs`, `docs/favicon.svg` and `docs/index.html`: change them together, then
   `python3 scripts/make-og.py`.
 - **The sounds**: `uv run scripts/make-sounds.py` writes `crates/asides-app/sounds/`, embedded in
@@ -221,7 +251,11 @@ Needs a Developer ID Application certificate.
    dist/asides-<version>.zip dist/asides-<version>.dmg dist/appcast.json --notes-file
    dist/notes-<version>.md` (`make release` prints it). Installed copies update from the latest
    release's `appcast.json`, so it goes up with the zip it names.
-6. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
+6. Windows, on Windows on Arm (both build there; the x64 one runs there too, emulated):
+   `scripts\package-windows.ps1` and `scripts\package-windows.ps1 -Arch x64`, then `gh release
+   upload v<version> dist\asides-<version>-windows-arm64-setup.exe
+   dist\asides-<version>-windows-x64-setup.exe` (the zips too, if wanted).
+7. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
 
 ## The website
 
@@ -229,7 +263,7 @@ Needs a Developer ID Application certificate.
 (`python3 -m http.server -d docs` to preview). Pushes to `main` that change `docs/` deploy it;
 `make publish-site` deploys by hand. After changing the demo, run `python3 scripts/make-og.py`
 (the share image, needs Firefox), `python3 scripts/make-screenshot.py` and `python3
-scripts/make-help.py`. The page repeats the
+scripts/make-help.py` (on a Mac, and on Windows for its clips). The page repeats the
 shortcuts, requirements and install steps from the README: update both.
 
 ## Reporting bugs

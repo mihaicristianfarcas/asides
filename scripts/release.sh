@@ -84,5 +84,8 @@ echo "Ready: $ZIP, dist/asides-$VERSION.dmg and dist/appcast.json (the update fe
 echo "Publish all three in one release:"
 echo "  git tag v$VERSION && git push --tags"
 echo "  gh release create v$VERSION $ZIP dist/asides-$VERSION.dmg dist/appcast.json --title \"asides $VERSION\" --notes-file $NOTES"
+echo "Then, on Windows, build and upload its installers (CONTRIBUTING.md, Releasing):"
+echo "  scripts\\package-windows.ps1; scripts\\package-windows.ps1 -Arch x64"
+echo "  gh release upload v$VERSION dist\\asides-$VERSION-windows-arm64-setup.exe dist\\asides-$VERSION-windows-x64-setup.exe"
 echo "Updated Casks/asides.rb; commit it after publishing the GitHub release."
 echo "Publish the disk image behind the website's download button with \`make publish-dmg\`."

@@ -6,7 +6,8 @@ before changing the app; [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, an
 
 ## The project
 
-asides is a macOS menu-bar app plus a CLI. `⌃⌥Space` freezes every screen under a pill; the user
+asides is a macOS menu-bar app plus a CLI, and runs on Windows too (ARCHITECTURE.md's "On
+Windows"). `⌃⌥Space` freezes every screen under a pill; the user
 pins elements, measures, draws and talks; `⌃⌥Space` again types it all, transcribed locally and
 verbatim by whisper.cpp, into a coding agent's session in Terminal, Ghostty or Diri, as the user's
 own message with screenshots. `⌃⌥P` goes live and freezes again (one aside, many freezes). Every
@@ -35,8 +36,9 @@ A Rust workspace:
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
-| Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip) |
-| App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns`) |
+| Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
+| App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
+| Windows package | `scripts\package-windows.ps1`, on Windows (zip and installer in `dist\`) |
 | Sounds | `uv run scripts/make-sounds.py` (writes `crates/asides-app/sounds/`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
@@ -88,7 +90,8 @@ changes.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
   CONTRIBUTING.md. The website (`docs/index.html`) repeats the shortcuts, requirements and install
-  steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips.
+  steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips (Windows'
+  too, made on Windows).
 
 ## What you can and can't verify
 
@@ -351,6 +354,43 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   `server/discover` before `initialize`: answer "method not found".
 - Wispr Flow's `flow.sqlite` schema changes between versions: discover columns, open it read-only
   (it writes in WAL mode).
+
+### Windows
+
+- ggml refuses MSVC on Arm64: whisper.cpp builds with clang-cl and Ninja
+  (`CMAKE_GENERATOR_aarch64_pc_windows_msvc`, `CC_`/`CXX_…=clang-cl`, `CXXFLAGS_…=/EHsc`); ring
+  needs LLVM's clang on the PATH. The package carries the C runtime (`crt-static`, and
+  `CMAKE_MSVC_RUNTIME_LIBRARY` with policy CMP0091, which whisper-rs-sys passes to CMake).
+- Over SSH there's no desktop: an SSH session can't attach to the user's consoles (Access denied)
+  or show windows. Run the app and `type-into` in the user's session (a scheduled task, Limited,
+  Interactive); Task Scheduler finds `wt.exe` only by its full path (an app alias). SSH's
+  PowerShell prints in the OEM code page: `×` showed as `x`. Check text by its code points.
+  Windows PowerShell reads a `.ps1` without a BOM as ANSI: what a script types comes out garbled
+  (`é` as `Ã©`); save it with one.
+- Extracting with `tar` keeps the archive's mtimes: cargo saw old files as built (`tar -m`).
+- Starting a program waits while Defender scans it, the first time after a build or an update:
+  1.2 s for the overlay, 10 s for the x64 build under emulation, on the main thread until the
+  standby overlay was started from a thread of its own (`App::stand_by`). Started again, 7 ms.
+- UI Automation's first answer (COM, then the first calls into an app) took longer than a pin waits
+  for one: the first pin was only a point. It starts with the app (`elements::warm_up`).
+- GPUI keeps a resizable frame's thickness inside borderless windows (about 8 px): the overlay's
+  windows answer `WM_NCCALCSIZE` themselves (`win/native.rs`). DWM's blur covers a whole window, not
+  a region over GPUI's DirectComposition: the pill's window is transparent, its tint nearly solid
+  (`pill_tint`: at the Mac's 60%, a page read through the session list).
+- GPUI 0.2.2 has no Mica: the asides window asks for no accent and sets the system's acrylic
+  (`DWMSBT_TRANSIENTWINDOW`, `native::dress`), as helio does. A VM without a GPU draws its flat
+  fallback color.
+- Windows Terminal keeps a tab while any process uses its console: `asides launch` starts the agent
+  and ends, so asides.exe isn't held open (an install or update could replace it).
+- Claude Code 2.1's npm shim runs `bin\claude.exe` (Bun), not a Node script (`launch.rs`).
+- Replays on Windows: GPUI reads modifiers from the thread's keyboard state (`synthetic::holding`)
+  and punctuation is a key and Shift (`?` is Shift and `/`, `VkKeyScanW`); the pill is left out of
+  captures until a replay lets it in; windowed screens are ordinary windows (close what's over
+  them); a debug build in a VM needs slower steps (`make-help.py`'s `START`, `DRAG_WAIT`).
+- Real agents without an account, nothing leaving the machine: Claude Code with a made-up
+  `ANTHROPIC_API_KEY` (its last 20 characters approved in `~/.claude.json`) and
+  `ANTHROPIC_BASE_URL` at a closed port; Codex with a `model_provider` whose `base_url` is a closed
+  port. Their transcripts and rollouts still record exactly what was typed.
 
 ## Commits
 

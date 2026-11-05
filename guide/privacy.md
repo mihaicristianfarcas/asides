@@ -27,9 +27,17 @@ Setup asks for each as you go (General → **Set Up Again** shows them, allowed 
 
 Input Monitoring isn't needed: the shortcuts use the system's hot keys.
 
+On Windows only the microphone is asked for (Settings → Privacy & security → Microphone → **Let
+desktop apps access your microphone**): freezing the screen, naming what's under a pin and typing
+into consoles need no permission.
+
 ## Uninstall
 
 `brew uninstall --cask asides` (add `--zap` to delete settings, models and history too), or
 `make uninstall` for a source build. For a downloaded copy, delete `asides.app` and
 `/usr/local/bin/asides`. Settings and models are in `~/Library/Application Support/asides`, the
 history in `~/.asides`.
+
+On Windows, uninstall asides from Settings → Apps: it quits asides and takes its folder off the
+PATH. Settings, models and the log stay in `%LOCALAPPDATA%\asides`, the history in
+`%USERPROFILE%\.asides`.

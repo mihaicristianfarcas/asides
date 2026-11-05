@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,6 +23,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agents::{AgentKind, LAUNCH_VAR};
+
+#[cfg(windows)]
+#[path = "sessions_windows.rs"]
+pub mod windows;
 
 /// Where a session's terminal is, which decides how an aside is typed into it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +40,9 @@ pub enum Host {
     Diri { session: String },
     /// An app asides can't type into (Warp, iTerm, VS Code…), as `TERM_PROGRAM` names it.
     Other { name: String },
+    /// A console on Windows, in whichever app shows it (Windows Terminal, a console window, VS
+    /// Code's terminal…): asides types into the console itself (`deliver.rs`).
+    Console { name: String },
 }
 
 impl Host {
@@ -43,7 +51,7 @@ impl Host {
             Host::Terminal => "Terminal",
             Host::Ghostty => "Ghostty",
             Host::Diri { .. } => "Diri",
-            Host::Other { name } => name,
+            Host::Other { name } | Host::Console { name } => name,
         }
     }
 
@@ -52,7 +60,8 @@ impl Host {
         !matches!(self, Host::Other { .. })
     }
 
-    fn of(env: &HashMap<String, String>) -> Host {
+    /// The app hosting a terminal on a Mac, from the environment its programs got.
+    pub fn of(env: &HashMap<String, String>) -> Host {
         match env.get("TERM_PROGRAM").map(String::as_str) {
             Some("Apple_Terminal") => Host::Terminal,
             Some("ghostty") => Host::Ghostty,
@@ -172,7 +181,9 @@ fn interactive(agent: AgentKind, args: &[String]) -> bool {
         AgentKind::OpenCode => &["run", "serve", "mcp", "debug", "session", "auth", "models", "export"][..],
         _ => &[][..],
     };
-    let flag = args.iter().any(|a| matches!(a.as_str(), "-p" | "--print") && agent == AgentKind::Claude);
+    // Claude Code driven by another program (an editor's extension) through its standard input.
+    let driven = ["-p", "--print", "--input-format", "--output-format"];
+    let flag = args.iter().any(|a| driven.contains(&a.as_str()) && agent == AgentKind::Claude);
     !flag && first.is_none_or(|first| !not.contains(&first.as_str()))
 }
 
@@ -180,6 +191,14 @@ fn interactive(agent: AgentKind, args: &[String]) -> bool {
 /// first, not processes it started). Their folders and input times come after
 /// ([`AgentSession::dir`] is empty here).
 pub fn sessions_of(procs: &[Proc]) -> Vec<AgentSession> {
+    #[cfg(windows)]
+    return sessions_with(procs, windows::host_of);
+    #[cfg(not(windows))]
+    sessions_with(procs, Host::of)
+}
+
+/// [`sessions_of`], with the apps hosting the terminals told by `host_of` (each system's way).
+pub fn sessions_with(procs: &[Proc], host_of: impl Fn(&HashMap<String, String>) -> Host) -> Vec<AgentSession> {
     let agent = |p: &Proc| {
         let args: Vec<&str> = p.args.iter().map(String::as_str).collect();
         AgentKind::of_process(&p.executable, &args).filter(|&a| interactive(a, &p.args))
@@ -200,7 +219,7 @@ pub fn sessions_of(procs: &[Proc]) -> Vec<AgentSession> {
             agent: kind,
             dir: PathBuf::new(),
             tty: tty.clone(),
-            host: Host::of(&p.env),
+            host: host_of(&p.env),
             last_input: None,
             name: None,
             launch: p.env.get(LAUNCH_VAR).cloned(),
@@ -256,6 +275,14 @@ pub fn parse_lsof_cwd(output: &str) -> HashMap<i32, PathBuf> {
 
 /// The agent sessions running now, with their folders, last input and names. Takes a few tens of
 /// milliseconds (`ps`, `lsof`).
+#[cfg(windows)]
+pub fn discover() -> Vec<AgentSession> {
+    windows::discover()
+}
+
+/// The agent sessions running now, with their folders, last input and names. Takes a few tens of
+/// milliseconds (`ps`, `lsof`).
+#[cfg(not(windows))]
 pub fn discover() -> Vec<AgentSession> {
     let run = |program: &str, args: &[&str]| {
         Command::new(program)
@@ -351,9 +378,18 @@ pub fn parse_started(output: &str, now: SystemTime) -> HashMap<i32, SystemTime> 
 /// was typed into last changes with every key, and reading it takes microseconds, where looking
 /// for the sessions takes tens of milliseconds.
 pub fn read_input_times(sessions: &mut [AgentSession]) {
+    #[cfg(windows)]
+    return windows::read_input_times(sessions);
+    #[cfg(not(windows))]
     for s in sessions {
         s.last_input = std::fs::metadata(format!("/dev/{}", s.tty)).and_then(|m| m.accessed()).ok();
     }
+}
+
+/// Windows: the sessions in the terminal whose window is in front (its process), first.
+#[cfg(windows)]
+pub fn in_front(sessions: &mut [AgentSession], front: i32) {
+    windows::in_front(sessions, front)
 }
 
 /// The folders agents write a file in as each of their sessions starts (with whether to look in
@@ -391,9 +427,7 @@ pub fn known_folders(home: &Path, sessions: &[AgentSession], recent: &[PathBuf],
         known.extend(projects.keys().map(PathBuf::from));
     }
     if let Ok(text) = std::fs::read_to_string(home.join(".codex/config.toml")) {
-        known.extend(
-            text.lines().filter_map(|l| l.trim().strip_prefix("[projects.\"")?.strip_suffix("\"]").map(PathBuf::from)),
-        );
+        known.extend(codex_projects(&text));
     }
     let changed = |d: &Path| std::fs::metadata(d).and_then(|m| m.modified()).ok();
     known.sort_by_key(|d| std::cmp::Reverse(changed(d)));
@@ -413,6 +447,16 @@ pub fn known_folders(home: &Path, sessions: &[AgentSession], recent: &[PathBuf],
         }
     }
     folders
+}
+
+/// The folders Codex's `config.toml` has settings for (`[projects."/Users/me/shop"]`; on Windows
+/// `[projects.'C:\Users\me\shop']`). Read line by line when it doesn't parse as a whole.
+fn codex_projects(text: &str) -> Vec<PathBuf> {
+    if let Ok(config) = text.parse::<toml::Table>() {
+        let projects = config.get("projects").and_then(toml::Value::as_table);
+        return projects.into_iter().flat_map(|p| p.keys()).map(PathBuf::from).collect();
+    }
+    text.lines().filter_map(|l| l.trim().strip_prefix("[projects.\"")?.strip_suffix("\"]").map(PathBuf::from)).collect()
 }
 
 /// What `session`'s agent calls it ([`AgentSession::name`]). Codex and OpenCode don't say which of
@@ -631,7 +675,7 @@ mod tests {
                 &[("TERM_PROGRAM", "ghostty")],
             ),
         ];
-        let found = sessions_of(&procs);
+        let found = sessions_with(&procs, Host::of);
         let summary: Vec<(i32, AgentKind, Host)> = found.iter().map(|s| (s.pid, s.agent, s.host.clone())).collect();
         assert_eq!(
             summary,
@@ -803,7 +847,8 @@ mod tests {
     #[test]
     fn suggests_folders_from_sessions_recents_and_the_agents_projects() {
         let tmp = tempfile::tempdir().unwrap();
-        let home = tmp.path().canonicalize().unwrap();
+        // macOS's temporary folder is reached through a link (`/var` → `/private/var`).
+        let home = if cfg!(windows) { tmp.path().to_path_buf() } else { tmp.path().canonicalize().unwrap() };
         let dir = |name: &str| {
             let d = home.join(name);
             std::fs::create_dir_all(d.join(".git")).unwrap();
@@ -811,15 +856,12 @@ mod tests {
         };
         let (shop, blog, api, cli) = (dir("shop"), dir("blog"), dir("api"), dir("cli"));
         std::fs::create_dir_all(shop.join("web")).unwrap();
-        std::fs::write(
-            home.join(".claude.json"),
-            format!(r#"{{"projects": {{"{}": {{}}, "{}": {{}}, "/gone": {{}}}}}}"#, api.display(), shop.display()),
-        )
-        .unwrap();
+        let projects = serde_json::json!({"projects": {api.display().to_string(): {}, shop.display().to_string(): {}, "/gone": {}}});
+        std::fs::write(home.join(".claude.json"), projects.to_string()).unwrap();
         std::fs::create_dir_all(home.join(".codex")).unwrap();
         std::fs::write(
             home.join(".codex/config.toml"),
-            format!("[projects.\"{}\"]\ntrust_level = \"trusted\"\n", cli.display()),
+            format!("[projects.{}]\ntrust_level = \"trusted\"\n", toml::Value::from(cli.display().to_string())),
         )
         .unwrap();
         let running = AgentSession {

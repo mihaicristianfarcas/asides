@@ -14,13 +14,13 @@ use std::time::Instant;
 use anyhow::Context as _;
 use asides_core::helper::{Command, Event, Outcome, RESULT, SPEC, STANDBY, Spec, SpecScreen};
 use asides_core::measure::Frame;
-#[cfg(feature = "dev-hooks")]
+#[cfg(all(feature = "dev-hooks", target_os = "macos"))]
 use objc2_app_kit::NSBitmapImageRep;
-#[cfg(feature = "dev-hooks")]
+#[cfg(all(feature = "dev-hooks", target_os = "macos"))]
 use objc2_core_foundation::CFRetained;
-#[cfg(feature = "dev-hooks")]
+#[cfg(all(feature = "dev-hooks", target_os = "macos"))]
 use objc2_core_graphics::CGImage;
-#[cfg(feature = "dev-hooks")]
+#[cfg(all(feature = "dev-hooks", target_os = "macos"))]
 use objc2_foundation::NSData;
 
 use crate::elements::WindowInfo;
@@ -123,7 +123,7 @@ pub fn helper() -> PathBuf {
         return PathBuf::from(path);
     }
     let exe = std::env::current_exe().unwrap_or_default();
-    exe.with_file_name("asides-overlay")
+    exe.with_file_name(format!("asides-overlay{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// Opens the overlay on these screens (`spec.screens[i].pixels` is filled in): in `standby`, or a
@@ -240,8 +240,25 @@ pub fn seconds_between(from: Instant, to: Instant) -> f32 {
     }
 }
 
+/// An image file's pixels (a PNG), for simulated sessions.
+#[cfg(all(feature = "dev-hooks", windows))]
+pub fn load_image(path: &Path) -> Option<Frame> {
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    let pixels = &buffer[..info.buffer_size()];
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => pixels.as_chunks::<4>().0.iter().flat_map(|&[r, g, b, _]| [r, g, b, 255]).collect(),
+        png::ColorType::Rgb => pixels.as_chunks::<3>().0.iter().flat_map(|&[r, g, b]| [r, g, b, 255]).collect(),
+        _ => return None,
+    };
+    Frame::new(info.width, info.height, rgba)
+}
+
 /// An image file's pixels, for simulated sessions.
-#[cfg(feature = "dev-hooks")]
+#[cfg(all(feature = "dev-hooks", target_os = "macos"))]
 pub fn load_image(path: &Path) -> Option<Frame> {
     let data = NSData::with_bytes(&std::fs::read(path).ok()?);
     let rep = NSBitmapImageRep::imageRepWithData(&data)?;

@@ -149,7 +149,8 @@ Copies built from source don't update themselves.
 
 ## When something goes wrong
 
-asides keeps a log in `~/Library/Logs/asides` (Console shows it under Log Reports). `asides status`
+asides keeps a log in `~/Library/Logs/asides` (Console shows it under Log Reports; on Windows
+`%LOCALAPPDATA%\asides\Logs`). `asides status`
 says when something went wrong in the last day, and `asides log` shows what: errors, crashes, and
 moments asides was stuck. If the frozen screen stops responding for 10 seconds, asides closes it
 and gives your screens back; what you said is kept in History. Add `asides log` to a bug report.
@@ -168,3 +169,18 @@ codex mcp add asides -- asides mcp
 
 Turn on Settings → **Wispr Flow dictations**: what you dictate with Wispr Flow while the screen is
 frozen joins the aside, where you said it.
+
+## On Windows
+
+asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with these differences:
+
+| | |
+|---|---|
+| Keys | `⌃` and `⌘` are `Ctrl`, `⌥` is `Alt`: `Ctrl+Alt+Space` opens and sends, `Ctrl+Alt+P` goes live. The pill's `?` and Keys show Windows' names. |
+| Where it lives | `[a]` in the notification area (Windows may tuck it under `^`). The asides window is in the taskbar while it's open. |
+| Sessions | Agents in Windows Terminal, VS Code's terminal or any console: asides types into their console, as you would. New sessions open in Windows Terminal, or a console window of their own. |
+| Frozen | The Windows key, `Alt+Tab`, `Alt+Esc` and `Ctrl+Esc` are held back; `Ctrl+Alt+Del` still works. |
+| Permissions | Only the microphone: Settings → Privacy & security → Microphone → **Let desktop apps access your microphone**. |
+| Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
+| Files | History in `%USERPROFILE%\.asides\history`; settings, voice models and the log in `%LOCALAPPDATA%\asides`. |
+| Updates | Not automatic yet: install the new version over the old one. |

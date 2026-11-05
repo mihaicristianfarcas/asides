@@ -288,7 +288,13 @@ fn toolbar_options(display_id: Option<DisplayId>, frame: PtRect) -> WindowOption
         is_minimizable: false,
         display_id,
         // Glass, as Diri's sidebar: macOS blurs what's behind, only behind the pill's shapes.
-        window_background: WindowBackgroundAppearance::Blurred,
+        // Windows can't keep a blur to them (its blur takes the whole window): the window is
+        // see-through around the pill, which is its tint over what's behind.
+        window_background: if cfg!(windows) {
+            WindowBackgroundAppearance::Transparent
+        } else {
+            WindowBackgroundAppearance::Blurred
+        },
         ..Default::default()
     }
 }

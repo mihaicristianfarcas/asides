@@ -11,14 +11,19 @@
 //! Started with `--window`, it's the asides window instead (`window.rs`): History, Sessions,
 //! Settings and Help.
 
+// A Windows app has no console window of its own.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod assets;
 mod controls;
+#[cfg_attr(windows, path = "win/export.rs")]
 mod export;
 mod finish;
 mod glass;
 mod help;
 mod input;
 mod io;
+#[cfg_attr(windows, path = "win/native.rs")]
 mod native;
 mod replay;
 mod style;
@@ -162,6 +167,7 @@ fn standby() {
 fn launched(cx: &mut App) {
     native::accessory();
     input::bind_keys(cx);
+    crate::controls::init_fonts(cx);
     // Stuck, the overlay can't be closed, and frozen it covers every screen, the Dock and the menu
     // bar hidden (the Mac seems frozen): it ends, and gives them back.
     native::watch_main_thread(Some(GIVE_UP));

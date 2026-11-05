@@ -44,8 +44,17 @@ impl Radius {
 pub struct Metrics;
 
 impl Metrics {
-    /// The strip along the top of a column: the traffic lights over the sidebar, a page's actions.
+    /// A page's own strip of actions along its top (History's): on a Mac it's the title bar, on
+    /// Windows under it.
     pub const TOOLBAR: f32 = 44.0;
+    /// The strip along the window's top, its title bar, as helio has it: on a Mac the traffic
+    /// lights' lane, a page's title beneath it; on Windows the caption buttons' height (they're
+    /// over a page's strip).
+    pub const TITLE_BAR: f32 = if cfg!(windows) { 32.0 } else { 44.0 };
+    /// Windows: the air above the sidebar's first row, as below its foot (no traffic lights).
+    pub const SIDEBAR_EDGE: f32 = 14.0;
+    /// The air the sidebar's rows keep above the first.
+    pub const NAV_TOP: f32 = 6.0;
     pub const SIDEBAR: f32 = 216.0;
     pub const NAV_ROW: f32 = 28.0;
     pub const SETTINGS_ROW: f32 = 50.0;
@@ -718,6 +727,8 @@ pub struct Theme {
     pub card: Hsla,
     pub card_stroke: Hsla,
     pub hover: Hsla,
+    /// Held down (Windows' caption buttons), as helio's.
+    pub pressed: Hsla,
     /// The glass pill behind a selected row or segment.
     pub selected: Hsla,
     pub selected_stroke: Hsla,
@@ -751,6 +762,7 @@ impl Theme {
             card: hex(0x2a2826, 0.94),
             card_stroke: white(0.10),
             hover: white(0.06),
+            pressed: white(0.10),
             selected: white(0.10),
             selected_stroke: white(0.09),
             // Controls are near solid: on glass, translucent ones disappear over a light desktop.
@@ -781,6 +793,7 @@ impl Theme {
             card: hex(0xffffff, 0.94),
             card_stroke: black(0.09),
             hover: black(0.045),
+            pressed: black(0.08),
             selected: hex(0xffffff, 0.92),
             selected_stroke: black(0.09),
             control: hex(0xffffff, 0.94),
@@ -809,8 +822,44 @@ impl Theme {
     }
 }
 
+static UI_FONT: std::sync::OnceLock<SharedString> = std::sync::OnceLock::new();
+static MONO_FONT: std::sync::OnceLock<SharedString> = std::sync::OnceLock::new();
+
+/// Once, before a window opens: the fonts, of those this system has (helio's). A Mac's own; on
+/// Windows Segoe UI Variable (Windows 11's), else Segoe UI, and Cascadia Mono, else Consolas.
+pub fn init_fonts(cx: &App) {
+    if !cfg!(windows) {
+        return;
+    }
+    let names: std::collections::HashSet<String> = cx.text_system().all_font_names().into_iter().collect();
+    let pick = |candidates: &[&'static str]| -> SharedString {
+        candidates.iter().find(|c| names.contains(**c)).copied().unwrap_or(candidates[candidates.len() - 1]).into()
+    };
+    let _ = UI_FONT.set(pick(&["Segoe UI Variable Text", "Segoe UI"]));
+    let _ = MONO_FONT.set(pick(&["Cascadia Mono", "Consolas"]));
+}
+
+/// The text's font ([`init_fonts`]).
 pub fn font() -> SharedString {
-    ".SystemUIFont".into()
+    UI_FONT.get().cloned().unwrap_or_else(|| ".SystemUIFont".into())
+}
+
+/// Markdown's, as it's edited ([`init_fonts`]).
+pub fn mono_font() -> SharedString {
+    MONO_FONT.get().cloned().unwrap_or_else(|| if cfg!(windows) { "Consolas" } else { "Menlo" }.into())
+}
+
+/// Where the window is moved from: an empty part of a strip along the top. Nothing on it may be
+/// clickable: Windows takes a press there for its own (a move, a double-click maximizing). A Mac's
+/// title bar moves it anyway.
+pub fn drag_area() -> Div {
+    div().window_control_area(gpui::WindowControlArea::Drag)
+}
+
+/// A page's strip along the top, above its title ([`Metrics::TITLE_BAR`]): nothing is on it, so
+/// all of it moves the window.
+pub fn page_strip() -> Div {
+    drag_area().flex_none().h(px(Metrics::TITLE_BAR))
 }
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> impl IntoElement + use<> {

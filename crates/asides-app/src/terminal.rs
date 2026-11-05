@@ -88,6 +88,7 @@ fn run_step(step: &Step, kept: &mut Option<clipboard::Snapshot>) -> Result<()> {
             }
         }
         Step::Wait(duration) => std::thread::sleep(*duration),
+        Step::Console { .. } => bail!("consoles are typed into on Windows only"),
     }
     Ok(())
 }

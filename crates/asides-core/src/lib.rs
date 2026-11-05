@@ -3,11 +3,13 @@
 pub mod agents;
 pub mod config;
 pub mod deliver;
+pub mod display;
 pub mod helper;
 pub mod history;
 pub mod inspect;
 pub mod install;
 pub mod keys;
+pub mod launch;
 pub mod link;
 pub mod log;
 pub mod markdown;

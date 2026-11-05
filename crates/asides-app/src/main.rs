@@ -4,15 +4,27 @@
 //! there as their own message (`asides_core::deliver`). Every aside is kept in the history
 //! (`~/.asides/history`). The overlay is a separate process (`asides-overlay`, GPUI).
 
+// A Windows app has no console window of its own (`asides`, the command, is a console program).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod audio;
+#[cfg_attr(windows, path = "windows/capture.rs")]
 mod capture;
+#[cfg_attr(windows, path = "windows/clipboard.rs")]
 mod clipboard;
+#[cfg_attr(windows, path = "windows/elements.rs")]
 mod elements;
 mod hotkeys;
 mod icons;
-mod macos;
+#[cfg(windows)]
+#[path = "windows/instance.rs"]
+mod instance;
 mod overlay;
 mod stt;
+#[cfg_attr(target_os = "macos", path = "macos.rs")]
+#[cfg_attr(windows, path = "windows/system.rs")]
+mod system;
+#[cfg_attr(windows, path = "windows/terminal.rs")]
 mod terminal;
 mod tray;
 mod update;
@@ -47,9 +59,9 @@ use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
 use chrono::{DateTime, Local};
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
-use objc2::MainThreadMarker;
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
+#[cfg(target_os = "macos")]
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
 use tray_icon::TrayIconEvent;
 use tray_icon::menu::MenuEvent;
@@ -58,9 +70,9 @@ use crate::capture::{Capture, ScreenInfo};
 use crate::elements::WindowInfo;
 use crate::hotkeys::{Action, Hotkeys};
 use crate::icons::{Icons, Mark};
-use crate::macos::{CommandLink, Mic, Sound};
 use crate::overlay::{Message as OverlayMessage, Overlay, Standby};
 use crate::stt::{ModelManager, ModelState};
+use crate::system::{CommandLink, MainThread, Mic, Sound};
 use crate::tray::{MenuAction, Tray, View};
 use crate::update::{Flow, Next, Reply as UpdateReply, Request as UpdateRequest, Updater};
 use crate::worker::{AsideJob, CapturedImage, Job, Outcome, TranscribeJob};
@@ -113,6 +125,11 @@ enum UserEvent {
     PermissionsMayHaveChanged,
     /// The microphone heard more (the pill's fills with how loud).
     Heard,
+    /// The overlay started ahead of time (`App::stand_by`), or why not.
+    StandingBy(Result<Standby, String>),
+    /// An `asides://` link (Windows: handed over by a second copy started with it).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Link(url::Url),
 }
 
 struct Recording {
@@ -172,7 +189,7 @@ struct Flash {
 }
 
 struct App {
-    mtm: MainThreadMarker,
+    mtm: MainThread,
     proxy: EventLoopProxy<UserEvent>,
     config: Config,
     icons: Option<Icons>,
@@ -222,6 +239,8 @@ struct App {
     overlay: Option<Overlay>,
     /// ...and the next one, started ahead of time.
     standby: Option<Standby>,
+    /// One is being started.
+    standing_by: bool,
     /// asides opens over the live screen (`⌃⌥P` with it closed), once the screens are listed.
     open_live: bool,
     /// What was said in the open session, until it ends.
@@ -269,20 +288,28 @@ fn main() {
     // What goes wrong is kept in ~/Library/Logs/asides (`asides log`): launched from the Dock or at
     // login, standard error went nowhere.
     asides_core::log::init("app");
+    // Windows: the links this copy was started with go to the one already running, if there's one.
+    #[cfg(windows)]
+    let Some(instance) = instance::first() else { return };
     if let Err(err) = asides_core::log::capture_stderr() {
         asides_core::log::problem(format_args!("standard error not in the log: {err}"));
     }
-    asides_core::log::write(format_args!(
-        "asides {} started, macOS {}",
-        env!("CARGO_PKG_VERSION"),
-        macos::system_version()
-    ));
-    let mtm = MainThreadMarker::new().expect("must start on the main thread");
+    asides_core::log::write(format_args!("asides {} started, {}", env!("CARGO_PKG_VERSION"), system::system_version()));
+    let mtm = MainThread::new().expect("must start on the main thread");
+    #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
-    event_loop.set_activation_policy(ActivationPolicy::Accessory);
-    // tao activates the app at launch by default; a background menu-bar app must not take focus.
-    event_loop.set_activate_ignoring_other_apps(false);
+    #[cfg(target_os = "macos")]
+    {
+        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        // tao activates the app at launch by default; a background menu-bar app must not take focus.
+        event_loop.set_activate_ignoring_other_apps(false);
+    }
     let proxy = event_loop.create_proxy();
+    #[cfg(windows)]
+    {
+        let p = proxy.clone();
+        instance.listen(move |url| p.send_event(UserEvent::Link(url)).is_ok());
+    }
 
     let p = proxy.clone();
     GlobalHotKeyEvent::set_event_handler(Some(move |e| {
@@ -296,14 +323,16 @@ fn main() {
     TrayIconEvent::set_event_handler(Some(|_| {}));
 
     let mut app = App::new(mtm, proxy);
-    macos::watch_main_thread();
+    let watchdog = system::watch_main_thread();
     event_loop.run(move |event, _, control_flow| {
+        system::main_thread_working(&watchdog, &event);
         if let Event::NewEvents(StartCause::ResumeTimeReached { .. }) = &event {
             app.tick();
         }
         match event {
             Event::NewEvents(StartCause::Init) => app.init(),
             Event::Opened { urls } => urls.iter().for_each(|url| app.handle_link(url)),
+            Event::UserEvent(UserEvent::Link(url)) => app.handle_link(&url),
             Event::UserEvent(event) => app.handle(event),
             Event::LoopDestroyed => app.exit(),
             _ => {}
@@ -313,11 +342,12 @@ fn main() {
         } else {
             app.next_wakeup().map_or(ControlFlow::Wait, ControlFlow::WaitUntil)
         };
+        system::main_thread_done(&watchdog);
     });
 }
 
 impl App {
-    fn new(mtm: MainThreadMarker, proxy: EventLoopProxy<UserEvent>) -> App {
+    fn new(mtm: MainThread, proxy: EventLoopProxy<UserEvent>) -> App {
         let config_path = paths::config_path();
         let config = Config::load(&config_path).unwrap_or_default();
         if !config_path.exists() {
@@ -352,7 +382,7 @@ impl App {
             model_state,
             flash: None,
             error: None,
-            mic: macos::mic_status(),
+            mic: system::mic_status(),
             keys_down: HashSet::new(),
             pill_at: previous.pill_at,
             last_request: None,
@@ -372,6 +402,7 @@ impl App {
             screen_permitted: false,
             overlay: None,
             standby: None,
+            standing_by: false,
             open_live: false,
             takes: Vec::new(),
             said: Vec::new(),
@@ -397,6 +428,12 @@ impl App {
     }
 
     fn init(&mut self) {
+        // Windows: `asides://` links open this copy (the command, the window, setup).
+        system::register_links();
+        #[cfg(windows)]
+        if self.config.measure.identify_elements {
+            elements::warm_up();
+        }
         let icons = Icons::load();
         match Tray::new(&self.config, &icons.get(Mark::Letter)) {
             Ok(tray) => self.tray = Some(tray),
@@ -418,8 +455,8 @@ impl App {
         // Leaving a terminal asides types into, the user may have started a session there: it's
         // looked for then, to be known before asides opens.
         let left = asked.clone();
-        macos::on_app_left(move |bundle| {
-            if deliver::TERMINALS.iter().any(|t| deliver::bundle_id(t) == Some(bundle)) {
+        system::on_app_left(move |app| {
+            if system::is_terminal(app) {
                 let _ = left.send(());
             }
         });
@@ -427,7 +464,7 @@ impl App {
         let home = std::env::home_dir().unwrap_or_default();
         watch::sessions(&home, requests, asked, move |found| proxy.send_event(UserEvent::Sessions(found)).is_ok());
         let proxy = self.proxy.clone();
-        macos::on_permission_changes(move || {
+        system::on_permission_changes(move || {
             let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
         });
         self.look_for_agents();
@@ -451,16 +488,26 @@ impl App {
     /// Homebrew cask does: /usr/local/bin/asides → the CLI in the bundle. Skipped when an `asides`
     /// is already set up, or once the user declined the password prompt.
     fn link_command(&self) {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        // …/asides.app/Contents/MacOS/asides-app
-        let app = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
-        let Some(cli) = app.and_then(|app| install::installed_cli(&app, &home)) else { return };
-        if self.command_link_declined || install::command_installed(&install::command_dirs(&home)) {
+        // Windows: the app's folder (which has asides.exe) goes on the user's PATH.
+        #[cfg(windows)]
+        let Some(cli) = system::command_to_link() else { return };
+        #[cfg(target_os = "macos")]
+        let cli = {
+            let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            // …/asides.app/Contents/MacOS/asides-app
+            let app = std::env::current_exe().ok().and_then(|exe| exe.ancestors().nth(3).map(Path::to_path_buf));
+            let Some(cli) = app.and_then(|app| install::installed_cli(&app, &home)) else { return };
+            if install::command_installed(&install::command_dirs(&home)) {
+                return;
+            }
+            cli
+        };
+        if self.command_link_declined {
             return;
         }
         let proxy = self.proxy.clone();
         std::thread::spawn(move || {
-            let _ = proxy.send_event(UserEvent::CommandLinked(macos::link_command(&cli)));
+            let _ = proxy.send_event(UserEvent::CommandLinked(system::link_command(&cli)));
         });
     }
 
@@ -489,6 +536,16 @@ impl App {
                 }
             }
             UserEvent::Heard => self.show_level(),
+            UserEvent::StandingBy(started) => {
+                self.standing_by = false;
+                match started {
+                    // Its stdin dropped (if one stands by already), it ends.
+                    Ok(standby) if self.standby.is_none() => self.standby = Some(standby),
+                    Ok(_) => {}
+                    Err(err) => eprintln!("asides: no overlay standing by: {err}"),
+                }
+            }
+            UserEvent::Link(url) => self.handle_link(&url),
             UserEvent::ConfigFileChanged => self.reload_config(),
             UserEvent::Wispr(Ok(dictation)) => self.add_dictation(dictation),
             UserEvent::Wispr(Err(message)) => self.fail(message),
@@ -505,7 +562,10 @@ impl App {
             }
             UserEvent::Delivered { id, delivery } => self.delivered(&id, delivery, true),
             UserEvent::CommandLinked(CommandLink::Linked) => {
-                let status = format!("You can now run `asides` in any terminal ({})", install::LINK);
+                let status = match cfg!(windows) {
+                    true => "You can now run `asides` in a new terminal".to_string(),
+                    false => format!("You can now run `asides` in any terminal ({})", install::LINK),
+                };
                 self.flash(SENT_FLASH, Mark::Check, status);
                 self.refresh();
             }
@@ -514,7 +574,8 @@ impl App {
                 self.publish();
             }
             UserEvent::CommandLinked(CommandLink::Failed(message)) => {
-                self.fail(format!("Could not add the asides command to {}: {message}", install::LINK));
+                let place = if cfg!(windows) { "your PATH" } else { install::LINK };
+                self.fail(format!("Could not add the asides command to {place}: {message}"));
             }
             // asides frozen as it opens, or, open, frozen again.
             UserEvent::Captured(Ok(captures)) if self.overlay.is_some() => self.freeze_overlay(captures),
@@ -897,7 +958,7 @@ impl App {
     /// Starts recording: `annotation`, what's said is about that annotation (from its card);
     /// `push_to_talk`, until Space is let go.
     fn start_recording(&mut self, pressed: Option<Instant>, annotation: Option<u32>, push_to_talk: bool) {
-        match macos::mic_status() {
+        match system::mic_status() {
             Mic::Granted => self.mic = Mic::Granted,
             Mic::Undetermined => {
                 if let Some(overlay) = &mut self.overlay {
@@ -908,10 +969,7 @@ impl App {
             }
             Mic::Denied => {
                 self.mic = Mic::Denied;
-                return self.fail(
-                    "Microphone access is denied: allow asides in System Settings → Privacy & Security → Microphone."
-                        .into(),
-                );
+                return self.fail(system::MIC_DENIED.into());
             }
         }
         if self.models.state(&self.config.model).is_none() {
@@ -928,7 +986,7 @@ impl App {
         // Where the user is, for the aside: in the app a frozen screen stands for, or the one in
         // front (what's said from an annotation's card is about that annotation).
         let frozen = self.overlay.as_ref().filter(|o| o.frozen);
-        let pid = frozen.map_or_else(macos::frontmost_app, |o| o.previous_app).filter(|_| annotation.is_none());
+        let pid = frozen.map_or_else(system::frontmost_app, |o| o.previous_app).filter(|_| annotation.is_none());
         let place = look_up_place(pid, self.config.measure.identify_elements);
         // The speech model, loaded while the user talks (it's let go after a while unused).
         let _ = self.worker.jobs.send(Job::Warm(self.config.model.clone()));
@@ -1037,6 +1095,11 @@ impl App {
         // The sessions are known (looked for as they start); which was typed into last, read now,
         // is what the pill names as it opens. Looked for again, for the list.
         sessions::read_input_times(&mut self.sessions);
+        // Windows keeps no time of a console's last input: the terminal in front comes first.
+        #[cfg(windows)]
+        if let Some(front) = system::frontmost_app() {
+            sessions::in_front(&mut self.sessions, front);
+        }
         self.looking = true;
         self.ask_for_sessions();
         self.capture_screens();
@@ -1063,13 +1126,13 @@ impl App {
             .iter()
             .map(|s| {
                 let px = |pt: f64| (pt * s.scale).round() as usize;
-                (s.display, px(s.frame.size.width), px(s.frame.size.height))
+                (s.display, px(s.frame.width), px(s.frame.height))
             })
             .collect();
         // The app the user is in, to give the keyboard back to when the screen goes live again.
         let overlay = self.overlay.as_mut();
         let without = overlay.as_ref().map(|o| o.pid());
-        let front = macos::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
+        let front = system::frontmost_app().filter(|&pid| pid != std::process::id() as i32);
         if let Some(overlay) = overlay {
             overlay.previous_app = front;
         }
@@ -1172,9 +1235,11 @@ impl App {
         let live = spec.live;
         let screens = spec.screens.len();
         let mut overlay = overlay::start(spec, frames, windows, standby, self.overlay_notify())?;
-        overlay.previous_app = macos::frontmost_app();
+        // Windows lets only the app the shortcut went to take the keyboard: it hands that on.
+        system::allow_focus(overlay.pid());
+        overlay.previous_app = system::frontmost_app();
         overlay.frozen = !live;
-        let over = overlay.previous_app.map_or_else(|| "no app".into(), macos::app_name);
+        let over = overlay.previous_app.map_or_else(|| "no app".into(), system::app_name);
         let how = if live { "live" } else { "frozen" };
         asides_core::log::write(format_args!(
             "opened over {over}, {how}, {screens} screens (overlay {})",
@@ -1194,14 +1259,22 @@ impl App {
         }
     }
 
-    /// Starts the next overlay ahead of time (`overlay::Standby`), unless one is open or waiting.
+    /// Starts the next overlay ahead of time (`overlay::Standby`), unless one is open or waiting,
+    /// from a thread of its own: starting a program can take seconds (Windows has a new one scanned
+    /// first, as after an update), and the main thread would wait.
     fn stand_by(&mut self) {
-        if self.overlay.is_some() || self.standby.is_some() {
+        if self.overlay.is_some() || self.standby.is_some() || self.standing_by {
             return;
         }
-        match overlay::standby(self.overlay_notify()) {
-            Ok(standby) => self.standby = Some(standby),
-            Err(err) => eprintln!("asides: no overlay standing by: {err:#}"),
+        self.standing_by = true;
+        let (notify, proxy) = (self.overlay_notify(), self.proxy.clone());
+        let spawned = std::thread::Builder::new().name("asides-standby".into()).spawn(move || {
+            let started = overlay::standby(notify).map_err(|err| format!("{err:#}"));
+            let _ = proxy.send_event(UserEvent::StandingBy(started));
+        });
+        if let Err(err) = spawned {
+            self.standing_by = false;
+            eprintln!("asides: no overlay standing by: {err}");
         }
     }
 
@@ -1330,7 +1403,7 @@ impl App {
                 }
                 self.overlay = None;
                 if let Some(pid) = previous {
-                    macos::activate_app(pid);
+                    system::activate_app(pid);
                 }
                 if crashed {
                     self.fail("asides' overlay closed unexpectedly. What you said is in History.".into());
@@ -1497,6 +1570,8 @@ impl App {
         if let Some(child) = &mut self.window
             && child.try_wait().ok().flatten().is_none()
         {
+            // Windows: the window may come forward, as the app may (from its menu, a click).
+            system::allow_focus(child.id() as i32);
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
                 let _ = writeln!(stdin, "show {}", page.unwrap_or_default());
@@ -1510,7 +1585,10 @@ impl App {
         }
         let spawned = command.spawn();
         match spawned {
-            Ok(child) => self.window = Some(child),
+            Ok(child) => {
+                system::allow_focus(child.id() as i32);
+                self.window = Some(child);
+            }
             Err(err) => self.fail(format!("Could not open the asides window: {err}")),
         }
     }
@@ -1740,13 +1818,13 @@ impl App {
 
     fn sound(&self, sound: Sound) {
         if self.config.sounds {
-            macos::play(sound);
+            system::play(sound);
         }
     }
 
     fn request_mic(&mut self) {
         let proxy = self.proxy.clone();
-        macos::request_mic(move |granted| {
+        system::request_mic(move |granted| {
             let _ = proxy.send_event(UserEvent::Mic(granted));
         });
     }
@@ -1763,7 +1841,7 @@ impl App {
             let automation = terminals
                 .into_iter()
                 .filter_map(|app| deliver::automated_bundle(app).map(|bundle| (app, bundle)))
-                .map(|(app, bundle)| (app.to_string(), macos::automation(bundle, false).as_str().to_string()))
+                .map(|(app, bundle)| (app.to_string(), system::automation(bundle, false).as_str().to_string()))
                 .collect();
             let permissions = Permissions {
                 screen: capture::permitted(),
@@ -1771,19 +1849,19 @@ impl App {
                 automation,
                 checked_ms: history::now_ms(),
             };
-            let _ = proxy.send_event(UserEvent::Permissions(permissions, macos::mic_status(), macos::login_item()));
+            let _ = proxy.send_event(UserEvent::Permissions(permissions, system::mic_status(), system::login_item()));
         });
     }
 
     /// Opens asides at login, or stops (General's and setup's switch). Turned off in System
     /// Settings, it can be turned on only there: they open.
     fn set_open_at_login(&mut self, open: bool) {
-        match macos::set_open_at_login(open) {
-            Ok(LoginItem::NeedsApproval) if open => macos::open_login_items(),
+        match system::set_open_at_login(open) {
+            Ok(LoginItem::NeedsApproval) if open => system::open_login_items(),
             Ok(_) => {}
             Err(message) => self.fail(format!("Could not change opening at login: {message}")),
         }
-        self.open_at_login = macos::login_item();
+        self.open_at_login = system::login_item();
         self.publish();
     }
 
@@ -1802,7 +1880,7 @@ impl App {
                 // macOS waits for the answer; then the permissions are looked at again.
                 let proxy = self.proxy.clone();
                 std::thread::spawn(move || {
-                    macos::ask_automation(bundle);
+                    system::ask_automation(bundle);
                     let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
                 });
             }
@@ -2099,12 +2177,12 @@ fn spec_screens(
         else {
             continue;
         };
-        let (w, h) = (s.frame.size.width, s.frame.size.height);
+        let (w, h) = (s.frame.width, s.frame.height);
         spec_screens.push(SpecScreen {
             display: s.display,
             screen: Screen { name: s.name, width: w, height: h, scale: s.scale },
             origin: s.origin,
-            frame: PtRect::new(s.frame.origin.x, s.frame.origin.y, w, h),
+            frame: s.frame,
             pixels: String::new(),
             width: capture.frame.width,
             height: capture.frame.height,
@@ -2127,12 +2205,12 @@ fn spec_screens_live(screens: Vec<ScreenInfo>) -> Vec<SpecScreen> {
     screens
         .into_iter()
         .map(|s| {
-            let (w, h) = (s.frame.size.width, s.frame.size.height);
+            let (w, h) = (s.frame.width, s.frame.height);
             SpecScreen {
                 display: s.display,
                 screen: Screen { name: s.name, width: w, height: h, scale: s.scale },
                 origin: s.origin,
-                frame: PtRect::new(s.frame.origin.x, s.frame.origin.y, w, h),
+                frame: s.frame,
                 pixels: String::new(),
                 width: 0,
                 height: 0,

@@ -77,8 +77,10 @@ impl Tray {
         let sounds = CheckMenuItem::new("Sounds", true, config.sounds, None);
         let identify = CheckMenuItem::new("Name What's Pinned", true, config.measure.identify_elements, None);
         let history = MenuItem::new("History…", true, None);
-        let settings = MenuItem::new("Settings…", true, Accelerator::from_str("cmd+Comma").ok());
-        let quit = MenuItem::new("Quit asides", true, Accelerator::from_str("cmd+KeyQ").ok());
+        // A Mac app's ⌘, and ⌘Q; Windows' tray menus show no shortcuts.
+        let mac = |text: &str| Accelerator::from_str(text).ok().filter(|_| cfg!(target_os = "macos"));
+        let settings = MenuItem::new("Settings…", true, mac("cmd+Comma"));
+        let quit = MenuItem::new("Quit asides", true, mac("cmd+KeyQ"));
         let menu = Menu::new();
         menu.append_items(&[
             &status,
@@ -100,11 +102,15 @@ impl Tray {
             .with_menu(Box::new(menu.clone()))
             .with_menu_on_left_click(true)
             .with_tooltip("asides");
+        #[cfg(target_os = "macos")]
         let builder = if icon.template {
             builder.with_icon_templated(icon.icon.clone())
         } else {
             builder.with_icon(icon.icon.clone())
         };
+        // Windows tints no icon: the template ones are drawn in the taskbar's ink (`icons.rs`).
+        #[cfg(not(target_os = "macos"))]
+        let builder = builder.with_icon(icon.icon.clone());
         let icon = builder.build()?;
         Ok(Tray {
             icon,
@@ -147,7 +153,10 @@ impl Tray {
         let shown = (view.mark, view.title.clone());
         if self.shown.as_ref().map(|s| s.0) != Some(view.mark) {
             let icon = Some(view.icon.icon.clone());
+            #[cfg(target_os = "macos")]
             let _ = if view.icon.template { self.icon.set_icon_templated(icon) } else { self.icon.set_icon(icon) };
+            #[cfg(not(target_os = "macos"))]
+            let _ = self.icon.set_icon(icon);
         }
         if self.shown.as_ref().map(|s| &s.1) != Some(&view.title) {
             self.icon.set_title(view.title.as_deref());
@@ -183,6 +192,7 @@ fn menu_text(text: &str) -> String {
     text.replace('&', "&&")
 }
 
+/// A global shortcut beside its item, as a Mac's menus show them (Windows' tray menus show none).
 fn accelerator(shortcut: &str) -> Option<Accelerator> {
-    Accelerator::from_str(shortcut).ok()
+    Accelerator::from_str(shortcut).ok().filter(|_| cfg!(target_os = "macos"))
 }

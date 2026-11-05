@@ -106,10 +106,50 @@ pub fn sessions(
 }
 
 /// Processes ending: kqueue says when one does (`NOTE_EXIT`), and `ended` hears it.
+#[cfg(not(windows))]
 struct Exits {
     queue: libc::c_int,
 }
 
+/// Processes ending, on Windows: a thread waits on each one's handle, which is signaled as it ends,
+/// and `ended` hears it.
+#[cfg(windows)]
+struct Exits {
+    ended: Sender<()>,
+    watched: Mutex<std::collections::HashSet<i32>>,
+}
+
+#[cfg(windows)]
+impl Exits {
+    fn new(ended: Sender<()>) -> Option<Exits> {
+        Some(Exits { ended, watched: Mutex::default() })
+    }
+
+    /// Hears when any of these processes ends (once; asking again for one already heard is fine).
+    fn watch(&self, pids: impl Iterator<Item = i32>) {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{INFINITE, OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+        for pid in pids {
+            if !self.watched.lock().unwrap().insert(pid) {
+                continue;
+            }
+            // SAFETY: the handle is the thread's, closed once the process has ended.
+            let Ok(process) = (unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid as u32) }) else { continue };
+            let process = process.0 as isize;
+            let ended = self.ended.clone();
+            let _ = std::thread::Builder::new().name("asides-session-exit".into()).spawn(move || {
+                let process = windows::Win32::Foundation::HANDLE(process as *mut core::ffi::c_void);
+                unsafe {
+                    WaitForSingleObject(process, INFINITE);
+                    let _ = CloseHandle(process);
+                }
+                let _ = ended.send(());
+            });
+        }
+    }
+}
+
+#[cfg(not(windows))]
 impl Exits {
     fn new(ended: Sender<()>) -> Option<Exits> {
         let queue = unsafe { libc::kqueue() };

@@ -3,6 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use asides_core::inspect::PtRect;
 use asides_core::measure::Frame;
 use block2::RcBlock;
 use objc2::AnyThread;
@@ -24,7 +25,7 @@ pub struct ScreenInfo {
     pub display: u32,
     pub name: Option<String>,
     /// In AppKit's coordinates (origin at the bottom-left of the main screen), points.
-    pub frame: objc2_foundation::NSRect,
+    pub frame: PtRect,
     pub scale: f64,
     /// Top-left corner in CoreGraphics' global coordinates (y down), points.
     pub origin: (f64, f64),
@@ -46,7 +47,7 @@ pub fn screens(mtm: objc2::MainThreadMarker) -> Vec<ScreenInfo> {
             Some(ScreenInfo {
                 display,
                 name: Some(screen.localizedName().to_string()),
-                frame,
+                frame: PtRect::new(frame.origin.x, frame.origin.y, frame.size.width, frame.size.height),
                 scale: screen.backingScaleFactor(),
                 origin: (bounds.origin.x, bounds.origin.y),
                 menu_bar: menu_bar.max(screen.safeAreaInsets().top),
