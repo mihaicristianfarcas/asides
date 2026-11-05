@@ -31,6 +31,15 @@ On Windows only the microphone is asked for (Settings → Privacy & security →
 desktop apps access your microphone**): freezing the screen, naming what's under a pin and typing
 into consoles need no permission.
 
+On Linux nothing asks for the microphone. GNOME on Wayland asks once before the first screenshot,
+and only for the app in front: setup's **Screenshots** row asks with asides' window open (after a
+"Deny", **Allow…** asks again). KDE allows asides by its launcher entry. Where the kernel restricts
+one process reaching into another (`ptrace_scope`, on Ubuntu and Arch), typing into most terminals
+needs the helper `asides-keys` to hold `cap_sys_ptrace`: setup's **Allow…** asks for your password
+and grants it to that file alone. The helper only writes keystrokes to terminals of your own and
+drops it before reading anything. tmux, Konsole and WezTerm need none of this, and an update
+replaces the file, so setup asks again.
+
 ## Uninstall
 
 `brew uninstall --cask asides` (add `--zap` to delete settings, models and history too), or
@@ -41,3 +50,8 @@ history in `~/.asides`.
 On Windows, uninstall asides from Settings → Apps: it quits asides and takes its folder off the
 PATH. Settings, models and the log stay in `%LOCALAPPDATA%\asides`, the history in
 `%USERPROFILE%\.asides`.
+
+On Linux, remove the package (`apt remove asides`, `dnf remove asides`, `pacman -R asides-bin`), or
+run `install.sh --uninstall` from the archive. Settings stay in `~/.config/asides`, models in
+`~/.local/share/asides`, the log in `~/.local/state/asides`, the history in `~/.asides`. GNOME keeps
+the shortcuts asides added until you delete them in Settings → Keyboard.

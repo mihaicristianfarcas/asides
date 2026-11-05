@@ -31,10 +31,10 @@ use asides_core::update::{self, Block, Notes, Phase, Span, Step};
 use chrono::{Local, TimeZone};
 use futures::StreamExt;
 use gpui::{
-    AnyElement, App, AppContext, Application, Bounds, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla,
-    ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, PromptButton, PromptLevel,
-    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowControlArea, WindowOptions,
-    actions, div, img, point, prelude::*, px, size,
+    AnyElement, App, AppContext, Application, Bounds, Context, CursorStyle, Entity, FocusHandle, Focusable, FontWeight,
+    Hsla, ImageSource, KeyBinding, KeyDownEvent, Menu, MenuItem, MouseButton, PathPromptOptions, PromptButton,
+    PromptLevel, Render, ResizeEdge, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowControlArea, WindowOptions, actions, div, img, point, prelude::*, px, size,
 };
 
 actions!(
@@ -507,6 +507,8 @@ pub fn run() {
             window_min_size: Some(min),
             // Glass, as the overlay's surfaces: the window blurs what's behind it (`Theme`'s tints).
             window_background: native::window_glass(),
+            // What the desktop finds the launcher (`.desktop`) and its icon by.
+            app_id: cfg!(target_os = "linux").then(|| asides_core::paths::BUNDLE_ID.to_string()),
             ..WindowOptions::default()
         };
         let opened = cx.open_window(options, move |window, cx| {
@@ -633,7 +635,7 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
                     let p = |v: gpui::Pixels| f32::from(v);
                     let rect = format!("{},{},{},{}", p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
                     let shot = if part == 1 { format!("{name}-{look}") } else { format!("{name}-{part}-{look}") };
-                    if cfg!(windows) {
+                    if cfg!(not(target_os = "macos")) {
                         // Read from the screen (`replay::capture_window`); no recordings.
                         let view = handle.update(cx, |_, window, _| native::view_pointer(window)).unwrap_or(0);
                         crate::replay::capture_window(view, &dir.join(shot + ".png"));
@@ -754,6 +756,10 @@ impl AsidesWindow {
         if let Some(page) = command.strip_prefix("show") {
             if let Some(page) = Page::named(page.trim()) {
                 self.go(page, cx);
+                // In an open window, only a permission asides needs brings setup up.
+                if page == Page::Setup {
+                    self.setup_go(SetupStep::Permissions, cx);
+                }
             }
             native::activate();
             window.activate_window();
@@ -1031,9 +1037,9 @@ impl AsidesWindow {
             Recording::Key(_) => Some(chord.to_config()),
         };
         let Some(text) = text else {
-            self.toast(match cfg!(windows) {
-                true => "A shortcut needs Ctrl.",
-                false => "A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone.",
+            self.toast(match cfg!(target_os = "macos") {
+                false => "A shortcut needs Ctrl.",
+                true => "A shortcut needs ⌃ or ⌘: macOS doesn't take ⌥ alone.",
             });
             return cx.notify();
         };
@@ -1234,7 +1240,17 @@ fn send_link(link: &Link) -> std::io::Result<()> {
         let app = std::env::current_exe()?.with_file_name("asides-app.exe");
         Command::new(app).arg(link.to_url()).spawn().map(drop)
     }
-    #[cfg(not(windows))]
+    // Linux: the same, as the command does it: over its socket, or by starting it.
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(paths::links_socket()) {
+            return socket.write_all(format!("{}\n", link.to_url()).as_bytes());
+        }
+        let app = std::env::current_exe()?.with_file_name("asides-app");
+        Command::new(app).arg(link.to_url().as_str()).spawn().map(drop)
+    }
+    #[cfg(target_os = "macos")]
     {
         let mut open = Command::new("open");
         open.arg("-g");
@@ -1249,16 +1265,23 @@ fn send_link(link: &Link) -> std::io::Result<()> {
 
 fn open_url(url: &str) {
     // Explorer opens a link with what the user opens links with.
-    let opener = if cfg!(windows) { "explorer" } else { "open" };
+    let opener = match () {
+        _ if cfg!(windows) => "explorer",
+        _ if cfg!(target_os = "linux") => "xdg-open",
+        _ => "open",
+    };
     let _ = Command::new(opener).arg(url).status();
 }
 
-/// Shows a file in Finder (Explorer on Windows), selected.
+/// Shows a file in Finder (Explorer on Windows; on Linux its folder, in what opens folders), selected
+/// where it can be.
 fn reveal(file: &Path) {
-    let _ = match cfg!(windows) {
-        true => Command::new("explorer").arg(format!("/select,{}", file.display())).status(),
-        false => Command::new("open").arg("-R").arg(file).status(),
-    };
+    #[cfg(windows)]
+    let _ = Command::new("explorer").arg(format!("/select,{}", file.display())).status();
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("xdg-open").arg(file.parent().unwrap_or(file)).status();
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg("-R").arg(file).status();
 }
 
 /// When what `ago(at)` says next changes.
@@ -1350,7 +1373,7 @@ fn status(state: &AppState, t: Theme) -> (String, Hsla) {
 impl Render for AsidesWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        self.width = f32::from(window.viewport_size().width);
+        self.width = f32::from(window.viewport_size().width) - 2. * frame_shadow(window);
         self.focused = window.focused(cx);
         controls::scroll_areas([self.page_scroll.clone(), self.list_scroll.clone(), self.aside_scroll.clone()]);
         self.clear_toast_when_due(cx);
@@ -1379,7 +1402,7 @@ impl Render for AsidesWindow {
         let content = fade_in(div().size_full().flex().flex_col().child(content), shown, 0.);
         let sidebar = (self.page != Page::Setup).then(|| self.sidebar(cx));
         let surface = if self.page == Page::Setup { t.reading } else { t.background };
-        div()
+        let body = div()
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &ShowHistory, _, cx| this.page_or_keys(Page::History, "cmd+1", cx)))
             .on_action(cx.listener(|this, _: &ShowSessions, _, cx| this.page_or_keys(Page::Sessions, "cmd+2", cx)))
@@ -1420,7 +1443,10 @@ impl Render for AsidesWindow {
                 } else if this.page == Page::History
                     && e.keystroke.key == "backspace"
                     && m.secondary()
-                    && !(m.shift || m.alt || (m.control && !cfg!(windows)) || (m.platform && cfg!(windows)))
+                    && !(m.shift
+                        || m.alt
+                        || (m.control && cfg!(target_os = "macos"))
+                        || (m.platform && !cfg!(target_os = "macos")))
                     && this.editing.is_none()
                     && let Some(aside) = this.selected().cloned()
                 {
@@ -1465,7 +1491,8 @@ impl Render for AsidesWindow {
                     "toast",
                     6.,
                 ))
-            }))
+            }));
+        framed(body, window, t)
     }
 }
 
@@ -1555,10 +1582,10 @@ impl AsidesWindow {
             // The title bar's lane: on a Mac the traffic lights'. On Windows (their caption buttons
             // are over the page) the first row is as far from the top as the foot's line is from
             // the bottom, as helio's.
-            .child(controls::drag_area().flex_none().h(px(if cfg!(windows) {
-                Metrics::SIDEBAR_EDGE - Metrics::NAV_TOP
-            } else {
+            .child(controls::drag_area().flex_none().h(px(if cfg!(target_os = "macos") {
                 Metrics::TITLE_BAR
+            } else {
+                Metrics::SIDEBAR_EDGE - Metrics::NAV_TOP
             })))
             .child(
                 div()
@@ -1680,12 +1707,12 @@ impl AsidesWindow {
         let (state, color) = status(&self.state, t);
         div()
             .flex_none()
+            .flex()
             .px(px(17.))
             .pb(px(14.))
             .text_size(px(12.))
             .text_color(color)
-            .truncate()
-            .child(state)
+            .child(div().flex_1().min_w_0().truncate().child(state))
             .into_any_element()
     }
 
@@ -1798,7 +1825,7 @@ impl AsidesWindow {
                     .border_r_1()
                     .border_color(t.hairline)
                     // Windows: its strip of actions under the caption buttons' (as helio's chat).
-                    .when(cfg!(windows), |d| d.child(page_strip()))
+                    .when(cfg!(not(target_os = "macos")), |d| d.child(page_strip()))
                     .child(toolbar_row(
                         Some(
                             div()
@@ -1847,7 +1874,7 @@ impl AsidesWindow {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .when(cfg!(windows), |d| d.child(page_strip()))
+                    .when(cfg!(not(target_os = "macos")), |d| d.child(page_strip()))
                     .children(detail),
             )
             .into_any_element()
@@ -1980,15 +2007,20 @@ impl AsidesWindow {
         );
         let dir = aside.dir.clone();
         actions.push(
-            icon_button("reveal", "folder", if cfg!(windows) { "Show in Explorer" } else { "Show in Finder" }, t)
+            icon_button("reveal", "folder", SHOW_IN_FILES, t)
                 .on_click(move |_, _, _| reveal(&dir.join(history::MESSAGE_FILE)))
                 .into_any_element(),
         );
         let deleted = aside.clone();
         actions.push(
-            icon_button("delete", "trash", if cfg!(windows) { "Delete (Ctrl+Backspace)" } else { "Delete (⌘⌫)" }, t)
-                .on_click(cx.listener(move |this, _, window, cx| this.ask_delete(deleted.clone(), window, cx)))
-                .into_any_element(),
+            icon_button(
+                "delete",
+                "trash",
+                if cfg!(target_os = "macos") { "Delete (⌘⌫)" } else { "Delete (Ctrl+Backspace)" },
+                t,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| this.ask_delete(deleted.clone(), window, cx)))
+            .into_any_element(),
         );
         // Where it went, each time, or that it's only in History.
         let status = |text: String, color: Hsla| div().text_color(color).child(text).into_any_element();
@@ -2441,7 +2473,7 @@ impl AsidesWindow {
                         "{measure} measures: move for the distances to the nearest edges, drag for the size of \
                          what's inside. {draw} draws: circle or underline, {shift}drag for an arrow. {shot}, then \
                          a drag, adds a screenshot of part of the screen. {annotate} goes back to pins.",
-                        shift = if cfg!(windows) { "Shift+" } else { "⇧-" },
+                        shift = if cfg!(target_os = "macos") { "⇧-" } else { "Shift+" },
                     ),
                     Some(tools),
                 ))
@@ -2708,6 +2740,10 @@ impl AsidesWindow {
             .into_iter()
             .map(|name| {
                 let detail = match name {
+                    _ if cfg!(target_os = "linux") => match deliver::automated_bundle(name) {
+                        Some(_) => "asides types there through its helper.",
+                        None => "Types without asking for any permission.",
+                    },
                     "Diri" => "Types without asking for any permission.",
                     "Ghostty" => "asides asks once to type there (Automation).",
                     "Windows Terminal" => "A tab of its own, in a new window.",
@@ -2806,7 +2842,7 @@ impl AsidesWindow {
             .into_any_element()
     }
 
-    /// What macOS must allow: each with why, and a button that asks (or opens its settings).
+    /// What the system must allow: each with why, and a button that asks (or opens its settings).
     fn setup_permissions(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let terminal = terminal_app(&self.config.agents.terminal);
@@ -2827,12 +2863,17 @@ impl AsidesWindow {
         let open = pretty_shortcut(&self.config.shortcuts.asides);
         // Windows asks for none of the others: seeing the screen, naming what's pinned (UI
         // Automation) and typing into a console need no permission.
-        let (needs, why) = match cfg!(windows) {
-            true => (
+        let (needs, why) = match () {
+            _ if cfg!(target_os = "linux") && screen_question() => (
+                vec![self.permission_row(Need::Screen, cx), typing],
+                "GNOME asks once, with this window in front. Linux asks for nothing else.",
+            ),
+            _ if cfg!(target_os = "linux") => (vec![typing], "Only this. Linux asks for nothing else."),
+            _ if cfg!(windows) => (
                 vec![self.permission_row(Need::Microphone, cx), typing],
                 "Only the microphone, which is in Settings → Privacy & security → Microphone.",
             ),
-            false => (
+            _ => (
                 vec![
                     self.permission_row(Need::Microphone, cx),
                     self.permission_row(Need::Screen, cx),
@@ -2868,8 +2909,11 @@ impl AsidesWindow {
             ),
             Need::Screen => (
                 "display",
-                "Screen Recording".into(),
-                "To freeze the screen. macOS may ask to reopen asides after.".into(),
+                SCREEN_PERMISSION.into(),
+                match cfg!(target_os = "linux") {
+                    true => "To freeze the screen. GNOME asks once.".into(),
+                    false => "To freeze the screen. macOS may ask to reopen asides after.".into(),
+                },
                 "ScreenCapture",
                 Permission::Screen,
                 if p.screen { "granted" } else { "undetermined" },
@@ -2882,10 +2926,17 @@ impl AsidesWindow {
                 Permission::Accessibility,
                 if p.accessibility { "granted" } else { "undetermined" },
             ),
+            // Linux has one helper, for all of its terminals.
             Need::Automation(app) => (
                 "terminal",
-                format!("Typing into {app}"),
-                format!("To type each aside into its sessions in {app}."),
+                match cfg!(target_os = "linux") {
+                    true => "Typing into terminals".into(),
+                    false => format!("Typing into {app}"),
+                },
+                match cfg!(target_os = "linux") {
+                    true => "A small helper types each aside in. tmux, Konsole and WezTerm don't need it.".into(),
+                    false => format!("To type each aside into its sessions in {app}."),
+                },
                 "Automation",
                 Permission::Automation(app.into()),
                 p.automation(app).unwrap_or("undetermined"),
@@ -2893,14 +2944,19 @@ impl AsidesWindow {
         };
         // Not known yet (the app hasn't looked): nothing to press.
         let known = self.state.pid != 0 && (p.checked_ms > 0 || matches!(need, Need::Microphone));
-        let asked = self.asked.contains(&ask.as_str());
+        // Linux's screenshots can be asked for again, a "no" included (`capture::request`).
+        let asks_again = cfg!(target_os = "linux") && matches!(need, Need::Screen);
+        let asked = !asks_again && self.asked.contains(&ask.as_str());
         let control: AnyElement = match (known, status) {
             (false, _) => chip("Looking…", t.tertiary).into_any_element(),
             (true, "granted") => chip("Allowed", t.fresh).into_any_element(),
             (true, _) if asked || status == "denied" => {
-                let url = match cfg!(windows) {
-                    true => "ms-settings:privacy-microphone".to_string(),
-                    false => format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"),
+                let url = match () {
+                    _ if cfg!(windows) => "ms-settings:privacy-microphone".to_string(),
+                    _ if cfg!(target_os = "linux") => {
+                        "https://github.com/mihaicristianfarcas/asides/blob/main/guide/troubleshooting.md".to_string()
+                    }
+                    _ => format!("x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"),
                 };
                 button(SharedString::from(format!("settings-{}", ask.as_str())), format!("Open {SETTINGS_APP}…"), t)
                     .on_click(move |_, _, _| open_url(&url))
@@ -2942,9 +2998,10 @@ impl AsidesWindow {
                 .on_click(move |_, _, _| {
                     let _ = ask(true);
                 });
-            let why = match cfg!(windows) {
-                true => "Turned off in Settings → Apps → Startup.",
-                false => "Turned off in System Settings → General → Login Items.",
+            let why = match () {
+                _ if cfg!(windows) => "Turned off in Settings → Apps → Startup.",
+                _ if cfg!(target_os = "linux") => "Turned off in your desktop's settings.",
+                _ => "Turned off in System Settings → General → Login Items.",
             };
             return setting("Open at login", Some(why), open, t);
         }
@@ -3096,7 +3153,7 @@ impl AsidesWindow {
         let item = |step: SetupStep, ready: bool, label: String, detail: String| {
             // Both permissions go to one step: Tab reaches the first.
             let (handle, ring) = focus[step.name()].clone();
-            let first = !(step == SetupStep::Permissions && label == "Screen Recording");
+            let first = !(step == SetupStep::Permissions && label == SCREEN_PERMISSION);
             div()
                 .id(SharedString::from(format!("setup-done-{label}")))
                 .when(first, |d| d.track_focus(&handle))
@@ -3147,7 +3204,7 @@ impl AsidesWindow {
                     item(
                         SetupStep::Permissions,
                         p.screen,
-                        "Screen Recording".into(),
+                        SCREEN_PERMISSION.into(),
                         if p.screen { "Allowed".into() } else { later.clone() },
                     ),
                     item(
@@ -3393,16 +3450,22 @@ impl AsidesWindow {
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
         let auto_update = self.setter(cx, |c, on| c.auto_update = on);
-        // Windows asks for none but the microphone.
-        let mut permissions = vec![self.permission_row(Need::Microphone, cx)];
-        if !cfg!(windows) {
+        // Windows asks for none but the microphone; Linux not even that.
+        let mut permissions = Vec::new();
+        if !cfg!(target_os = "linux") {
+            permissions.push(self.permission_row(Need::Microphone, cx));
+        }
+        if cfg!(target_os = "macos") {
             permissions.push(self.permission_row(Need::Screen, cx));
             permissions.push(self.permission_row(Need::Accessibility, cx));
+        } else if screen_question() {
+            permissions.push(self.permission_row(Need::Screen, cx));
         }
-        for app in deliver::installed_terminals() {
-            if deliver::automated_bundle(app).is_some() {
-                permissions.push(self.permission_row(Need::Automation(app), cx));
-            }
+        let automated =
+            deliver::installed_terminals().into_iter().filter(|app| deliver::automated_bundle(app).is_some());
+        // Linux has one helper, for all of its terminals.
+        for app in automated.take(if cfg!(target_os = "linux") { 1 } else { usize::MAX }) {
+            permissions.push(self.permission_row(Need::Automation(app), cx));
         }
         let login = self.login_row(
             "open-at-login",
@@ -3438,7 +3501,7 @@ impl AsidesWindow {
                             ),
                             setting(
                                 "Keep what was said as audio",
-                                Some(if cfg!(windows) { "A .wav with each aside." } else { "An .m4a with each aside." }),
+                                Some(if cfg!(target_os = "macos") { "An .m4a with each aside." } else { "A .wav with each aside." }),
                                 switch("keep-audio", c.keep_audio, t).on_toggle(audio),
                                 t,
                             ),
@@ -3447,27 +3510,34 @@ impl AsidesWindow {
                     )),
                 )
                 .child(
-                    section("Sounds and dictation", t).child(rows(
+                    // Wispr Flow has no Linux app.
+                    section(if cfg!(target_os = "linux") { "Sounds" } else { "Sounds and dictation" }, t).child(rows(
                         [
-                            setting(
+                            Some(setting(
                                 "Sounds",
                                 Some("When asides listens, sends, or something goes wrong."),
                                 switch("sounds", c.sounds, t).on_toggle(sounds),
                                 t,
-                            ),
-                            setting(
-                                "Wispr Flow dictations",
-                                Some("What you dictate with Wispr Flow while the screen is frozen joins the aside."),
-                                switch("wispr", c.wispr_flow, t).on_toggle(wispr),
-                                t,
-                            ),
-                        ],
+                            )),
+                            (!cfg!(target_os = "linux")).then(|| {
+                                setting(
+                                    "Wispr Flow dictations",
+                                    Some(
+                                        "What you dictate with Wispr Flow while the screen is frozen joins the aside.",
+                                    ),
+                                    switch("wispr", c.wispr_flow, t).on_toggle(wispr),
+                                    t,
+                                )
+                            }),
+                        ]
+                        .into_iter()
+                        .flatten(),
                         t,
                     )),
                 )
                 .child(section("Updates", t).child(rows(
-                    // Windows copies don't update themselves (yet): only the version, and why.
-                    (!cfg!(windows))
+                    // Only a Mac's copies update themselves (yet): elsewhere the version, and why.
+                    cfg!(target_os = "macos")
                         .then(|| {
                             setting(
                                 "Update automatically",
@@ -3484,9 +3554,15 @@ impl AsidesWindow {
                     section("Permissions", t)
                         .child(rows(permissions, t))
                         .child(footnote(
-                            match cfg!(windows) {
-                                true => "Freezing the screen, naming what's pinned and typing in need no permission.",
-                                false => "macOS asks for each the first time asides needs it.",
+                            match () {
+                                _ if cfg!(windows) => {
+                                    "Freezing the screen, naming what's pinned and typing in need no permission."
+                                }
+                                _ if cfg!(target_os = "linux") => {
+                                    "Freezing the screen, hearing and naming what's pinned need nothing allowed here; a \
+                                     Wayland desktop may ask about the screenshot once."
+                                }
+                                _ => "macOS asks for each the first time asides needs it.",
                             },
                             t,
                         )),
@@ -3847,7 +3923,7 @@ fn below_strip(content: impl IntoElement) -> AnyElement {
         .size_full()
         .flex()
         .flex_col()
-        .when(cfg!(windows), |d| d.child(page_strip()))
+        .when(cfg!(not(target_os = "macos")), |d| d.child(page_strip()))
         .child(div().flex_1().min_h_0().child(content))
         .into_any_element()
 }
@@ -3913,6 +3989,9 @@ const CAPTION_BUTTON: f32 = 46.;
 /// (the maximize button's snap layouts too). Its title bar would sit opaque above the glass. A Mac
 /// has its traffic lights.
 fn caption_buttons(window: &Window, t: Theme) -> Option<AnyElement> {
+    if cfg!(target_os = "linux") {
+        return native::draws_its_title_bar(window).then(|| linux_caption_buttons(window, t));
+    }
     if !cfg!(windows) {
         return None;
     }
@@ -3957,16 +4036,141 @@ fn caption_buttons(window: &Window, t: Theme) -> Option<AnyElement> {
     )
 }
 
+/// Linux, where the desktop leaves the title bar to the window (GNOME on Wayland): minimize, maximize
+/// (or restore) and close at the window's top right; the app handles the presses.
+fn linux_caption_buttons(window: &Window, t: Theme) -> AnyElement {
+    let ink = if window.is_window_active() { t.primary } else { t.tertiary };
+    let button = |id: &'static str, glyph: &'static str| {
+        div()
+            .id(id)
+            .occlude()
+            .w(px(CAPTION_BUTTON))
+            .h_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .hover(move |s| s.bg(t.hover))
+            .active(move |s| s.bg(t.pressed))
+            .child(icon(glyph, 14., ink))
+    };
+    let glyph = if window.is_maximized() { "caption-restore" } else { "caption-maximize" };
+    div()
+        .absolute()
+        .top_0()
+        .right_0()
+        .h(px(Metrics::TITLE_BAR))
+        .flex()
+        .child(button("caption-minimize", "caption-minimize").on_click(|_, window, _| window.minimize_window()))
+        .child(button("caption-maximize", glyph).on_click(|_, window, _| window.zoom_window()))
+        .child(button("caption-close", "caption-close").on_click(|_, window, _| window.remove_window()))
+        .into_any_element()
+}
+
+/// The soft shadow around a window drawing its own frame, inside its surface: the desktop leaves
+/// that to the window too.
+const FRAME_SHADOW: f32 = 12.;
+/// How far into the window itself its resize edges reach, and how far along the sides its corners.
+const FRAME_GRIP: f32 = 2.;
+const FRAME_CORNER: f32 = 12.;
+
+/// The room around the window for its shadow: none where the desktop draws its frame, or it's
+/// maximized or tiled, and its sides are the screen's.
+fn frame_shadow(window: &Window) -> f32 {
+    let tiled = matches!(window.window_decorations(), gpui::Decorations::Client { tiling } if tiling.is_tiled());
+    if native::draws_its_title_bar(window) && !tiled { FRAME_SHADOW } else { 0. }
+}
+
+/// The window's content in its frame. On Linux nothing blurs behind it: the glass's tints go on a
+/// solid base. Where the desktop leaves the frame to the window (GNOME on Wayland), it has a shadow,
+/// and its sides and corners resize it.
+fn framed(body: gpui::Div, window: &mut Window, t: Theme) -> AnyElement {
+    if !cfg!(target_os = "linux") {
+        return body.into_any_element();
+    }
+    let body = body.bg(Hsla { a: 1.0, ..t.reading });
+    let shadow = frame_shadow(window);
+    if native::draws_its_title_bar(window) {
+        window.set_client_inset(px(shadow));
+    }
+    if shadow == 0. {
+        return body.into_any_element();
+    }
+    let edge = |edge: ResizeEdge, cursor: CursorStyle| {
+        div().absolute().occlude().cursor(cursor).on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
+            window.start_window_resize(edge);
+        })
+    };
+    let (side, corner) = (px(shadow + FRAME_GRIP), px(shadow + FRAME_CORNER));
+    let (updown, leftright) = (CursorStyle::ResizeUpDown, CursorStyle::ResizeLeftRight);
+    let (falling, rising) = (CursorStyle::ResizeUpLeftDownRight, CursorStyle::ResizeUpRightDownLeft);
+    let cast = gpui::BoxShadow {
+        color: gpui::black().opacity(0.3),
+        offset: point(px(0.), px(2.)),
+        blur_radius: px(shadow / 1.5),
+        spread_radius: px(0.),
+    };
+    div()
+        .size_full()
+        .relative()
+        .p(px(shadow))
+        .child(div().size_full().border_1().border_color(t.hairline).shadow(vec![cast]).child(body))
+        .child(edge(ResizeEdge::Top, updown).top_0().left(corner).right(corner).h(side))
+        .child(edge(ResizeEdge::Bottom, updown).bottom_0().left(corner).right(corner).h(side))
+        .child(edge(ResizeEdge::Left, leftright).left_0().top(corner).bottom(corner).w(side))
+        .child(edge(ResizeEdge::Right, leftright).right_0().top(corner).bottom(corner).w(side))
+        .child(edge(ResizeEdge::TopLeft, falling).top_0().left_0().size(corner))
+        .child(edge(ResizeEdge::BottomRight, falling).bottom_0().right_0().size(corner))
+        // Short of the close button.
+        .child(edge(ResizeEdge::TopRight, rising).top_0().right_0().size(side))
+        .child(edge(ResizeEdge::BottomLeft, rising).bottom_0().left_0().size(corner))
+        .into_any_element()
+}
+
 /// The system, by name: what must allow what, where its settings are.
-const SYSTEM: &str = if cfg!(windows) { "Windows" } else { "macOS" };
+const SYSTEM: &str = match () {
+    _ if cfg!(windows) => "Windows",
+    _ if cfg!(target_os = "linux") => "Linux",
+    _ => "macOS",
+};
 /// Where the agents asides types into run.
-const AGENT_TERMINALS: &str = if cfg!(windows) { "any terminal" } else { "Terminal, Ghostty or Diri" };
+const AGENT_TERMINALS: &str = if cfg!(target_os = "macos") { "Terminal, Ghostty or Diri" } else { "any terminal" };
 /// Where asides' mark is while it runs.
-const STATUS_PLACE: &str = if cfg!(windows) { "the notification area" } else { "the menu bar" };
+const STATUS_PLACE: &str = match () {
+    _ if cfg!(windows) => "the notification area",
+    _ if cfg!(target_os = "linux") => "the background",
+    _ => "the menu bar",
+};
 /// This computer, as its owner calls it.
-const THIS_COMPUTER: &str = if cfg!(windows) { "this PC" } else { "this Mac" };
+const THIS_COMPUTER: &str = match () {
+    _ if cfg!(windows) => "this PC",
+    _ if cfg!(target_os = "linux") => "this computer",
+    _ => "this Mac",
+};
 /// Where the system's settings are.
-const SETTINGS_APP: &str = if cfg!(windows) { "Settings" } else { "System Settings" };
+const SETTINGS_APP: &str = match () {
+    _ if cfg!(target_os = "macos") => "System Settings",
+    _ if cfg!(target_os = "linux") => "the Guide",
+    _ => "Settings",
+};
+/// What the system calls letting asides see the screen.
+const SCREEN_PERMISSION: &str = if cfg!(target_os = "linux") { "Screenshots" } else { "Screen Recording" };
+
+/// Whether Linux's desktop asks before asides' first screenshot, with this window in front (GNOME on
+/// Wayland), so setup shows a button for it.
+fn screen_question() -> bool {
+    #[cfg(target_os = "linux")]
+    return asides_core::portal::asks_for_screenshots();
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
+/// What shows a file where it is.
+const SHOW_IN_FILES: &str = match () {
+    _ if cfg!(windows) => "Show in Explorer",
+    _ if cfg!(target_os = "linux") => "Show in Files",
+    _ => "Show in Finder",
+};
 
 /// An icon on a quiet square.
 fn tile(t: Theme, glyph: &str) -> impl IntoElement + use<> {

@@ -290,6 +290,12 @@ impl Running {
         Err("on Windows, install each new release over this one".into())
     }
 
+    /// On Linux, the package manager updates asides.
+    #[cfg(target_os = "linux")]
+    fn find() -> Result<Running, String> {
+        Err("on Linux, update asides with your package manager, or install each new release".into())
+    }
+
     #[cfg(target_os = "macos")]
     fn find() -> Result<Running, String> {
         if cfg!(feature = "dev-hooks") {
@@ -544,9 +550,9 @@ fn check_zip(path: &Path) -> Result<(), String> {
 /// `reopen`: what to open then (`asides://window`, or `""` for asides alone); `None` leaves it
 /// closed (an update installed as asides quits). The script's output goes to `install.log` in the
 /// update's folder.
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 pub fn install(_: &Staged, _: Option<&str>) -> Result<(), String> {
-    Err("on Windows, install each new release over this one".into())
+    Err("install each new release over this one".into())
 }
 
 /// Starts the script that swaps the update in once asides has quit; the app must quit right after.
@@ -573,7 +579,7 @@ pub fn install(staged: &Staged, reopen: Option<&str>) -> Result<(), String> {
 /// The swap, as a script for `/bin/sh`. The update is copied beside the app while asides still
 /// runs; once it has quit, the app's path only changes by renaming, so it's never missing or half
 /// copied, and if anything fails the old app goes back.
-#[cfg_attr(windows, allow(dead_code))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn script_text(pid: u32, staged: &Path, target: &Path, reopen: Option<&str>) -> String {
     let quote = |text: &str| format!("'{}'", text.replace('\'', r"'\''"));
     let staged = quote(&staged.to_string_lossy());
@@ -850,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn the_script_swaps_the_app() {
         let dir = tempfile::tempdir().unwrap();
         let staged = fake_app(dir.path(), "staged.app", "new");
@@ -893,7 +899,7 @@ mod tests {
     /// While asides runs, its app stays whole; once it quits, the new one replaces it by renaming
     /// (never missing for the length of a copy).
     #[test]
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn the_app_is_never_missing_for_a_copy() {
         let dir = tempfile::tempdir().unwrap();
         let staged = fake_app(dir.path(), "staged.app", "new");
@@ -951,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn unpacks_the_one_app_in_an_update() {
         let dir = tempfile::tempdir().unwrap();
         let zip = zip_of(dir.path(), &[("asides.app/Contents/MacOS/asides-app", None)]);

@@ -10,6 +10,10 @@ const fn icon(body: &'static str) -> &'static str {
 }
 
 const ICONS: &[(&str, &str)] = &[
+    ("caption-minimize", icon(r#"<path d="M5 12h14"/>"#)),
+    ("caption-maximize", icon(r#"<rect x="5" y="5" width="14" height="14" rx="1"/>"#)),
+    ("caption-restore", icon(r#"<rect x="5" y="9" width="10" height="10" rx="1"/><path d="M9 9V5h10v10h-4"/>"#)),
+    ("caption-close", icon(r#"<path d="M6 6l12 12M18 6 6 18"/>"#)),
     (
         "measure",
         icon(r#"<path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/>"#),

@@ -226,6 +226,14 @@ pub enum Event {
     PillPlaced { at: Option<(f64, f64)> },
     /// Something was put on the clipboard (not a screenshot to attach).
     Copied,
+    /// Put this on the clipboard (a PNG's file, gone after): on Linux, what's on the clipboard goes
+    /// when the process that put it there does, and the overlay's ends with the session.
+    Clipboard {
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        png: Option<std::path::PathBuf>,
+    },
     /// Send: `result.json` is written.
     Finished,
     /// Closed without sending anything; what to restore next time.

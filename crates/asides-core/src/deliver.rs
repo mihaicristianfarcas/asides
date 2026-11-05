@@ -18,6 +18,11 @@
 //!   Return finds nothing to send yet) and the text 1.5 s after.
 //! - Codex gets Tab instead of Return (`AgentKind::submit_key`): Return joins the turn it's working
 //!   on, and it may answer only the newer message.
+//! - **Linux**: any terminal, through its pty (`Step::Pty`: `asides-keys` writes what the keyboard
+//!   would), where the system lets asides, or what a terminal takes itself, which needs nothing
+//!   allowed: tmux's `paste-buffer`, Konsole's D-Bus `sendText`, `wezterm cli send-text`, kitty's
+//!   `kitten @ send-text`. As in Terminal, what's typed is a bracketed paste, then the key that sends
+//!   it. Screenshots go in as paths.
 //! - **A console on Windows** (Windows Terminal, a console window, VS Code's terminal): its input
 //!   is written as keys pressed there (`Step::Console`, the app's `WriteConsoleInput`), whichever
 //!   app shows it. Text goes between bracketed-paste markers, so its new lines don't send it, then
@@ -54,6 +59,17 @@ pub enum Step {
         pid: i32,
         text: String,
     },
+    /// Types `text` into a pty on Linux (`pts/3`), as its terminal's keyboard would: `asides-keys`.
+    Pty {
+        tty: String,
+        text: String,
+    },
+    /// Types `text` into a tab of Konsole, over D-Bus (`org.kde.konsole.Session.sendText`).
+    Konsole {
+        service: String,
+        session: String,
+        text: String,
+    },
 }
 
 /// How long an agent takes to read the clipboard after Ctrl+V, or to attach a pasted path.
@@ -73,10 +89,99 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
         Host::Ghostty => Ok(vec![Step::Script(ghostty(&session.dir, &parts, submit))]),
         Host::Terminal => Ok(terminal(session.agent, &session.tty, &parts, submit)),
         Host::Console { .. } => Ok(console(session.agent, session.pid, &parts, submit)),
+        Host::Tmux { socket, pane } => Ok(tmux(socket, pane, session.agent, &parts, submit)),
+        Host::Konsole { service, session: tab } => {
+            let send = |text: String| Step::Konsole { service: service.clone(), session: tab.clone(), text };
+            Ok(typed(session.agent, &parts, submit, send))
+        }
+        Host::WezTerm { pane, socket } => {
+            // Its own mux, by the variable its command reads: a session may be another instance's.
+            let mut args: Vec<String> = socket.iter().map(|s| format!("WEZTERM_UNIX_SOCKET={s}")).collect();
+            args.extend(["wezterm", "cli", "send-text", "--no-paste", "--pane-id", pane].map(String::from));
+            let send = |text: String| Step::Run { program: "env".into(), args: args.clone(), stdin: Some(text) };
+            Ok(typed(session.agent, &parts, submit, send))
+        }
+        Host::Kitty { listen, window } => {
+            let args: Vec<String> = ["@", "--to", listen, "send-text", "--match", &format!("id:{window}"), "--stdin"]
+                .map(String::from)
+                .into();
+            let send = |text: String| Step::Run { program: "kitten".into(), args: args.clone(), stdin: Some(text) };
+            Ok(typed(session.agent, &parts, submit, send))
+        }
+        Host::Pty { name, may_type } => {
+            if !may_type {
+                return Err(format!(
+                    "this system doesn't let asides type into {name} yet: allow it in Settings → General, or run the \
+                     agent in tmux"
+                ));
+            }
+            let tty = session.tty.clone();
+            Ok(typed(session.agent, &parts, submit, |text| Step::Pty { tty: tty.clone(), text }))
+        }
         Host::Other { name } => {
-            Err(format!("asides can't type into {name}. Run the agent in Terminal, Ghostty or Diri."))
+            let elsewhere = match cfg!(windows) {
+                true => "a console",
+                false => "Terminal, Ghostty or Diri",
+            };
+            Err(format!("asides can't type into {name}. Run the agent in {elsewhere}."))
         }
     }
+}
+
+/// The plan for a terminal typed into byte by byte, as its keyboard would (`send`): a bracketed paste
+/// and the key that sends it. Claude Code attaches a pasted path a moment after the paste: on its
+/// own, ahead of the text. The others attach it as it's pasted.
+fn typed(agent: AgentKind, parts: &[&Part], submit: SubmitKey, send: impl Fn(String) -> Step) -> Vec<Step> {
+    let mut steps = Vec::new();
+    let mut burst = String::new();
+    for part in parts {
+        match part {
+            Part::Image(path) if agent == AgentKind::Claude => {
+                steps.push(send(pasted(path)));
+                steps.push(Step::Wait(ATTACH));
+            }
+            Part::Image(path) => burst.push_str(&pasted(path)),
+            Part::Text(text) => burst.push_str(&pasted(text)),
+        }
+    }
+    if !burst.is_empty() {
+        steps.push(send(burst));
+    }
+    steps.push(Step::Wait(BEFORE_SUBMIT));
+    steps.push(send(if submit == SubmitKey::Tab { "\t" } else { "\r" }.to_string()));
+    steps
+}
+
+/// Through tmux, which knows whether the program in the pane wants bracketed pastes, and turns new
+/// lines into Returns: `paste-buffer -p`.
+fn tmux(socket: &str, pane: &str, agent: AgentKind, parts: &[&Part], submit: SubmitKey) -> Vec<Step> {
+    let run = |args: &[&str], stdin: Option<String>| Step::Run {
+        program: "tmux".into(),
+        args: ["-S", socket].iter().chain(args).map(|a| a.to_string()).collect(),
+        stdin,
+    };
+    let paste = |text: &str, steps: &mut Vec<Step>| {
+        steps.push(run(&["load-buffer", "-b", "asides", "-"], Some(text.to_string())));
+        steps.push(run(&["paste-buffer", "-p", "-d", "-b", "asides", "-t", pane], None));
+    };
+    let mut steps = Vec::new();
+    let mut burst: Vec<&str> = Vec::new();
+    for part in parts {
+        match part {
+            Part::Image(path) if agent == AgentKind::Claude => {
+                paste(path, &mut steps);
+                steps.push(Step::Wait(ATTACH));
+            }
+            Part::Image(path) | Part::Text(path) => burst.push(path),
+        }
+    }
+    if !burst.is_empty() {
+        paste(&burst.join("\n\n"), &mut steps);
+    }
+    steps.push(Step::Wait(BEFORE_SUBMIT));
+    let key = if submit == SubmitKey::Tab { "Tab" } else { "Enter" };
+    steps.push(run(&["send-keys", "-t", pane, key], None));
+    steps
 }
 
 fn diri(id: &str, parts: &[&Part], submit: SubmitKey, dirijor: &Path) -> Vec<Step> {
@@ -214,8 +319,101 @@ fn console(agent: AgentKind, pid: i32, parts: &[&Part], submit: SubmitKey) -> Ve
 
 /// The apps new sessions open in, which asides can also type into, as Settings offers them. Terminal
 /// is the default.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "Diri"];
+
+/// The terminals new sessions open in on Linux (`linux_terminal` says how): the desktop's own comes
+/// first where it's installed (`preferred_terminal`), then these, in order.
+#[cfg(target_os = "linux")]
+pub const TERMINALS: &[&str] = &[
+    "Ptyxis",
+    "GNOME Terminal",
+    "Console",
+    "Konsole",
+    "Ghostty",
+    "kitty",
+    "WezTerm",
+    "Alacritty",
+    "foot",
+    "Tilix",
+    "Terminator",
+    "Xfce Terminal",
+    "MATE Terminal",
+    "COSMIC Terminal",
+    "xterm",
+];
+
+/// How a terminal on Linux is started, in a folder, running a program: its command, then the arguments
+/// before the folder's, whether the folder goes in one with `=`, and what comes before the program.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinuxTerminal {
+    pub program: &'static str,
+    pub folder: &'static [&'static str],
+    pub run: &'static [&'static str],
+}
+
+/// [`TERMINALS`]' commands.
+#[cfg(target_os = "linux")]
+pub fn linux_terminal(name: &str) -> Option<LinuxTerminal> {
+    let (program, folder, run): (&str, &[&str], &[&str]) = match name {
+        "Ptyxis" => ("ptyxis", &["--new-window", "--working-directory"], &["--"]),
+        "GNOME Terminal" => ("gnome-terminal", &["--working-directory"], &["--"]),
+        "Console" => ("kgx", &["--working-directory"], &["--"]),
+        "Konsole" => ("konsole", &["--workdir"], &["-e"]),
+        "Ghostty" => ("ghostty", &["--working-directory"], &["-e"]),
+        "kitty" => ("kitty", &["--directory"], &[]),
+        "WezTerm" => ("wezterm", &["start", "--cwd"], &["--"]),
+        "Alacritty" => ("alacritty", &["--working-directory"], &["-e"]),
+        "foot" => ("foot", &["--working-directory"], &[]),
+        "Tilix" => ("tilix", &["--working-directory"], &["-e"]),
+        "Terminator" => ("terminator", &["--working-directory"], &["-x"]),
+        "Xfce Terminal" => ("xfce4-terminal", &["--working-directory"], &["-x"]),
+        "MATE Terminal" => ("mate-terminal", &["--working-directory"], &["-x"]),
+        "COSMIC Terminal" => ("cosmic-term", &["--working-directory"], &["--"]),
+        "xterm" => ("xterm", &[], &["-e"]),
+        _ => return None,
+    };
+    Some(LinuxTerminal { program, folder, run })
+}
+
+/// The arguments that start `terminal` in `dir`, running `program`.
+#[cfg(target_os = "linux")]
+pub fn linux_terminal_args(terminal: &LinuxTerminal, dir: &Path, program: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = terminal.folder.iter().map(|a| a.to_string()).collect();
+    match args.last_mut() {
+        // Ghostty takes only `--option=value`, and all but WezTerm's and Konsole's take it too.
+        Some(flag) if !matches!(terminal.program, "wezterm" | "konsole" | "kitty") => {
+            flag.push('=');
+            flag.push_str(&dir.to_string_lossy());
+        }
+        Some(_) => args.push(dir.to_string_lossy().into_owned()),
+        None => {}
+    }
+    args.extend(terminal.run.iter().map(|a| a.to_string()));
+    args.extend(program.iter().cloned());
+    args
+}
+
+/// The terminals of [`TERMINALS`] that come with a desktop (`XDG_CURRENT_DESKTOP`).
+#[cfg(target_os = "linux")]
+pub fn preferred_terminal(desktop: &str) -> &'static [&'static str] {
+    let desktop = desktop.to_ascii_uppercase();
+    let has = |name: &str| desktop.split(':').any(|d| d == name);
+    if has("KDE") {
+        &["Konsole"]
+    } else if has("XFCE") {
+        &["Xfce Terminal"]
+    } else if has("MATE") {
+        &["MATE Terminal"]
+    } else if has("COSMIC") {
+        &["COSMIC Terminal"]
+    } else if has("GNOME") || has("UBUNTU") || has("X-CINNAMON") || has("CINNAMON") {
+        &["Ptyxis", "GNOME Terminal", "Console"]
+    } else {
+        &[]
+    }
+}
 
 /// The apps new sessions open in on Windows: Windows Terminal (the default where it's installed),
 /// or a console window of their own.
@@ -234,8 +432,16 @@ pub fn bundle_id(name: &str) -> Option<&'static str> {
 
 /// The bundle ID of the terminal app `name` asides types into with Apple events (Automation): none
 /// for Diri, which needs no permission.
+#[cfg(not(target_os = "linux"))]
 pub fn automated_bundle(name: &str) -> Option<&'static str> {
     bundle_id(name).filter(|_| !name.eq_ignore_ascii_case("diri"))
+}
+
+/// What must be allowed to type into the terminal `name`: on Linux the helper (`asides-keys`), but
+/// for the terminals that take text from outside themselves, by their own commands.
+#[cfg(target_os = "linux")]
+pub fn automated_bundle(name: &str) -> Option<&'static str> {
+    (!matches!(name, "Konsole" | "WezTerm")).then_some("asides-keys")
 }
 
 /// Where the app `name` is installed, if it is (names match ignoring case, as the file system does).
@@ -248,9 +454,26 @@ pub fn app_bundle(name: &str) -> Option<PathBuf> {
 }
 
 /// The apps of [`TERMINALS`] that are installed.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn installed_terminals() -> Vec<&'static str> {
     TERMINALS.iter().copied().filter(|name| app_bundle(name).is_some()).collect()
+}
+
+/// The terminals of [`TERMINALS`] that are installed, the desktop's own first.
+#[cfg(target_os = "linux")]
+pub fn installed_terminals() -> Vec<&'static str> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    let preferred = preferred_terminal(&desktop);
+    let mut found: Vec<&'static str> = TERMINALS
+        .iter()
+        .copied()
+        .filter(|name| {
+            linux_terminal(name).is_some_and(|t| crate::sessions::linux::find_program(&path, t.program).is_some())
+        })
+        .collect();
+    found.sort_by_key(|name| preferred.iter().position(|p| p == name).unwrap_or(preferred.len()));
+    found
 }
 
 /// The apps of [`TERMINALS`] that are installed: Windows Terminal (its `wt` command), and the
@@ -297,11 +520,12 @@ pub fn launch_script(
     let words = launch_words(agent, message, extra, readable);
     let command = words.iter().map(|w| sh_quote(w)).collect::<Vec<_>>().join(" ");
     format!(
-        "#!/bin/sh\n# Started by asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-/bin/zsh}}\" -ilc 'printf %s \"$PATH\"' \
+        "#!/bin/sh\n# Started by asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-{shell}}}\" -ilc 'printf %s \"$PATH\"' \
          2>/dev/null </dev/null) && [ -n \"$login_path\" ] && PATH=$login_path\nexport PATH\ncd {qdir} || exit 1\nexport {var}={launch}\nexec \
          {command}\n",
         name = agent.name(),
         dir = dir.display(),
+        shell = if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" },
         qdir = sh_quote(&dir.to_string_lossy()),
         var = crate::agents::LAUNCH_VAR,
         launch = sh_quote(launch),
@@ -363,6 +587,87 @@ mod tests {
             Part::Image("/h/1.png".into()),
             Part::Text("### 1. button".into()),
         ]
+    }
+
+    #[test]
+    fn types_into_a_pty_as_its_keyboard_would() {
+        let host = Host::Pty { name: "GNOME Terminal".into(), may_type: true };
+        let steps = plan(&session(AgentKind::Claude, host), &parts(), Path::new("")).unwrap();
+        let pty = |text: &str| Step::Pty { tty: "ttys004".into(), text: text.into() };
+        assert_eq!(
+            steps,
+            [
+                pty("\x1b[200~/h/1.png\x1b[201~"),
+                Step::Wait(ATTACH),
+                pty("\x1b[200~The \"Pay\" button is too low.\x1b[201~\x1b[200~### 1. button\x1b[201~"),
+                Step::Wait(BEFORE_SUBMIT),
+                pty("\r"),
+            ]
+        );
+        // Codex attaches a path as it's pasted, and Tab queues what's typed.
+        let host = Host::Pty { name: "foot".into(), may_type: true };
+        let steps = plan(&session(AgentKind::Codex, host), &parts(), Path::new("")).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[2], pty("\t"));
+    }
+
+    #[test]
+    fn says_when_the_system_doesnt_let_it_type() {
+        let host = Host::Pty { name: "GNOME Terminal".into(), may_type: false };
+        let session = session(AgentKind::Claude, host);
+        assert!(!session.host.reachable());
+        assert!(plan(&session, &parts(), Path::new("")).unwrap_err().contains("GNOME Terminal"));
+    }
+
+    #[test]
+    fn pastes_into_tmux_through_its_buffer() {
+        let host = Host::Tmux { socket: "/tmp/tmux-1000/default".into(), pane: "%3".into() };
+        let steps = plan(&session(AgentKind::Codex, host), &parts(), Path::new("")).unwrap();
+        let run = |args: &[&str], stdin: Option<&str>| Step::Run {
+            program: "tmux".into(),
+            args: ["-S", "/tmp/tmux-1000/default"].iter().chain(args).map(|a| a.to_string()).collect(),
+            stdin: stdin.map(String::from),
+        };
+        assert_eq!(
+            steps,
+            [
+                run(
+                    &["load-buffer", "-b", "asides", "-"],
+                    Some("The \"Pay\" button is too low.\n\n/h/1.png\n\n### 1. button")
+                ),
+                run(&["paste-buffer", "-p", "-d", "-b", "asides", "-t", "%3"], None),
+                Step::Wait(BEFORE_SUBMIT),
+                run(&["send-keys", "-t", "%3", "Tab"], None),
+            ]
+        );
+    }
+
+    #[test]
+    fn asks_konsole_over_dbus() {
+        let host = Host::Konsole { service: ":1.9".into(), session: "/Sessions/2".into() };
+        let steps = plan(&session(AgentKind::OpenCode, host), &parts(), Path::new("")).unwrap();
+        assert!(matches!(&steps[0], Step::Konsole { service, session, text }
+            if service == ":1.9" && session == "/Sessions/2" && text.starts_with("\x1b[200~")));
+        assert!(matches!(&steps[2], Step::Konsole { text, .. } if text == "\r"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn starts_linux_terminals_in_a_folder() {
+        let dir = Path::new("/home/me/my shop");
+        let program = ["/bin/sh".to_string(), "/tmp/launch.sh".to_string()];
+        let args = |name: &str| linux_terminal_args(&linux_terminal(name).unwrap(), dir, &program).join(" ");
+        assert_eq!(args("GNOME Terminal"), "--working-directory=/home/me/my shop -- /bin/sh /tmp/launch.sh");
+        assert_eq!(args("Ptyxis"), "--new-window --working-directory=/home/me/my shop -- /bin/sh /tmp/launch.sh");
+        assert_eq!(args("Konsole"), "--workdir /home/me/my shop -e /bin/sh /tmp/launch.sh");
+        assert_eq!(args("WezTerm"), "start --cwd /home/me/my shop -- /bin/sh /tmp/launch.sh");
+        assert_eq!(args("kitty"), "--directory /home/me/my shop /bin/sh /tmp/launch.sh");
+        assert_eq!(args("xterm"), "-e /bin/sh /tmp/launch.sh");
+        for name in TERMINALS {
+            assert!(linux_terminal(name).is_some(), "{name}");
+        }
+        assert_eq!(preferred_terminal("KDE"), ["Konsole"]);
+        assert_eq!(preferred_terminal("ubuntu:GNOME")[0], "Ptyxis");
     }
 
     #[test]

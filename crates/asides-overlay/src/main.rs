@@ -16,7 +16,7 @@
 
 mod assets;
 mod controls;
-#[cfg_attr(windows, path = "win/export.rs")]
+#[cfg_attr(not(target_os = "macos"), path = "win/export.rs")]
 mod export;
 mod finish;
 mod glass;
@@ -24,6 +24,7 @@ mod help;
 mod input;
 mod io;
 #[cfg_attr(windows, path = "win/native.rs")]
+#[cfg_attr(target_os = "linux", path = "lin/native.rs")]
 mod native;
 mod replay;
 mod style;

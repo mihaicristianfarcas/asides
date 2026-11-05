@@ -50,7 +50,7 @@ impl Metrics {
     /// The strip along the window's top, its title bar, as helio has it: on a Mac the traffic
     /// lights' lane, a page's title beneath it; on Windows the caption buttons' height (they're
     /// over a page's strip).
-    pub const TITLE_BAR: f32 = if cfg!(windows) { 32.0 } else { 44.0 };
+    pub const TITLE_BAR: f32 = if cfg!(target_os = "macos") { 44.0 } else { 32.0 };
     /// Windows: the air above the sidebar's first row, as below its foot (no traffic lights).
     pub const SIDEBAR_EDGE: f32 = 14.0;
     /// The air the sidebar's rows keep above the first.
@@ -826,17 +826,36 @@ static UI_FONT: std::sync::OnceLock<SharedString> = std::sync::OnceLock::new();
 static MONO_FONT: std::sync::OnceLock<SharedString> = std::sync::OnceLock::new();
 
 /// Once, before a window opens: the fonts, of those this system has (helio's). A Mac's own; on
-/// Windows Segoe UI Variable (Windows 11's), else Segoe UI, and Cascadia Mono, else Consolas.
+/// Windows Segoe UI Variable (Windows 11's), else Segoe UI, and Cascadia Mono, else Consolas; on
+/// Linux the desktop's own, as fontconfig names them, else the likeliest.
 pub fn init_fonts(cx: &App) {
-    if !cfg!(windows) {
+    if cfg!(target_os = "macos") {
         return;
     }
     let names: std::collections::HashSet<String> = cx.text_system().all_font_names().into_iter().collect();
+    #[cfg_attr(target_os = "macos", allow(unused_variables))]
     let pick = |candidates: &[&'static str]| -> SharedString {
         candidates.iter().find(|c| names.contains(**c)).copied().unwrap_or(candidates[candidates.len() - 1]).into()
     };
-    let _ = UI_FONT.set(pick(&["Segoe UI Variable Text", "Segoe UI"]));
-    let _ = MONO_FONT.set(pick(&["Cascadia Mono", "Consolas"]));
+    #[cfg(target_os = "linux")]
+    {
+        let desktop = |family: &str| -> Option<SharedString> {
+            let out = std::process::Command::new("fc-match").args(["-f", "%{family[0]}", family]).output().ok()?;
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            names.contains(&name).then(|| name.into())
+        };
+        let sans = desktop("sans-serif")
+            .unwrap_or_else(|| pick(&["Inter", "Adwaita Sans", "Cantarell", "Ubuntu", "Noto Sans", "DejaVu Sans"]));
+        let mono = desktop("monospace")
+            .unwrap_or_else(|| pick(&["Adwaita Mono", "Ubuntu Mono", "Noto Sans Mono", "DejaVu Sans Mono"]));
+        let _ = UI_FONT.set(sans);
+        let _ = MONO_FONT.set(mono);
+    }
+    #[cfg(windows)]
+    {
+        let _ = UI_FONT.set(pick(&["Segoe UI Variable Text", "Segoe UI"]));
+        let _ = MONO_FONT.set(pick(&["Cascadia Mono", "Consolas"]));
+    }
 }
 
 /// The text's font ([`init_fonts`]).
@@ -846,14 +865,31 @@ pub fn font() -> SharedString {
 
 /// Markdown's, as it's edited ([`init_fonts`]).
 pub fn mono_font() -> SharedString {
-    MONO_FONT.get().cloned().unwrap_or_else(|| if cfg!(windows) { "Consolas" } else { "Menlo" }.into())
+    MONO_FONT.get().cloned().unwrap_or_else(|| {
+        match () {
+            _ if cfg!(windows) => "Consolas",
+            _ if cfg!(target_os = "linux") => "DejaVu Sans Mono",
+            _ => "Menlo",
+        }
+        .into()
+    })
 }
 
 /// Where the window is moved from: an empty part of a strip along the top. Nothing on it may be
 /// clickable: Windows takes a press there for its own (a move, a double-click maximizing). A Mac's
 /// title bar moves it anyway.
 pub fn drag_area() -> Div {
-    div().window_control_area(gpui::WindowControlArea::Drag)
+    let area = div().window_control_area(gpui::WindowControlArea::Drag);
+    // Windows asks the app what's under the pointer; macOS and X11 window managers are asked to
+    // move the window by this press.
+    #[cfg(target_os = "linux")]
+    let area = area
+        .on_mouse_down(gpui::MouseButton::Left, |event, window, _| match event.click_count {
+            2 => window.zoom_window(),
+            _ => window.start_window_move(),
+        })
+        .on_mouse_down(gpui::MouseButton::Right, |event, window, _| window.show_window_menu(event.position));
+    area
 }
 
 /// A page's strip along the top, above its title ([`Metrics::TITLE_BAR`]): nothing is on it, so

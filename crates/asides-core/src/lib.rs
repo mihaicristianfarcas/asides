@@ -17,6 +17,8 @@ pub mod measure;
 pub mod models;
 pub mod overlay;
 pub mod paths;
+#[cfg(target_os = "linux")]
+pub mod portal;
 pub mod resample;
 pub mod sessions;
 pub mod state;

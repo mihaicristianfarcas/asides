@@ -105,8 +105,49 @@ pub fn sessions(
         .expect("spawn the sessions thread");
 }
 
+/// Processes ending, on Linux: a thread waits on each one's pidfd, which is readable as it ends, and
+/// `ended` hears it.
+#[cfg(target_os = "linux")]
+struct Exits {
+    ended: Sender<()>,
+    watched: Mutex<std::collections::HashSet<i32>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Exits {
+    fn new(ended: Sender<()>) -> Option<Exits> {
+        Some(Exits { ended, watched: Mutex::default() })
+    }
+
+    /// Hears when any of these processes ends (once; asking again for one already heard is fine).
+    fn watch(&self, pids: impl Iterator<Item = i32>) {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        for pid in pids {
+            if !self.watched.lock().unwrap().insert(pid) {
+                continue;
+            }
+            // SAFETY: a plain system call; the descriptor it returns is owned below.
+            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+            if fd < 0 {
+                continue;
+            }
+            // SAFETY: the descriptor was just opened, and nothing else has it.
+            let fd = unsafe { OwnedFd::from_raw_fd(fd as i32) };
+            let ended = self.ended.clone();
+            let _ = std::thread::Builder::new().name("asides-session-exit".into()).spawn(move || {
+                let mut wait = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                // SAFETY: one `pollfd`, alive for the call. Waits as long as the process runs.
+                while unsafe { libc::poll(&mut wait, 1, -1) } < 0
+                    && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+                {}
+                let _ = ended.send(());
+            });
+        }
+    }
+}
+
 /// Processes ending: kqueue says when one does (`NOTE_EXIT`), and `ended` hears it.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 struct Exits {
     queue: libc::c_int,
 }
@@ -149,7 +190,7 @@ impl Exits {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 impl Exits {
     fn new(ended: Sender<()>) -> Option<Exits> {
         let queue = unsafe { libc::kqueue() };

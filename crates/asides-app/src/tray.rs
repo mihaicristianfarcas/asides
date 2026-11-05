@@ -4,6 +4,8 @@
 
 use std::str::FromStr;
 
+#[cfg(target_os = "linux")]
+use crate::tray_icon;
 use asides_core::config::Config;
 use tray_icon::menu::accelerator::Accelerator;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem};

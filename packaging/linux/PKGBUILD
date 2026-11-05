@@ -1,0 +1,28 @@
+# Arch Linux, from the release's archive: `makepkg -si` beside this file. `pkgver` is the release's.
+pkgname=asides-bin
+pkgver=1.0.8
+pkgrel=1
+pkgdesc="Freeze the screen, click what's wrong, say why; it goes to your coding agent"
+arch=('x86_64' 'aarch64')
+url="https://github.com/mihaicristianfarcas/asides"
+license=('MIT OR Apache-2.0')
+depends=('alsa-lib' 'fontconfig' 'gcc-libs' 'libcap' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'polkit' 'vulkan-icd-loader' 'xorg-xwayland')
+optdepends=('vulkan-swrast: draws without a GPU that has Vulkan')
+provides=('asides')
+conflicts=('asides')
+options=('!strip' '!debug')
+source_x86_64=("https://github.com/mihaicristianfarcas/asides/releases/download/v$pkgver/asides-$pkgver-linux-x86_64.tar.gz")
+source_aarch64=("https://github.com/mihaicristianfarcas/asides/releases/download/v$pkgver/asides-$pkgver-linux-aarch64.tar.gz")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    cd "asides-$pkgver-linux-$CARCH"
+    install -Dm755 -t "$pkgdir/usr/lib/asides" asides asides-app asides-overlay asides-keys
+    install -d "$pkgdir/usr/bin"
+    ln -s ../lib/asides/asides "$pkgdir/usr/bin/asides"
+    install -d "$pkgdir/usr/share/applications"
+    sed 's|@EXEC@|/usr/lib/asides/asides-app|' asides.desktop \
+        >"$pkgdir/usr/share/applications/io.github.mihaicristianfarcas.asides.desktop"
+    install -Dm644 asides.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/asides.png"
+}

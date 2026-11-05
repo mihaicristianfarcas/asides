@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/asides-core", "crates/asides-cli", "crates/asides-app", "crates/asides-overlay"]
+members = ["crates/asides-core", "crates/asides-cli", "crates/asides-app", "crates/asides-overlay", "crates/asides-keys"]
 # GPUI, patched (third_party/gpui/PATCHES.md): not ours to lint or test.
 exclude = ["third_party/gpui"]
 

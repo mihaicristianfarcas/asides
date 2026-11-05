@@ -58,6 +58,7 @@ pub fn run_steps(steps: &[Step]) -> Result<()> {
 
 fn run_step(step: &Step, kept: &mut Option<clipboard::Snapshot>) -> Result<()> {
     match step {
+        Step::Pty { .. } | Step::Konsole { .. } => bail!("that's how Linux's terminals are typed into"),
         Step::Run { program, args, stdin } => {
             let mut child = Command::new(program)
                 .args(args)

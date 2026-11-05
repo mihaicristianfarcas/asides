@@ -3,6 +3,7 @@
 //! the screen's resolution. Drawn with tiny-skia, the labels in Windows' own typeface (Segoe UI),
 //! looking like the overlay. Main thread.
 
+#[cfg(windows)]
 use std::borrow::Cow;
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
@@ -75,6 +76,21 @@ fn pixmap(frame: &Frame) -> Option<Pixmap> {
     Pixmap::from_vec(data, tiny_skia::IntSize::from_wh(frame.width, frame.height)?)
 }
 
+#[cfg(target_os = "linux")]
+pub fn copy_png(png: &[u8]) {
+    let dir = asides_core::paths::links_socket().parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    let path = dir.join(format!("asides-copied-{}.png", std::process::id()));
+    if std::fs::write(&path, png).is_ok() {
+        crate::io::emit(&asides_core::helper::Event::Clipboard { text: None, png: Some(path) });
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn copy_text(text: &str) {
+    crate::io::emit(&asides_core::helper::Event::Clipboard { text: Some(text.to_string()), png: None });
+}
+
+#[cfg(windows)]
 pub fn copy_png(png: &[u8]) {
     let Some((width, height, rgba)) = decode(png) else { return };
     if let Ok(mut clipboard) = arboard::Clipboard::new() {
@@ -82,6 +98,7 @@ pub fn copy_png(png: &[u8]) {
     }
 }
 
+#[cfg(windows)]
 pub fn copy_text(text: &str) {
     if let Ok(mut clipboard) = arboard::Clipboard::new() {
         let _ = clipboard.set_text(text.to_string());
@@ -89,6 +106,7 @@ pub fn copy_text(text: &str) {
 }
 
 /// A PNG of ours (RGBA, 8 bits) as its pixels.
+#[cfg(windows)]
 fn decode(png: &[u8]) -> Option<(usize, usize, Vec<u8>)> {
     let pixmap = Pixmap::decode_png(png).ok()?;
     let (w, h) = (pixmap.width() as usize, pixmap.height() as usize);
@@ -106,11 +124,25 @@ struct Fonts {
 }
 
 impl Fonts {
+    #[cfg(windows)]
     fn load() -> Fonts {
         let fonts =
             std::env::var_os("WINDIR").map_or_else(|| "C:\\Windows".into(), std::path::PathBuf::from).join("Fonts");
         let read = |names: &[&str]| names.iter().find_map(|n| std::fs::read(fonts.join(n)).ok());
         Fonts { semibold: read(&["seguisb.ttf", "segoeui.ttf"]), bold: read(&["segoeuib.ttf", "seguisb.ttf"]) }
+    }
+
+    /// On Linux: what fontconfig finds for the desktop's sans-serif.
+    #[cfg(target_os = "linux")]
+    fn load() -> Fonts {
+        let find = |style: &str| -> Option<Vec<u8>> {
+            let out = std::process::Command::new("fc-match")
+                .args(["-f", "%{file}", &format!("sans-serif:{style}")])
+                .output()
+                .ok()?;
+            std::fs::read(String::from_utf8_lossy(&out.stdout).trim()).ok()
+        };
+        Fonts { semibold: find("semibold").or_else(|| find("medium")), bold: find("bold") }
     }
 }
 

@@ -49,5 +49,37 @@ once, or use an Apple Development or Developer ID certificate (see
 **Windows says it protected your PC.** The Windows build isn't signed yet: click **More info**,
 then **Run anyway**.
 
+## On Linux
+
+**"can't type" beside a session.** Your kernel restricts the helper that types into terminals. Allow
+it in Setup (General → **Set Up Again**), which asks for your password, or run `sudo setcap
+cap_sys_ptrace+ep /usr/lib/asides/asides-keys`. An update replaces the file: allow it again. Or use
+tmux, Konsole or WezTerm, which need none of this.
+
+**A shortcut does nothing on Wayland.** Look in your desktop's keyboard settings: GNOME lists them
+under Custom Shortcuts, KDE under Shortcuts, and another key may have them. On another desktop, bind
+keys to `asides open` and `asides live`.
+
+**The screen doesn't freeze on Wayland.** The log says why (`asides log`). GNOME asks once, from
+asides' window: press **Allow…** by Screenshots in Setup or General (again after a "Deny"). asides'
+windows need Xwayland: install it if the error names it (`xwayland`, or `xorg-x11-server-Xwayland`).
+KDE allows the program asides' launcher entry names, which asides writes as it starts (a package
+brings its own): moved elsewhere, start it again from there.
+
+**The screen freezes but nothing is drawn.** The overlay needs Vulkan: install your GPU's driver
+(`mesa-vulkan-drivers`, `vulkan-radeon`, `vulkan-intel`…). Without a GPU, Mesa's software driver draws
+it, slowly; if the GPU's driver crashes asides (some VMs' virtual GPUs), asides switches to it until
+it quits, and the log says so.
+
+**No `[a]` on GNOME.** GNOME has no status icons without the AppIndicator extension (Ubuntu's comes
+with it). Everything else still works.
+
+**Choose Folder… says there's no folder picker.** It's your desktop's file chooser portal: install
+`xdg-desktop-portal-gtk`, or on GNOME its Files app (`nautilus`).
+
+**Pins only name the app, or only a point.** Turn on your desktop's accessibility (screen reader or
+"assistive technologies"), which Qt apps and browsers wait for, or start Chrome with
+`--force-renderer-accessibility`.
+
 Still stuck? [Open an issue](https://github.com/mihaicristianfarcas/asides/issues/new?template=bug_report.md)
-with your macOS or Windows version and the output of `asides status`.
+with your macOS, Windows or Linux version (and desktop) and the output of `asides status`.

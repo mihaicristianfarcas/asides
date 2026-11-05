@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,6 +27,10 @@ use crate::agents::{AgentKind, LAUNCH_VAR};
 #[cfg(windows)]
 #[path = "sessions_windows.rs"]
 pub mod windows;
+
+#[cfg(target_os = "linux")]
+#[path = "sessions_linux.rs"]
+pub mod linux;
 
 /// Where a session's terminal is, which decides how an aside is typed into it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +47,17 @@ pub enum Host {
     /// A console on Windows, in whichever app shows it (Windows Terminal, a console window, VS
     /// Code's terminal…): asides types into the console itself (`deliver.rs`).
     Console { name: String },
+    /// Linux: a pane of tmux, which takes text itself (its socket, and the pane).
+    Tmux { socket: String, pane: String },
+    /// Linux: a tab of Konsole, which takes text itself over D-Bus.
+    Konsole { service: String, session: String },
+    /// Linux: a pane of WezTerm, which takes text itself (`wezterm cli`).
+    WezTerm { pane: String, socket: Option<String> },
+    /// Linux: a window of kitty, with its remote control on (`kitten @`).
+    Kitty { listen: String, window: String },
+    /// Linux: any other terminal, typed into through its pty (`asides-keys`), if the system lets
+    /// asides (`may_type`).
+    Pty { name: String, may_type: bool },
 }
 
 impl Host {
@@ -51,13 +66,17 @@ impl Host {
             Host::Terminal => "Terminal",
             Host::Ghostty => "Ghostty",
             Host::Diri { .. } => "Diri",
-            Host::Other { name } | Host::Console { name } => name,
+            Host::Other { name } | Host::Console { name } | Host::Pty { name, .. } => name,
+            Host::Tmux { .. } => "tmux",
+            Host::Konsole { .. } => "Konsole",
+            Host::WezTerm { .. } => "WezTerm",
+            Host::Kitty { .. } => "kitty",
         }
     }
 
     /// asides can type into sessions there.
     pub fn reachable(&self) -> bool {
-        !matches!(self, Host::Other { .. })
+        !matches!(self, Host::Other { .. } | Host::Pty { may_type: false, .. })
     }
 
     /// The app hosting a terminal on a Mac, from the environment its programs got.
@@ -193,7 +212,9 @@ fn interactive(agent: AgentKind, args: &[String]) -> bool {
 pub fn sessions_of(procs: &[Proc]) -> Vec<AgentSession> {
     #[cfg(windows)]
     return sessions_with(procs, windows::host_of);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return sessions_with(procs, linux::host_of);
+    #[cfg(target_os = "macos")]
     sessions_with(procs, Host::of)
 }
 
@@ -280,9 +301,15 @@ pub fn discover() -> Vec<AgentSession> {
     windows::discover()
 }
 
+/// The agent sessions running now, with their folders, last input and names: from `/proc`.
+#[cfg(target_os = "linux")]
+pub fn discover() -> Vec<AgentSession> {
+    linux::discover()
+}
+
 /// The agent sessions running now, with their folders, last input and names. Takes a few tens of
 /// milliseconds (`ps`, `lsof`).
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn discover() -> Vec<AgentSession> {
     let run = |program: &str, args: &[&str]| {
         Command::new(program)
@@ -846,7 +873,9 @@ mod tests {
 
     #[test]
     fn suggests_folders_from_sessions_recents_and_the_agents_projects() {
-        let tmp = tempfile::tempdir().unwrap();
+        // Suggestions leave out `/tmp`, Linux's temporary folder.
+        let tmp =
+            if cfg!(target_os = "linux") { tempfile::tempdir_in("/var/tmp") } else { tempfile::tempdir() }.unwrap();
         // macOS's temporary folder is reached through a link (`/var` → `/private/var`).
         let home = if cfg!(windows) { tmp.path().to_path_buf() } else { tmp.path().canonicalize().unwrap() };
         let dir = |name: &str| {
