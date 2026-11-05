@@ -1269,9 +1269,12 @@ impl Window {
     }
 }
 
+/// What dispatching an event did (public for asides, which dispatches its own: see PATCHES.md).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DispatchEventResult {
+pub struct DispatchEventResult {
+    /// Whether propagation of the event continued.
     pub propagate: bool,
+    /// Whether the default action was prevented.
     pub default_prevented: bool,
 }
 
@@ -1906,6 +1909,13 @@ impl Window {
 
     fn complete_frame(&self) {
         self.platform_window.completed_frame();
+    }
+
+    /// asides: draws and presents a frame at once, as the platform's frame callback would.
+    pub fn draw_now(&mut self, cx: &mut App) {
+        let arena_clear_needed = self.draw(cx);
+        self.present();
+        arena_clear_needed.clear();
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show

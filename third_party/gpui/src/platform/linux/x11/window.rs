@@ -265,6 +265,7 @@ pub struct X11WindowState {
     maximized_vertical: bool,
     maximized_horizontal: bool,
     hidden: bool,
+    show: bool,
     active: bool,
     hovered: bool,
     fullscreen: bool,
@@ -311,14 +312,25 @@ impl rwh::HasDisplayHandle for RawWindow {
     }
 }
 
+// asides: the handles, for code that works on the window with a connection of its own.
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let Some(non_zero) = NonZeroU32::new(self.0.x_window) else {
+            return Err(rwh::HandleError::Unavailable);
+        };
+        let handle = rwh::XcbWindowHandle::new(non_zero);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let connection =
+            as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(&*self.0.xcb) as *mut _;
+        let Some(non_zero) = NonNull::new(connection) else {
+            return Err(rwh::HandleError::Unavailable);
+        };
+        let handle = rwh::XcbDisplayHandle::new(Some(non_zero), 0);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
@@ -682,6 +694,7 @@ impl X11WindowState {
                 maximized_vertical: false,
                 maximized_horizontal: false,
                 hidden: false,
+                show: params.show,
                 appearance,
                 handle,
                 background_appearance: WindowBackgroundAppearance::Opaque,
@@ -1370,6 +1383,10 @@ impl PlatformWindow for X11Window {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
+        // asides: `WindowOptions::show` honored; whoever opened it maps it.
+        if !self.0.state.borrow().show {
+            return Ok(());
+        }
         check_reply(
             || "X11 MapWindow failed.",
             self.0.xcb.map_window(self.0.x_window),

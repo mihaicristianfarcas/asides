@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/asides-core", "crates/asides-cli", "crates/asides-app", "crates/asides-overlay"]
-# GPUI, vendored (third_party/gpui): not ours to lint or test.
+# GPUI, patched (third_party/gpui/PATCHES.md): not ours to lint or test.
 exclude = ["third_party/gpui"]
 
 [workspace.package]
@@ -24,6 +24,6 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 [profile.release]
 lto = "thin"
 
-# GPUI 0.2.2 as published (its examples left out), here to be patched.
+# GPUI 0.2.2 with a few changes its Linux backends need (third_party/gpui/PATCHES.md).
 [patch.crates-io]
 gpui = { path = "third_party/gpui" }

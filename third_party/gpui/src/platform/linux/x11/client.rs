@@ -44,7 +44,7 @@ use super::{
     ButtonOrScroll, ScrollDirection, X11Display, X11WindowStatePtr, XcbAtoms, XimCallbackEvent,
     XimHandler, button_or_scroll_from_event_detail, check_reply,
     clipboard::{self, Clipboard},
-    get_reply, get_valuator_axis_index, handle_connection_error, modifiers_from_state,
+    get_reply, get_valuator_axis_index, modifiers_from_state,
     pressed_button_from_mask,
 };
 
@@ -590,10 +590,11 @@ impl X11Client {
                     Ok(None) => {
                         break;
                     }
+                    // The X server is gone (it crashed, or the session ended). Its socket stays
+                    // readable for good: going on here spun the event loop, at full speed, forever.
                     Err(err) => {
-                        let err = handle_connection_error(err);
                         log::warn!("error while polling for X11 events: {err:?}");
-                        break;
+                        return Err(err.into());
                     }
                 }
             }

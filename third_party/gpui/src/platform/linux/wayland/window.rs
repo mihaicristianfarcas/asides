@@ -1070,7 +1070,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn request_decorations(&self, decorations: WindowDecorations) {
         let mut state = self.borrow_mut();
-        state.decorations = decorations;
+        // A compositor with nothing to decorate with (Mutter) leaves it to the window, as it says:
+        // asked for Server there, the window went without a frame.
+        state.decorations = match state.decoration {
+            Some(_) => decorations,
+            None => WindowDecorations::Client,
+        };
         if let Some(decoration) = state.decoration.as_ref() {
             decoration.set_mode(decorations.to_xdg());
             update_window(state);
