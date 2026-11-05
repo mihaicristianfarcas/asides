@@ -292,8 +292,10 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - Grain makes single-pixel changes as visible as a faint card's border (OKLab 0.01 to 0.03): faint
   changes must go on along a contour, compared along the change's own channel. Faint rounded corners
   and hairline ends count where they touch an edge the other way. In heavy grain, a faint change
-  that doesn't stand out from it must go on 15 rows. Test on many images at once (wallpapers,
-  photos, light and dark UI).
+  that doesn't stand out from it must go on 15 rows. Grain stands out on a row now and then by
+  chance: a faint change must stand out on every row of its contour (on its own row was enough for
+  gray grain of ±4 levels to make phantom edges). Gray grain of ±5 or more still lines up 15 rows by
+  chance. Test on many images at once (wallpapers, photos, light and dark UI).
 - Snapping must find the edges measuring from a point does
   (`snapping_finds_the_edges_measuring_does`); `measure::Contours` does it in two passes per block.
 - Edges must not depend on the part of the frame worked on (0.7.2 lost them on each thread band's
