@@ -1,6 +1,6 @@
 # Arch Linux, from the release's archive: `makepkg -si` beside this file. `pkgver` is the release's.
 pkgname=asides-bin
-pkgver=1.0.8
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Freeze the screen, click what's wrong, say why; it goes to your coding agent"
 arch=('x86_64' 'aarch64')
