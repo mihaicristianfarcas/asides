@@ -34,20 +34,23 @@ multilingual one ([Settings](settings.md)).
 **A shortcut does nothing.** Another app may use it: pick another in Settings → Keys. macOS refuses
 shortcuts whose only modifiers are Option, or Option and Shift.
 
-**"Updates are off."** The reason follows: a copy built from source (not notarized), or one that
-isn't in an app, doesn't update itself. "asides can't write to …" means its folder isn't yours:
-download the new version from the website.
+**"Updates are off."** The reason follows: a copy built from source (not notarized), one that
+isn't in an app, or on Windows one that isn't signed or didn't come from the installer, doesn't
+update itself. "asides can't write to …" means its folder isn't yours: download the new version from
+the website.
 
-**An update didn't install.** What happened is in
-`~/Library/Caches/asides/updates/<version>/install.log`; if anything failed, the old app stays.
-The update installs only once asides has quit.
+**An update didn't install.** What happened is in `install.log`, in
+`~/Library/Caches/asides/updates/<version>/` (Windows: `%LOCALAPPDATA%\asides\updates\<version>\`,
+beside the installer's `setup.log`); if anything failed, the old copy stays. The update installs only
+once asides has quit.
 
 **macOS asks for the microphone after every update.** Your build is signed ad hoc. Run `make cert`
 once, or use an Apple Development or Developer ID certificate (see
 [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
-**Windows says it protected your PC.** The Windows build isn't signed yet: click **More info**,
-then **Run anyway**.
+**Windows says it protected your PC.** asides is signed (**More info** names the publisher, Open
+Source Developer Farcaș Mihai-Cristian), but SmartScreen also goes by how many people have run a
+file, and a new release starts with few: click **More info**, then **Run anyway**.
 
 ## On Linux
 

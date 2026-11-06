@@ -28,6 +28,7 @@ mod icons;
 #[cfg_attr(target_os = "linux", path = "linux/instance.rs")]
 mod instance;
 mod overlay;
+mod signature;
 mod stt;
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(windows, path = "windows/system.rs")]
@@ -393,7 +394,11 @@ impl App {
         // A fresh copy starts with its own What's New seen; one just updated is told what's new by
         // the copy before it, until it checks.
         let whats_new_seen = previous.whats_new_seen.clone().unwrap_or_else(|| Version::current().to_string());
-        let updates = Flow::new(UpdateStatus { notes: previous.update.handed_over(), ..UpdateStatus::default() });
+        let updates = Flow::new(UpdateStatus {
+            notes: previous.update.handed_over(),
+            manual: update::MANUAL.map(String::from),
+            ..UpdateStatus::default()
+        });
         App {
             mtm,
             proxy,
@@ -2071,6 +2076,7 @@ impl App {
             match next {
                 Next::Ask(request) => self.send_update(request),
                 Next::Restart => self.restart_into_update(),
+                Next::Open(page) => system::open(&page),
             }
         }
     }

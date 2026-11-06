@@ -165,6 +165,15 @@ pub fn set_open_at_login(open: bool) -> Result<LoginItem, String> {
 /// macOS's: nothing here can turn it off behind asides' back.
 pub fn open_login_items() {}
 
+/// Opens a web page with what the desktop opens links with. A thread waits for `xdg-open`, which
+/// hands the page over and ends.
+pub fn open(link: &str) {
+    let link = link.to_string();
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("xdg-open").arg(link).status();
+    });
+}
+
 /// Calls `changed` when what asides may do changes: the helper's capability, as its file changes.
 /// A password prompt's answer says so too; this hears a package or the user doing it themselves.
 pub fn on_permission_changes(changed: impl Fn() + Send + 'static) {
