@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in asides does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A security problem goes privately instead: see [SECURITY.md](https://github.com/mihaicristianfarcas/asides/blob/main/SECURITY.md).
+        Known problems and what fixes them: [Troubleshooting](https://github.com/mihaicristianfarcas/asides/blob/main/guide/troubleshooting.md).
+  - type: input
+    id: version
+    attributes:
+      label: asides version
+      description: "`asides --version` says it."
+      placeholder: 1.0.8
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: system-version
+    attributes:
+      label: System version and processor
+      description: On Linux, the desktop too, and whether it's Wayland or X11.
+      placeholder: macOS 26.1, Apple M3
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and terminal
+      description: Where the aside went, or should have gone.
+      placeholder: Claude Code in Ghostty
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: "`asides status` and `asides log`"
+      description: >-
+        Run both and paste what they print. They can name your apps, windows and
+        folders: edit out what you like.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot or recording
+      description: Drag it here, if it shows the problem.
+    validations:
+      required: false

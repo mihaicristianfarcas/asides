@@ -81,7 +81,9 @@ you click the pill's microphone.
 - [Using asides](guide/using.md): the tools, keys, where asides go, the window and the command
 - [Settings](guide/settings.md): `config.toml`
 - [Privacy and permissions](guide/privacy.md)
-- [Troubleshooting](guide/troubleshooting.md)
+- [Troubleshooting](guide/troubleshooting.md); questions in
+  [Discussions](https://github.com/mihaicristianfarcas/asides/discussions/categories/q-a)
+- [Security](SECURITY.md): what asides protects, and reporting a vulnerability
 - [Contributing](CONTRIBUTING.md) and [Architecture](ARCHITECTURE.md)
 
 ## License

@@ -312,7 +312,15 @@ shortcuts, requirements and install steps from the README: update both.
 
 ## Reporting bugs
 
-Use the bug report template, with your system's version, `asides --version`, `asides status`,
-`asides log` and the steps. asides can contain private things: share only what's relevant.
+[Open an issue](https://github.com/mihaicristianfarcas/asides/issues/new/choose) and choose a form:
+
+- **Bug report**: what happened, on which system, with what `asides status` and `asides log` print.
+  asides can hold private things: share only what's relevant.
+- **Tester report**: you tried asides and want to say how it went. It takes under two minutes, and
+  "it worked" is as useful as "it didn't".
+
+Questions go to
+[Discussions](https://github.com/mihaicristianfarcas/asides/discussions/categories/q-a).
+Security problems go privately instead: see [SECURITY.md](SECURITY.md).
 
 By contributing, you agree your contributions are dual licensed under MIT and Apache-2.0.
