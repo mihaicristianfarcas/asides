@@ -419,6 +419,21 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
 .qs .a { overflow: hidden; }
 .qs .a p { padding: 0 24px 16px 0; color: var(--muted); text-wrap: pretty; }
 
+/* Something wrong with asides: a section under Questions, its ways a row each as Install's files are,
+   tinted as the sources of what the agent gets. */
+.help .private { margin-top: 14px; font-size: var(--text-small); color: var(--muted); }
+.ways { margin: 0; padding: 4px 20px; list-style: none; }
+.ways li + li { border-top: 1px solid var(--line); }
+.ways a { display: grid; grid-template-columns: 30px minmax(0, 1fr) 18px; align-items: center; gap: 2px 14px; padding: 14px 0; text-decoration: none; }
+.ways i { grid-row: span 2; display: grid; place-items: center; width: 30px; height: 30px; color: var(--on); background: var(--tint); border-radius: 50%; }
+.ways svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ways b { font-weight: 600; letter-spacing: -0.01em; }
+.ways span { grid-column: 2; font-size: var(--text-small); color: var(--muted); }
+.ways .go { grid-row: 1 / span 2; grid-column: 3; color: var(--muted); transition: color 150ms ease; }
+.ways .bug { --tint: #fbdfdc; --on: #a8281f; }
+.ways .talk { --tint: var(--accent-fill); --on: var(--on-accent); }
+.ways .issue { --tint: #e4e4e8; --on: #3d3d42; }
+
 /* And once more, at the end. */
 .last { display: flex; flex-direction: column; align-items: center; margin-top: 120px; padding: 64px 24px; text-align: center; background: var(--code-bg); border-radius: 24px; }
 .last .sub { margin-top: 10px; }
@@ -440,6 +455,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .gets-body:has(.source.voice:hover) .line:not(.voice),
   .gets-body:has(.source.marks:hover) .line:not(.marks),
   .gets-body:has(.source.place:hover) .line:not(.place) { opacity: 0.32; }
+  .ways a:hover .go { color: var(--fg); }
 }
 
 /* A short window: the opening still fits, caption included. */
@@ -472,6 +488,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .chat-prompt { padding-left: 24px; }
   .line::after { position: static; display: block; margin-top: 2px; }
   .section, .last { margin-top: 80px; }
+  .ways { padding: 2px 16px; }
   .steps > li { padding-left: 38px; }
   .files { padding: 2px 16px; }
   .keep { padding: 12px 16px 14px; }
@@ -493,7 +510,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
 
 @media (prefers-reduced-motion: reduce) {
   .rec circle { animation: none; }
-  .line, .source::before, .source h3 i { transition: none; }
+  .line, .source::before, .source h3 i, .ways .go { transition: none; }
 }
 </style>
 </head>
@@ -811,6 +828,21 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
         <summary>Is it free?<span class="x" aria-hidden="true"></span></summary>
         <div class="a"><p>Yes, and open source under MIT or Apache-2.0. No account, no API key.</p></div>
       </details>
+    </div>
+  </section>
+
+  <section class="section split help" aria-labelledby="help">
+    <header>
+      <h2 id="help">Something wrong?</h2>
+      <p class="sub">Say so on GitHub. For a bug, <code>asides log</code> shows what went wrong.</p>
+    </header>
+    <div>
+    <ul class="panel ways">
+      <li><a class="bug" href="https://github.com/mihaicristianfarcas/asides/issues/new?template=bug.yml"><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7.5" width="10" height="13" rx="5"/><path d="M12 12v8.5M7 13H3.5M20.5 13H17M7.6 17.5H4.5M19.5 17.5h-3.1M9.5 7.5a2.5 2.5 0 0 1 5 0M9 5 7.5 3.5M15 5l1.5-1.5"/></svg></i><b>Report a bug</b><span>Something doesn't work as it should.</span><svg class="go" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a></li>
+      <li><a class="talk" href="https://github.com/mihaicristianfarcas/asides/discussions/new/choose"><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 4.5h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H9l-3.5 3v-3h-1a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/><path d="M19.5 8.5a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-1v3l-3.5-3H11"/></svg></i><b>Start a discussion</b><span>Ask how to do something, or share an idea.</span><svg class="go" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a></li>
+      <li><a class="issue" href="https://github.com/mihaicristianfarcas/asides/issues/new/choose"><i><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg></i><b>Open an issue</b><span>Suggest a change, or say how testing went.</span><svg class="go" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a></li>
+    </ul>
+    <p class="private">A security problem goes privately: <a href="https://github.com/mihaicristianfarcas/asides/security/advisories/new">report it here</a>.</p>
     </div>
   </section>
 
