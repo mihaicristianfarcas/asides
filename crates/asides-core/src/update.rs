@@ -11,10 +11,19 @@
 //!   "sha256": "2e106c04…",
 //!   "minimum_system_version": "14.0",
 //!   "published": "2026-10-20",
-//!   "notes": "**asides updates itself.** …"
+//!   "notes": "**asides updates itself.** …",
+//!   "windows": {"arm64": {"url": "…/asides-0.8.0-windows-arm64-setup.exe", "size": 9337729,
+//!                         "sha256": "…", "minimum_system_version": "10.0.19041"}, "x64": {…}},
+//!   "linux": {"aarch64": {"url": "…/asides-0.8.0-linux-aarch64.tar.gz", …}, "x86_64": {…}}
 //! }]}
 //! ```
+//!
+//! The top-level `url`, `size` and `sha256` are the Mac's zip (copies from before Windows and Linux
+//! read those alone). Windows' installer and Linux's archive each have a minisign signature beside
+//! them in the release (`<file>.minisig`): Windows checks it before it installs, and Linux copies
+//! only say a release is out, since a package manager installs them.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -78,9 +87,26 @@ pub struct Release {
     pub published: Option<String>,
     /// What's new in it, in Markdown (the GitHub release's notes).
     pub notes: String,
+    /// Windows' installers, by architecture (`x64`, `arm64`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub windows: BTreeMap<String, Download>,
+    /// Linux's archives, by architecture (`x86_64`, `aarch64`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub linux: BTreeMap<String, Download>,
 }
 
-impl Release {
+/// One system's file of a release.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Download {
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+    /// The oldest version of the system it runs on (Windows 10 2004 is `10.0.19041`).
+    pub minimum_system_version: Option<String>,
+}
+
+impl Download {
     /// It can be downloaded and checked: from GitHub, of a known size and SHA-256.
     fn complete(&self) -> bool {
         valid_url(&self.url)
@@ -91,6 +117,47 @@ impl Release {
 
     fn runs_on(&self, system: Version) -> bool {
         self.minimum_system_version.as_deref().and_then(Version::parse).is_none_or(|oldest| oldest <= system)
+    }
+
+    /// The file's name, as the release names it (and its signature after it).
+    pub fn file_name(&self) -> &str {
+        self.url.rsplit('/').next().unwrap_or_default()
+    }
+}
+
+/// Which system and architecture a copy of asides is, as the feed names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Mac,
+    Windows(&'static str),
+    Linux(&'static str),
+}
+
+impl Platform {
+    pub const fn current() -> Platform {
+        if cfg!(windows) {
+            Platform::Windows(if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" })
+        } else if cfg!(target_os = "linux") {
+            Platform::Linux(if cfg!(target_arch = "aarch64") { "aarch64" } else { "x86_64" })
+        } else {
+            Platform::Mac
+        }
+    }
+}
+
+impl Release {
+    /// The file this platform gets of the release, if it has one.
+    pub fn download(&self, platform: Platform) -> Option<Download> {
+        match platform {
+            Platform::Mac => Some(Download {
+                url: self.url.clone(),
+                size: self.size,
+                sha256: self.sha256.clone(),
+                minimum_system_version: self.minimum_system_version.clone(),
+            }),
+            Platform::Windows(arch) => self.windows.get(arch).cloned(),
+            Platform::Linux(arch) => self.linux.get(arch).cloned(),
+        }
     }
 
     pub fn notes(&self) -> Notes {
@@ -110,12 +177,15 @@ impl Feed {
     }
 
     /// The newest release worth offering: newer than `current` (never older, so a tampered feed
-    /// can't take anyone back), for this macOS, complete. A row that doesn't parse is skipped.
-    pub fn newest(&self, current: Version, system: Version) -> Option<&Release> {
+    /// can't take anyone back), with a complete file for this platform that runs on this system. A
+    /// row that doesn't parse is skipped.
+    pub fn newest(&self, current: Version, system: Version, platform: Platform) -> Option<&Release> {
         self.releases
             .iter()
             .filter_map(|r| Some((Version::parse(&r.version)?, r)))
-            .filter(|(version, r)| *version > current && r.runs_on(system) && r.complete())
+            .filter(|(version, r)| {
+                *version > current && r.download(platform).is_some_and(|d| d.runs_on(system) && d.complete())
+            })
             .max_by_key(|(version, _)| *version)
             .map(|(_, r)| r)
     }
@@ -188,6 +258,9 @@ pub struct Status {
     pub notes: Vec<Notes>,
     /// When asides last looked (ms since the epoch).
     pub checked_ms: Option<u64>,
+    /// Where a release is downloaded by hand: this copy only says one is out (Linux, where a
+    /// package manager installs asides).
+    pub manual: Option<String>,
 }
 
 impl Status {
@@ -213,6 +286,7 @@ impl Status {
             Phase::Idle => format!("asides {current}"),
             Phase::Checking => "Checking for updates…".into(),
             Phase::UpToDate => format!("asides {current} is up to date"),
+            Phase::Available if self.manual.is_some() => format!("asides {version} is out: download it"),
             Phase::Available => format!("Update to {version}"),
             Phase::Downloading => format!("Downloading {version}… {}%", (self.progress * 100.0).floor() as u32),
             Phase::Ready => format!("Restart to update to {version}"),
@@ -428,9 +502,9 @@ mod tests {
     #[test]
     fn offers_the_newest_newer_release() {
         let found = feed(vec![release("0.7.9"), release("0.9.0"), release("0.8.1")]);
-        assert_eq!(found.newest(Version(0, 8, 0), SYSTEM).map(|r| r.version.as_str()), Some("0.9.0"));
-        assert_eq!(found.newest(Version(0, 9, 0), SYSTEM), None);
-        assert_eq!(found.newest(Version(1, 0, 0), SYSTEM), None, "never an older one");
+        assert_eq!(found.newest(Version(0, 8, 0), SYSTEM, Platform::Mac).map(|r| r.version.as_str()), Some("0.9.0"));
+        assert_eq!(found.newest(Version(0, 9, 0), SYSTEM, Platform::Mac), None);
+        assert_eq!(found.newest(Version(1, 0, 0), SYSTEM, Platform::Mac), None, "never an older one");
     }
 
     #[test]
@@ -446,7 +520,59 @@ mod tests {
         let mut unversioned = release("0.9.4");
         unversioned.version = "nightly".into();
         let rows = vec![newer_macos, elsewhere, no_size, no_digest, unversioned, release("0.8.5")];
-        assert_eq!(feed(rows).newest(Version(0, 8, 0), SYSTEM).map(|r| r.version.as_str()), Some("0.8.5"));
+        assert_eq!(
+            feed(rows).newest(Version(0, 8, 0), SYSTEM, Platform::Mac).map(|r| r.version.as_str()),
+            Some("0.8.5")
+        );
+    }
+
+    fn file(name: &str, oldest: Option<&str>) -> Download {
+        Download {
+            url: format!("https://github.com/mihaicristianfarcas/asides/releases/download/v1/{name}"),
+            size: 9_000_000,
+            sha256: "b".repeat(64),
+            minimum_system_version: oldest.map(String::from),
+        }
+    }
+
+    #[test]
+    fn each_system_is_offered_its_own_file() {
+        let mut both = release("0.9.0");
+        both.windows.insert("arm64".into(), file("asides-0.9.0-windows-arm64-setup.exe", Some("10.0.19041")));
+        both.windows.insert("x64".into(), file("asides-0.9.0-windows-x64-setup.exe", Some("10.0.19041")));
+        both.linux.insert("aarch64".into(), file("asides-0.9.0-linux-aarch64.tar.gz", None));
+        // A release without Windows' files (made before them) isn't offered to Windows.
+        let found = feed(vec![release("0.9.5"), both]);
+        let windows = Platform::Windows("arm64");
+        let offered = found.newest(Version(0, 8, 0), Version(10, 0, 26100), windows).expect("0.9.0 has one");
+        assert_eq!(offered.version, "0.9.0");
+        assert_eq!(offered.download(windows).unwrap().file_name(), "asides-0.9.0-windows-arm64-setup.exe");
+        assert_eq!(found.newest(Version(0, 8, 0), Version(10, 0, 17763), windows), None, "Windows 10 1809");
+        assert_eq!(found.newest(Version(0, 8, 0), SYSTEM, Platform::Linux("x86_64")), None, "no x86_64 file");
+        let linux = found.newest(Version(0, 8, 0), Version::default(), Platform::Linux("aarch64"));
+        assert_eq!(linux.map(|r| r.version.as_str()), Some("0.9.0"));
+        assert_eq!(found.newest(Version(0, 8, 0), SYSTEM, Platform::Mac).map(|r| r.version.as_str()), Some("0.9.5"));
+    }
+
+    #[test]
+    fn older_macs_read_the_feed_as_before() {
+        let mut row = release("0.9.0");
+        row.windows.insert("x64".into(), file("asides-0.9.0-windows-x64-setup.exe", None));
+        let json = serde_json::to_string(&feed(vec![row])).unwrap();
+        // What a copy from before Windows' files reads: the same top-level fields, the rest ignored.
+        #[derive(Deserialize)]
+        struct Before {
+            releases: Vec<BeforeRow>,
+        }
+        #[derive(Deserialize)]
+        struct BeforeRow {
+            url: String,
+            size: u64,
+        }
+        let before: Before = serde_json::from_str(&json).unwrap();
+        assert!(before.releases[0].url.ends_with("/asides-0.9.0.zip"));
+        assert_eq!(before.releases[0].size, 9_000_000);
+        assert!(!json.contains("\"linux\""), "an empty system is left out");
     }
 
     #[test]
@@ -483,7 +609,7 @@ mod tests {
 }"#,
         )
         .unwrap();
-        let offered = feed.newest(Version(0, 7, 4), Version(14, 0, 0)).expect("0.8.0 is newer");
+        let offered = feed.newest(Version(0, 7, 4), Version(14, 0, 0), Platform::Mac).expect("0.8.0 is newer");
         assert_eq!((offered.size, offered.published.as_deref()), (8656001, Some("2026-10-20")));
         assert!(Feed::parse("{\"releases\": 3}").is_err());
     }

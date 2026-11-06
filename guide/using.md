@@ -128,7 +128,12 @@ asides looks for a new version every 6 hours, downloads it, and installs it when
 → **Update automatically**). To install it now, click **Restart to update** at the bottom of the
 asides window's sidebar (or **Update to …** in the menu bar menu): asides reopens on the new
 version, then the sidebar offers **What's new**. **Check for Updates…** is in the asides menu.
-Copies built from source don't update themselves.
+Copies built from source don't update themselves. Windows does the same; Linux says a new version
+is out and links the download ([On Windows](#on-windows), [On Linux](#on-linux)).
+
+Every file of a release has a signature beside it, made with
+[asides' release key](../packaging/release-signing.pub): `minisign -Vm <file> -p
+release-signing.pub`.
 
 ## The command
 
@@ -183,7 +188,7 @@ asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with t
 | Permissions | Only the microphone: Settings → Privacy & security → Microphone → **Let desktop apps access your microphone**. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `%USERPROFILE%\.asides\history`; settings, voice models and the log in `%LOCALAPPDATA%\asides`. |
-| Updates | Not automatic yet: install the new version over the old one. |
+| Updates | As on a Mac, for a copy from the installer: the new installer runs silently as asides quits, then asides reopens. It must carry asides' signatures. A copy from the zip doesn't update itself. |
 
 ## On Linux
 
@@ -200,4 +205,4 @@ differences:
 | Scaled screens | On Wayland the overlay runs under Xwayland, which may draw it slightly soft at fractional scales. Screenshots keep the screen's full resolution. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `~/.asides/history`; settings in `~/.config/asides`; voice models in `~/.local/share/asides`; the log in `~/.local/state/asides`. |
-| Updates | With your package manager, or install the new release over the old one. |
+| Updates | asides says when a new version is out (**asides … is out: download it**, in the window's sidebar and the menu), and opens the download page. Install it over the old one, as you installed that. |

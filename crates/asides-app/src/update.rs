@@ -3,12 +3,20 @@
 //! stages it; when the app quits, `install` hands the swap to a script that waits for it to exit.
 //! `Flow` is the app's side: what the updater says and the user asks in, the status out.
 //!
-//! The trust is Apple's, as in diri: there's no key of our own to keep or lose. A download is
-//! taken only if its size and SHA-256 are the feed's, `codesign --verify --deep --strict` passes,
-//! its team and bundle identifier are the running copy's, Gatekeeper accepts it (notarized and
-//! stapled), and its version is the one promised. The feed only ever offers newer versions, from
-//! github.com. A copy that isn't notarized (built from source) doesn't update itself, so
-//! `make install` never has its build replaced.
+//! On a Mac the trust is Apple's, as in diri. A download is taken only if its size and SHA-256 are
+//! the feed's, `codesign --verify --deep --strict` passes, its team and bundle identifier are the
+//! running copy's, Gatekeeper accepts it (notarized and stapled), and its version is the one
+//! promised. A copy that isn't notarized (built from source) doesn't update itself, so `make
+//! install` never has its build replaced.
+//!
+//! On Windows the update is the release's installer, run silently once asides has quit, as helio
+//! updates itself. It's taken only if its size and SHA-256 are the feed's, the release's minisign
+//! signature names it (`signature.rs`, with the key asides is built with), and Windows trusts its
+//! Authenticode signature, by the publisher this copy is signed by. Only a signed copy the installer
+//! put in place updates itself.
+//!
+//! Linux copies only say a release is out, and where to get it: a package manager installs them.
+//! Everywhere the feed only ever offers newer versions, from github.com.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -21,12 +29,21 @@ use std::time::{Duration, Instant};
 
 use asides_core::history;
 use asides_core::paths;
+#[cfg(not(target_os = "linux"))]
+use asides_core::update;
 #[cfg(target_os = "macos")]
 use asides_core::update::UNNOTARIZED_ENV;
 use asides_core::update::{
-    self, EVERY, FEED_ENV, FEED_URL, Feed, MAX_FEED, Notes, Phase, Release, Status, Step, Version,
+    EVERY, FEED_ENV, FEED_URL, Feed, MAX_FEED, Notes, Phase, Platform, Release, Status, Step, Version,
 };
 use sha2::{Digest, Sha256};
+
+#[cfg(windows)]
+use crate::signature;
+
+#[cfg(windows)]
+#[path = "windows/authenticode.rs"]
+mod authenticode;
 
 /// How long the helper waits for asides to quit before it gives up, changing nothing.
 const QUIT_WAIT_SECS: u32 = 60;
@@ -69,7 +86,17 @@ pub enum Next {
     Ask(Request),
     /// Quit, swap the update in, and open asides again.
     Restart,
+    /// Open this page, where the release is downloaded by hand (Linux).
+    Open(String),
 }
+
+/// Where a copy that only says a release is out sends the user for it: Linux's (its package
+/// manager installs it, or the archive's `install.sh`).
+pub const MANUAL: Option<&str> = if cfg!(target_os = "linux") {
+    Some("https://github.com/mihaicristianfarcas/asides/releases/latest")
+} else {
+    None
+};
 
 /// An update's way through the app: what the updater said and the user asked in; the status the
 /// app publishes, and what it does next, out.
@@ -109,6 +136,13 @@ impl Flow {
                         status.release = Some(release.notes());
                         status.phase = Phase::Available;
                         self.found = Some(release.clone());
+                        if let Some(page) = status.manual.clone() {
+                            // Asked for, it opens; found in the background, it only says so.
+                            return match std::mem::take(&mut self.restart_when_ready) {
+                                true => vec![Next::Open(page)],
+                                false => Vec::new(),
+                            };
+                        }
                         if automatic || self.restart_when_ready {
                             return vec![self.download(release)];
                         }
@@ -165,6 +199,9 @@ impl Flow {
                 }
             }
             Step::Install if self.staged.is_some() => vec![Next::Restart],
+            Step::Install if self.found.is_some() && self.status.manual.is_some() => {
+                self.status.manual.clone().map(Next::Open).into_iter().collect()
+            }
             Step::Install => {
                 self.status.asked = true;
                 self.restart_when_ready = true;
@@ -189,6 +226,9 @@ impl Flow {
     /// Automatic updates turned on or off: with an update found, on gets it ready.
     pub fn automatic(&mut self, on: bool) -> Vec<Next> {
         let mut next = vec![Next::Ask(Request::Automatic(on))];
+        if self.status.manual.is_some() {
+            return next;
+        }
         if let (true, Phase::Available, Some(release)) = (on, self.status.phase, self.found.clone()) {
             next.push(self.download(release));
         }
@@ -276,24 +316,50 @@ fn run(asked: Receiver<Request>, mut automatic: bool, first_check: Duration, rep
     }
 }
 
-/// The asides.app running, as far as updating it goes.
+/// This copy of asides, as far as updating it goes.
 struct Running {
+    /// What an update replaces: asides.app on a Mac, the installer's folder on Windows.
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     bundle: PathBuf,
+    #[cfg(target_os = "macos")]
     signature: Signature,
+    /// Who Windows' installer must be signed by: whoever signed this copy.
+    #[cfg(windows)]
+    publisher: String,
     version: Version,
 }
 
 impl Running {
-    /// Windows copies are updated by installing the new release: they don't swap themselves.
+    /// A copy the installer put in place, signed (Authenticode): one unpacked from the zip would be
+    /// installed beside, not replaced.
     #[cfg(windows)]
     fn find() -> Result<Running, String> {
-        Err("on Windows, install each new release over this one".into())
+        if cfg!(feature = "dev-hooks") {
+            return Err("this is a test build".into());
+        }
+        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+        let dir = exe.parent().ok_or("asides has no folder")?.to_path_buf();
+        if !crate::system::installed_in(&dir) {
+            return Err("this copy wasn't installed by asides' installer: install each new release".into());
+        }
+        let publisher = authenticode::signer(&exe).map_err(|why| format!("this copy isn't signed ({why})"))?;
+        Ok(Running { bundle: dir, publisher, version: Version::current() })
     }
 
-    /// On Linux, the package manager updates asides.
+    /// Linux copies only say a release is out ([`MANUAL`]): one a package put in `/usr`, or the
+    /// archive's `install.sh` in `~/.local/lib/asides`. A build from source says nothing.
     #[cfg(target_os = "linux")]
     fn find() -> Result<Running, String> {
-        Err("on Linux, update asides with your package manager, or install each new release".into())
+        if cfg!(feature = "dev-hooks") {
+            return Err("this is a test build".into());
+        }
+        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        if !exe.starts_with("/usr") && !exe.starts_with(home.join(".local/lib/asides")) {
+            return Err("this copy wasn't installed from a release".into());
+        }
+        let bundle = exe.parent().map(Path::to_path_buf).unwrap_or_default();
+        Ok(Running { bundle, version: Version::current() })
     }
 
     #[cfg(target_os = "macos")]
@@ -315,13 +381,15 @@ impl Running {
         let url = std::env::var(FEED_ENV).unwrap_or_else(|_| FEED_URL.into());
         let text = match url.strip_prefix("file://") {
             Some(path) => fs::read_to_string(path).map_err(|err| err.to_string()),
-            None => fetch_text(&url),
+            None => fetch_text(&url, MAX_FEED),
         }
         .map_err(|why| format!("Couldn't check for updates ({why})"))?;
         let feed = Feed::parse(&text).map_err(|why| format!("Couldn't check for updates ({why})"))?;
-        Ok((feed.newest(self.version, system_version()).cloned(), feed.notes_up_to(self.version)))
+        let newest = feed.newest(self.version, system_version(), Platform::current());
+        Ok((newest.cloned(), feed.notes_up_to(self.version)))
     }
 
+    #[cfg(target_os = "macos")]
     fn download(&self, release: &Release, progress: impl Fn(f32)) -> Result<Staged, String> {
         let name = &release.version;
         // The feed's version names a folder: only a version's shape may.
@@ -342,6 +410,7 @@ impl Running {
         Ok(Staged { release: release.clone(), app: staged?, dir, bundle: self.bundle.clone() })
     }
 
+    #[cfg(target_os = "macos")]
     /// A notarized asides from the same developer, of the version promised (a real but older
     /// release must not stand in for the newer one).
     fn verify(&self, app: &Path, version: Version) -> Result<(), String> {
@@ -363,6 +432,51 @@ impl Running {
             return Err(format!("it's {}, not {version}", found.map_or("no version".into(), |v| v.to_string())));
         }
         Ok(())
+    }
+
+    /// The release's installer for this PC, checked, waiting in the update's folder.
+    #[cfg(windows)]
+    fn download(&self, release: &Release, progress: impl Fn(f32)) -> Result<Staged, String> {
+        let name = &release.version;
+        let version = Version::parse(name).ok_or_else(|| format!("{name} isn't a version"))?;
+        let file =
+            release.download(Platform::current()).ok_or_else(|| format!("{name} has no installer for this PC"))?;
+        // The name the release signs it under says its version and architecture.
+        let expected = windows_setup_name(version);
+        if !update::valid_url(&file.url) || file.file_name() != expected {
+            return Err(format!("The update feed offers {} for {expected}", file.url));
+        }
+        let dir = paths::updates_dir().join(version.to_string());
+        fs::create_dir_all(&dir).map_err(|err| format!("Couldn't download {name} ({err})"))?;
+        let setup = dir.join(&expected);
+        fetch_file(&file.url, &setup, file.size, &file.sha256, progress)
+            .map_err(|why| format!("Couldn't download {name} ({why})"))?;
+        if let Err(why) = self.verify(&setup, &file.url, &expected) {
+            let _ = fs::remove_file(&setup);
+            return Err(format!("The download of {name} failed its checks ({why})"));
+        }
+        Ok(Staged { release: release.clone(), app: setup, dir, bundle: self.bundle.clone() })
+    }
+
+    /// Signed by the release (its minisign signature, naming this file), and by this copy's
+    /// publisher, as Windows checks it (Authenticode).
+    #[cfg(windows)]
+    fn verify(&self, setup: &Path, url: &str, name: &str) -> Result<(), String> {
+        let key = signature::ReleaseKey::parse(RELEASE_KEY)?;
+        let found = fetch_text(&signature::signature_name(url), signature::MAX_SIGNATURE)
+            .map_err(|why| format!("its signature couldn't be downloaded ({why})"))?;
+        signature::check(&key, &found, setup, name)?;
+        let signer = authenticode::signer(setup)?;
+        if signer != self.publisher {
+            return Err(format!("it's signed by {signer}, not by {}", self.publisher));
+        }
+        Ok(())
+    }
+
+    /// Never asked for: a Linux copy opens [`MANUAL`] instead.
+    #[cfg(target_os = "linux")]
+    fn download(&self, release: &Release, _: impl Fn(f32)) -> Result<Staged, String> {
+        Err(format!("asides {} is installed by your package manager, or from the release", release.version))
     }
 
     /// Removes the downloads of versions this copy already is (or is past).
@@ -387,6 +501,7 @@ fn enclosing_bundle(exe: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Debug, Default, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct Signature {
     identifier: String,
     team: String,
@@ -394,6 +509,7 @@ struct Signature {
     developer_id: bool,
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 impl Signature {
     /// From what `codesign -dv --verbose=4` writes (on stderr).
     fn parse(text: &str) -> Signature {
@@ -411,12 +527,14 @@ impl Signature {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn signature(bundle: &Path) -> Option<Signature> {
     let output = Command::new("/usr/bin/codesign").args(["-dv", "--verbose=4"]).arg(bundle).output().ok()?;
     output.status.success().then(|| Signature::parse(&String::from_utf8_lossy(&output.stderr)))
 }
 
 /// Gatekeeper would open it: for a Developer ID app, notarized (stapled, so no network needed).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn gatekeeper_accepts(bundle: &Path) -> bool {
     Command::new("/usr/sbin/spctl")
         .args(["--assess", "--type", "execute"])
@@ -427,13 +545,27 @@ fn gatekeeper_accepts(bundle: &Path) -> bool {
 }
 
 /// This Mac's macOS (`0.0.0` if unknown, which no release with an oldest macOS runs on).
+#[cfg(target_os = "macos")]
 fn system_version() -> Version {
     let output = Command::new("/usr/bin/sw_vers").arg("-productVersion").output();
     output.ok().and_then(|o| Version::parse(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
 }
 
+/// This PC's Windows, as releases name the oldest they run on (`10.0.19041`).
+#[cfg(windows)]
+fn system_version() -> Version {
+    crate::system::build_number().map_or_else(Version::default, |build| Version(10, 0, build))
+}
+
+/// Linux releases name no oldest system: the packages say what they need.
+#[cfg(target_os = "linux")]
+fn system_version() -> Version {
+    Version::default()
+}
+
 /// The swap renames the app and puts the update beside it: that needs its folder writable. Known
 /// before downloading anything.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn writable(bundle: &Path) -> Result<(), String> {
     let folder = bundle.parent().ok_or("asides has no folder")?;
     let probe = folder.join(format!(".asides-update-{}", std::process::id()));
@@ -466,12 +598,14 @@ fn network(err: ureq::Error) -> String {
     }
 }
 
-fn fetch_text(url: &str) -> Result<String, String> {
+/// A small text file (the feed, a signature): at most `limit` bytes.
+fn fetch_text(url: &str, limit: u64) -> Result<String, String> {
     let response = agent(Duration::from_secs(20)).get(url).call().map_err(network)?;
-    response.into_body().with_config().limit(MAX_FEED).read_to_string().map_err(network)
+    response.into_body().with_config().limit(limit).read_to_string().map_err(network)
 }
 
 /// Downloads `url` to `path`: exactly `size` bytes, of SHA-256 `sha256`.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn fetch_file(url: &str, path: &Path, size: u64, sha256: &str, progress: impl Fn(f32)) -> Result<(), String> {
     let response = agent(Duration::from_secs(15 * 60)).get(url).call().map_err(network)?;
     let mut reader = response.into_body().into_with_config().limit(size + 1).reader();
@@ -503,6 +637,7 @@ fn fetch_file(url: &str, path: &Path, size: u64, sha256: &str, progress: impl Fn
 
 /// Unpacks the update and finds the app in it. The zip is read first: nothing may land outside
 /// the folder (no `..`, no links), nor unpack to more than it should.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn unpack(zip: &Path, into: &Path) -> Result<PathBuf, String> {
     check_zip(zip)?;
     let _ = fs::remove_dir_all(into);
@@ -550,9 +685,116 @@ fn check_zip(path: &Path) -> Result<(), String> {
 /// `reopen`: what to open then (`asides://window`, or `""` for asides alone); `None` leaves it
 /// closed (an update installed as asides quits). The script's output goes to `install.log` in the
 /// update's folder.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 pub fn install(_: &Staged, _: Option<&str>) -> Result<(), String> {
-    Err("install each new release over this one".into())
+    Err("your package manager installs asides".into())
+}
+
+/// Starts the waiter, a Windows PowerShell with no window: once asides has quit, it runs the
+/// release's installer for this user, silently and with no administrator, then opens asides again
+/// as asked (`reopen`, as on a Mac). What goes wrong goes in `install.log`, the installer's own log
+/// in `setup.log`, both in the update's folder.
+#[cfg(windows)]
+pub fn install(staged: &Staged, reopen: Option<&str>) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    // No console window, and not ended with asides' console group.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    let script = waiter_text(&Waiter {
+        pid: std::process::id(),
+        setup: &staged.app,
+        folder: &staged.bundle,
+        app: &staged.bundle.join("asides-app.exe"),
+        setup_log: &staged.dir.join("setup.log"),
+        log: &staged.dir.join("install.log"),
+        reopen,
+    });
+    let system = std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    Command::new(system.join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
+        .spawn()
+        .map(drop)
+        .map_err(|err| format!("Couldn't start installing ({err})"))
+}
+
+/// The release's installer for this PC's architecture, as the release names it.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_setup_name(version: Version) -> String {
+    let arch = match Platform::current() {
+        Platform::Windows(arch) => arch,
+        _ => "x64",
+    };
+    format!("asides-{version}-windows-{arch}-setup.exe")
+}
+
+/// The key the release signs its files with (minisign's public key file).
+#[cfg(windows)]
+const RELEASE_KEY: &str = include_str!("../../../packaging/release-signing.pub");
+
+#[cfg_attr(not(windows), allow(dead_code))]
+struct Waiter<'a> {
+    pid: u32,
+    setup: &'a Path,
+    /// The installer's folder, and asides in it.
+    folder: &'a Path,
+    app: &'a Path,
+    setup_log: &'a Path,
+    log: &'a Path,
+    reopen: Option<&'a str>,
+}
+
+/// The waiter's script, for Windows PowerShell 5.1 (every Windows 10 and 11 has it): it waits for
+/// asides to quit (60 s at most, then changes nothing), runs the installer and waits for it, and
+/// opens asides again, the new one or, if the installer failed (it then puts everything back), the
+/// one there was.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn waiter_text(w: &Waiter) -> String {
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
+    let path = |p: &Path| quote(&p.to_string_lossy());
+    // One string, as the installer reads its command line: the log's path may have spaces.
+    let arguments = format!("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /LOG=\"{}\"", w.setup_log.display());
+    let folder = w.folder;
+    let reopen = match w.reopen {
+        None => String::new(),
+        Some("") => format!("Start-Process -FilePath {} -WorkingDirectory {}\n", path(w.app), path(folder)),
+        Some(link) => format!(
+            "Start-Process -FilePath {} -WorkingDirectory {} -ArgumentList {}\n",
+            path(w.app),
+            path(folder),
+            quote(&format!("\"{link}\""))
+        ),
+    };
+    format!(
+        "# Written by asides' updater: its installer, silently, once asides has quit; then asides again.\n\
+         $ErrorActionPreference = 'Stop'\n\
+         $code = 1\n\
+         try {{\n\
+         \x20   Wait-Process -Id {pid} -Timeout {wait} -ErrorAction SilentlyContinue\n\
+         \x20   if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{\n\
+         \x20       throw 'asides (process {pid}) still runs after {wait} s: nothing was installed'\n\
+         \x20   }}\n\
+         \x20   $setup = Start-Process -FilePath {setup} -ArgumentList {arguments} -PassThru\n\
+         \x20   # Held from the start: a process that has exited has no exit code to give without it.\n\
+         \x20   $null = $setup.Handle\n\
+         \x20   $setup.WaitForExit()\n\
+         \x20   $code = $setup.ExitCode\n\
+         \x20   if ($code -ne 0) {{ throw ('the installer stopped with exit code ' + $code + ' (its log: ' + {setup_log} + ')') }}\n\
+         }} catch {{\n\
+         \x20   Add-Content -LiteralPath {log} -Encoding UTF8 -Value $_.Exception.Message\n\
+         }}\n\
+         {reopen}\
+         exit $code\n",
+        pid = w.pid,
+        wait = QUIT_WAIT_SECS,
+        setup = path(w.setup),
+        arguments = quote(&arguments),
+        setup_log = path(w.setup_log),
+        log = path(w.log),
+    )
 }
 
 /// Starts the script that swaps the update in once asides has quit; the app must quit right after.
@@ -747,6 +989,87 @@ mod tests {
         assert!(flow.step(Step::Check).is_empty() && flow.step(Step::Install).is_empty());
         assert_eq!(flow.status.summary(), "Updates are off (this copy isn't notarized)");
         assert!(!flow.status.shows());
+    }
+
+    const PAGE: &str = "https://github.com/mihaicristianfarcas/asides/releases/latest";
+
+    fn manual() -> Flow {
+        Flow::new(Status { manual: Some(PAGE.into()), ..Status::default() })
+    }
+
+    #[test]
+    fn a_copy_that_only_says_a_release_is_out_opens_its_page() {
+        let mut flow = manual();
+        assert!(flow.reply(found("0.9.0"), true).is_empty(), "nothing downloads, even automatically");
+        assert_eq!(
+            (flow.status.phase, flow.status.summary().as_str()),
+            (Phase::Available, "asides 0.9.0 is out: download it")
+        );
+        assert_eq!(flow.step(Step::Install), [Next::Open(PAGE.into())]);
+        assert_eq!(flow.automatic(true), [Next::Ask(Request::Automatic(true))]);
+        // Clicked before anything was found: it looks, then opens the page.
+        let mut flow = manual();
+        assert_eq!(flow.step(Step::Install), [Next::Ask(Request::Check)]);
+        assert_eq!(flow.reply(found("0.9.0"), false), [Next::Open(PAGE.into())]);
+        assert!(flow.reply(found("0.9.0"), false).is_empty(), "found again, it doesn't open twice");
+    }
+
+    #[test]
+    fn only_linux_sends_people_to_a_page() {
+        assert_eq!(MANUAL.is_some(), cfg!(target_os = "linux"));
+    }
+
+    fn waiter(reopen: Option<&str>) -> String {
+        waiter_text(&Waiter {
+            pid: 4242,
+            setup: Path::new(r"C:\Users\o'brien\AppData\Local\asides\updates\1.1.0\asides-1.1.0-windows-x64-setup.exe"),
+            folder: Path::new(r"C:\Users\o'brien\AppData\Local\Programs\asides"),
+            app: Path::new(r"C:\Users\o'brien\AppData\Local\Programs\asides\asides-app.exe"),
+            setup_log: Path::new(r"C:\Users\o'brien\AppData\Local\asides\updates\1.1.0\setup.log"),
+            log: Path::new(r"C:\Users\o'brien\AppData\Local\asides\updates\1.1.0\install.log"),
+            reopen,
+        })
+    }
+
+    #[test]
+    fn the_waiter_runs_the_installer_silently_then_opens_asides_as_asked() {
+        let script = waiter(Some("asides://window"));
+        assert!(script.contains("Wait-Process -Id 4242 -Timeout 60"), "{script}");
+        assert!(
+            script.contains(r#"-ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL /LOG="C:\Users\o''brien\AppData\Local\asides\updates\1.1.0\setup.log"' -PassThru"#),
+            "{script}"
+        );
+        assert!(
+            script.contains(r#"Start-Process -FilePath 'C:\Users\o''brien\AppData\Local\Programs\asides\asides-app.exe' -WorkingDirectory 'C:\Users\o''brien\AppData\Local\Programs\asides' -ArgumentList '"asides://window"'"#),
+            "{script}"
+        );
+        assert!(
+            waiter(Some("")).contains(
+                "asides-app.exe' -WorkingDirectory 'C:\\Users\\o''brien\\AppData\\Local\\Programs\\asides'\n"
+            )
+        );
+        assert!(!waiter(None).contains("asides-app.exe"), "installed as asides quits, it stays closed");
+    }
+
+    /// Windows PowerShell 5.1 reads the waiter without an error.
+    #[test]
+    #[cfg(windows)]
+    fn the_waiters_script_parses() {
+        let script = waiter(Some("asides://window"));
+        let quoted = script.replace('\'', "''");
+        let check = format!(
+            "$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput('{quoted}', [ref]$null, [ref]$errors); $errors.Count"
+        );
+        let out =
+            Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &check]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0", "{script}");
+    }
+
+    #[test]
+    fn windows_installers_are_named_by_version_and_architecture() {
+        let name = windows_setup_name(Version(1, 1, 0));
+        let arch = if cfg!(all(windows, target_arch = "aarch64")) { "arm64" } else { "x64" };
+        assert_eq!(name, format!("asides-1.1.0-windows-{arch}-setup.exe"));
     }
 
     #[test]

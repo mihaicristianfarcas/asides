@@ -45,7 +45,7 @@ A Rust workspace:
 | Linux package | `scripts/package-linux.sh`, on Linux (archive, `.deb` and `.rpm` in `dist/`) |
 | End-to-end on Linux | `scripts/e2e-linux.sh` (headless GNOME Shell; see CONTRIBUTING.md) |
 | Sounds | `uv run scripts/make-sounds.py` (writes `crates/asides-app/sounds/`) |
-| Notarized release | `make release` (only when the maintainer asks; see Rules) |
+| Release | merging a new version into `main` (only when the maintainer asks; see Rules, and CONTRIBUTING.md) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
 
 Run format, lint and unit tests after every change. Run `make e2e` when CLI or app behavior
@@ -70,8 +70,9 @@ changes.
   a history of their own (`ASIDES_HOME`; the app gets it with `launchctl setenv`, unset after).
 - **Never send to the user's own agent sessions** while testing: start sessions of your own in a
   scratch repo and send `--to` them.
-- **Run `make release` only when the maintainer asks.** It uploads the build to Apple's notary
-  service and needs their stored notarytool credentials.
+- **Release only when the maintainer asks.** Merging a new version into `main` publishes it,
+  signed, to every installed copy (`.github/workflows/release.yml`). Don't set a new version, or run
+  that workflow on `main` (it uses the signing secrets), unless asked.
 - **Don't run `make cert`** unless asked. It changes the login keychain and prompts for a password.
 - **Keep the stable signing.** `make bundle` picks the identity with `scripts/signing-identity.sh`
   and signs with the hardened runtime. Don't fall back to ad hoc (the microphone permission would

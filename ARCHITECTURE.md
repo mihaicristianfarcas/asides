@@ -166,9 +166,11 @@ crates/
     stt.rs            model downloads, whisper-rs, language choice
     macos.rs          microphone permission, sounds, frontmost app, the command link, opening at login
     update.rs         the updater (check, download, verify), the swap script, Flow (its states)
+    signature.rs      minisign signatures, checked against the release key (Windows' updates)
     sounds/           its sounds (embedded by macos.rs), made by scripts/make-sounds.py
     windows/          Windows' system.rs (macos.rs's), instance.rs (one copy, links), capture.rs
-                      (GDI), elements.rs (UI Automation), clipboard.rs, terminal.rs (consoles)
+                      (GDI), elements.rs (UI Automation), clipboard.rs, terminal.rs (consoles),
+                      authenticode.rs (who signed a file)
     linux/            Linux's system.rs, instance.rs, capture.rs (X11, portal, KWin), elements.rs
                       (AT-SPI), clipboard.rs, terminal.rs, hotkeys.rs, event_loop.rs, status_item.rs
   asides-keys/     Linux: the helper that types into a pty (any terminal, where the system allows)
@@ -272,13 +274,23 @@ answered) or Accessibility changes for an app: macOS says nothing more.
 ### Updating
 
 The updater (`asides-app/src/update.rs`) reads `appcast.json` from the latest GitHub release
-(written by `release.sh`), 20 s after launch and every 6 hours with `auto_update`, or when asked
-(`asides://update`). A newer release is downloaded, checked (size and SHA-256, `codesign`, the same
-team and bundle ID, Gatekeeper, the version) and unpacked. `Flow` turns replies and clicks into
-`state.update`, which the window's sidebar and the menu show. When asides quits (or restarts for
-it), `update::install` starts a script in its own process group: it copies the update beside the
-app, waits for asides to exit, swaps them by renaming, and reopens asides. The new copy shows the
-notes it was handed (`Status::handed_over`) until they're seen (`whats_new_seen`).
+(written by `scripts/make-feed.py` in the release workflow), 20 s after launch and every 6 hours
+with `auto_update`, or when asked (`asides://update`). A release holds a file for each system
+(`Release::download`): the Mac's at the top level, where older copies read it, Windows' and Linux's
+by architecture. `Flow` turns replies and clicks into `state.update`, which the window's sidebar and
+the menu show. The new copy shows the notes it was handed (`Status::handed_over`) until they're seen
+(`whats_new_seen`).
+
+- **macOS:** a newer release is downloaded, checked (size and SHA-256, `codesign`, the same team and
+  bundle ID, Gatekeeper, the version) and unpacked. When asides quits (or restarts for it),
+  `update::install` starts a script in its own process group: it copies the update beside the app,
+  waits for asides to exit, swaps them by renaming, and reopens asides.
+- **Windows:** the installer is downloaded and checked (size and SHA-256, the release key's minisign
+  signature naming that very file: `signature.rs`, Authenticode by the running copy's publisher:
+  `windows/authenticode.rs`). When asides quits, a PowerShell script waits for it to exit, runs the
+  installer silently and reopens asides. Only a signed copy the installer put in place updates.
+- **Linux:** no download. Installing belongs to the package manager, so a copy installed from a
+  release says a new one is out and opens the page (`Status::manual`).
 
 ## Invariants
 
@@ -320,9 +332,10 @@ Break these only on purpose, and update this list.
 16. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
     offscreen), following `style.rs`; on Windows and Linux, tiny-skia (`win/export.rs`).
 17. **Each aside goes to one place**: a session, a new session, or the history.
-18. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
-    only once it has quit. Copies that aren't notarized never update themselves, nor, for now, do
-    Windows copies.
+18. **Only an asides checked to be the same publisher's, of the version promised, replaces asides**
+    (macOS: notarized, the same team; Windows: the release key and the same Authenticode publisher),
+    and only once it has quit. Copies that aren't signed never update themselves, and on Linux none
+    does.
 19. **What goes wrong is in the log**: errors as problems (`log::problem`, `App::fail`), panics,
     standard error, how an overlay ended, slow and stuck main threads, the overlay's clock spinning.
     A frozen overlay stuck 10 s ends itself (`abort`: macOS keeps a report of where it was).
@@ -342,7 +355,7 @@ Break these only on purpose, and update this list.
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |
-| `~/Library/Caches/asides/updates/<version>/` | updater | `staged/asides.app`, `install.sh`, `install.log`; removed once that version runs |
+| `~/Library/Caches/asides/updates/<version>/` | updater | `staged/asides.app`, `install.sh`, `install.log` (Windows: in `%LOCALAPPDATA%\asides\updates`, the installer and its logs); removed once that version runs |
 | `$TMPDIR/asides-overlay-<pid>-<n>/` | app, overlay | a session's pixels, spec, result; removed on exit |
 | `~/Library/Logs/asides/asides.log` | app, overlay, window | a line each, `!` for a problem; `asides.log.1` past 4 MB |
 | `~/Library/Application Support/Wispr Flow/flow.sqlite` | Wispr Flow | read-only, with `wispr_flow` on |
@@ -387,9 +400,12 @@ Break these only on purpose, and update this list.
   22 pt canvas (tray-icon's limit).
 - **Carbon hot keys**: no Accessibility needed.
 - **`/usr/local/bin` for the command**: on every shell's `PATH`; Homebrew links into its own `bin`.
-- **Updates trust Apple, as Diri's do**: Developer ID and notarization, checked on the download,
-  instead of Sparkle and a signing key of our own to keep. The feed is a release asset, so
-  publishing a release publishes the update.
+- **Updates trust Apple on a Mac, as Diri's do**: Developer ID and notarization, checked on the
+  download, instead of Sparkle and a signing key of our own to keep. Windows has no notarization,
+  so its updates need two signatures, as Helio's do: the release key says it's a release, Authenticode
+  says who made it. The feed is a release asset, so publishing a release publishes the update.
+- **Releases are built in CI, as Helio's are**: what builds runs third-party build scripts and holds
+  no secrets; what signs builds nothing, and only `main` can read the secrets.
 - **Opening at login is macOS's**, not a setting: `SMAppService`'s main app, which System Settings
   → General → Login Items changes too. The app asks macOS and publishes what it says; a copy in
   `config.toml` would drift from it. Turned off there, only there can it be turned on again.

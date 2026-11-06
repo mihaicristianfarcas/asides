@@ -1,5 +1,5 @@
-// The website's download, download.asides.mihaicristian.dev: a Cloudflare Worker that only serves
-// static files, no code. scripts/publish-dmg.sh copies the disk image and _redirects into
+// The website's downloads, download.asides.mihaicristian.dev: a Cloudflare Worker that only serves
+// static files, no code. scripts/publish-downloads.sh copies a release's files and _redirects into
 // dist/download, then deploys.
 {
   "name": "asides-download",

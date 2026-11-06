@@ -1,0 +1,523 @@
+# A release, from the commit that sets a new version: the workspace's version (Cargo.toml's
+# [workspace.package]) with no tag yet, and its notes in packaging/notes/VERSION.md. asides is built
+# for macOS (Apple silicon), Windows (x64 and Arm64) and Linux (x86_64 and Arm64), each on its own
+# runner, signed, and published as the GitHub release vVERSION with the update feed
+# (appcast.json), as the website's downloads (scripts/publish-downloads.sh), and as a pull request
+# that brings the Homebrew cask (Casks/asides.rb) and Arch's PKGBUILD to it. So releasing a version is merging the
+# change that sets it, and no other push publishes anything. As helio releases.
+#
+# workflow_dispatch: to run it by hand. On main with a new version it releases, as after a run that
+# failed; on main without one it builds and signs everything and publishes nothing, which checks the
+# signing secrets. On another branch it only builds, and the files are the run's artifacts.
+#
+# pull_request: a change to how a release is made builds everything too, with no secrets, so the next
+# release isn't its first run.
+#
+# The secrets are the protected environment `release`'s, read on main only:
+# - macOS, signed on a runner where no build has run, with a Developer ID and notarized:
+#   MACOS_CERTIFICATE_P12 (the Developer ID Application certificate and its key, base64),
+#   MACOS_CERTIFICATE_PASSWORD, and an App Store Connect API key: APPLE_API_KEY (the .p8 file),
+#   APPLE_API_KEY_ID, APPLE_API_ISSUER. On main the release fails without them.
+# - Windows: the programs, the installer and its uninstaller, signed with Certum's open-source
+#   certificate in its cloud (SimplySign), through ssign: CERTUM_EMAIL and CERTUM_OTP (the account's
+#   TOTP seed). On main the release fails without them: an update must be signed by the publisher
+#   of the copy it replaces (crates/asides-app/src/update.rs).
+# - Every file, signed with the release key (minisign, Ed25519), whose public half asides is built
+#   with (packaging/release-signing.pub): MINISIGN_SECRET_KEY (the key file, as `minisign -G` wrote
+#   it) and MINISIGN_PASSWORD. Windows' update installs nothing without that signature.
+# The website's downloads need the repository's secret CLOUDFLARE_API_TOKEN (as the website does).
+#
+# Actions are pinned to commits, with the version beside each: a tag can be moved, and these jobs
+# hold the signing secrets.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    # A version is set here. A push that changes this file but not the version stops at the first job.
+    paths:
+      - "Cargo.toml"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "packaging/linux/**"
+      - "packaging/windows/**"
+      - "scripts/package-linux.sh"
+      - "scripts/package-windows.ps1"
+  workflow_dispatch:
+
+# One release at a time, in the order of the pushes; a pull request's run never holds one up.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Read only for every job; the one job that publishes asks for more. Build jobs run third-party
+# build scripts (cargo's), so none of them holds a token that can write, nor leaves it in .git.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Whether this commit makes a release. Everything below hangs on the answer. A failure to ask
+  # fails the run: only "no such tag" is new.
+  version:
+    name: Is the version new
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      new: ${{ steps.version.outputs.new }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Is the version new
+        id: version
+        run: |
+          version=$(sed -n '/^\[workspace.package\]/,/^\[/ s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null && code=0 || code=$?
+          case $code in
+            0) echo "v$version is released already: nothing to publish" ;;
+            2)
+              if [ ! -s "packaging/notes/$version.md" ]; then
+                echo "::error::no packaging/notes/$version.md: write the release's notes (what changes for people using asides; What's New shows them)"
+                exit 1
+              fi
+              echo "new=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::could not ask whether the tag v$version exists (git exit code $code)"; exit 1 ;;
+          esac
+
+  # The app, built and signed ad hoc, with no secrets: the next job signs it on a runner of its own.
+  macos:
+    name: macOS
+    needs: version
+    if: needs.version.outputs.new == 'true' || github.event_name != 'push'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release
+      - name: Build
+        run: |
+          make bundle SIGN_ID=-
+          # ditto keeps what an artifact would lose: modes and the bundle's layout.
+          ditto -c -k --keepParent dist/asides.app dist/asides-unsigned.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-unsigned
+          path: dist/asides-unsigned.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # Signs the app with the Developer ID, the CLI and the overlay inside it first, has Apple notarize
+  # it, staples the ticket, and makes the zip and the disk image (scripts/notarize-macos.sh). No
+  # cargo and no build script runs here.
+  macos-package:
+    name: macOS (sign and package)
+    needs: [version, macos]
+    runs-on: macos-15
+    # The Developer ID secrets, on main only; a branch's run has none to read.
+    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: macos-unsigned
+          path: dist
+      - name: Unpack
+        run: ditto -x -k dist/asides-unsigned.zip dist && rm dist/asides-unsigned.zip
+      # The certificate in a keychain of this run's own, and the API key notarytool asks Apple with.
+      # Off main the secrets are passed empty, so another branch's scripts never see them.
+      - name: Developer ID
+        id: identity
+        env:
+          CERTIFICATE: ${{ github.ref == 'refs/heads/main' && secrets.MACOS_CERTIFICATE_P12 || '' }}
+          CERTIFICATE_PASSWORD: ${{ github.ref == 'refs/heads/main' && secrets.MACOS_CERTIFICATE_PASSWORD || '' }}
+          API_KEY: ${{ github.ref == 'refs/heads/main' && secrets.APPLE_API_KEY || '' }}
+          API_KEY_ID: ${{ github.ref == 'refs/heads/main' && secrets.APPLE_API_KEY_ID || '' }}
+          API_ISSUER: ${{ github.ref == 'refs/heads/main' && secrets.APPLE_API_ISSUER || '' }}
+        run: |
+          if [[ -z $CERTIFICATE || -z $API_KEY ]]; then
+            if [[ $GITHUB_REF == refs/heads/main ]]; then
+              echo "::error::no Developer ID: set the release environment's MACOS_CERTIFICATE_* and APPLE_API_* secrets"
+              exit 1
+            fi
+            echo "::warning::not main: the app stays signed ad hoc, and isn't notarized"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          base64 --decode <<< "$CERTIFICATE" > "$RUNNER_TEMP/certificate.p12"
+          if ! security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign; then
+            # The file's hash says which secret is wrong: compare it with shasum -a 256 of the .p12.
+            sum=$(shasum -a 256 < "$RUNNER_TEMP/certificate.p12" | cut -d' ' -f1)
+            echo "::error::the certificate did not import. MACOS_CERTIFICATE_P12 decodes to a file with SHA-256 $sum: if that is your .p12's, MACOS_CERTIFICATE_PASSWORD is not its password; if not, set MACOS_CERTIFICATE_P12 again"
+            exit 1
+          fi
+          rm "$RUNNER_TEMP/certificate.p12"
+          # codesign may use the key without asking.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [[ -z $identity ]]; then
+            echo "::error::MACOS_CERTIFICATE_P12 holds no Developer ID Application identity"
+            exit 1
+          fi
+          printf '%s\n' "$API_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          {
+            echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "APPLE_API_KEY_ID=$API_KEY_ID"
+            echo "APPLE_API_ISSUER=$API_ISSUER"
+          } >> "$GITHUB_ENV"
+      - name: Sign, notarize and package
+        env:
+          IDENTITY: ${{ steps.identity.outputs.identity }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          if [[ -n $IDENTITY ]]; then
+            make sign SIGN_ID="$IDENTITY" TIMESTAMP=--timestamp
+            scripts/notarize-macos.sh
+          else
+            ditto -c -k --keepParent dist/asides.app "dist/asides-$VERSION.zip"
+          fi
+      - name: Forget the Developer ID
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-macos
+          path: |
+            dist/asides-*.zip
+            dist/asides-*.dmg
+          if-no-files-found: error
+
+  # The three programs, built on each architecture's runner and laid out as they ship
+  # (scripts/package-windows.ps1 -StageOnly), unsigned: the next job signs and packages them.
+  windows:
+    name: Windows (${{ matrix.arch }})
+    needs: version
+    if: needs.version.outputs.new == 'true' || github.event_name != 'push'
+    strategy:
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      # rustup where the runner has it; on one without, rustup-init for its architecture.
+      - name: Rust
+        shell: pwsh
+        run: |
+          if (Get-Command rustup -ErrorAction SilentlyContinue) {
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          } else {
+            $init = Join-Path $env:RUNNER_TEMP 'rustup-init.exe'
+            $platform = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+            Invoke-WebRequest "https://static.rust-lang.org/rustup/dist/$platform-pc-windows-msvc/rustup-init.exe" -OutFile $init
+            & $init -y --profile minimal --default-toolchain stable
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Join-Path $env:USERPROFILE '.cargo\bin' | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          }
+      # whisper.cpp's bindings need libclang, and on Arm64 ggml needs clang-cl and Ninja (CONTRIBUTING.md).
+      - name: LLVM and Ninja
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) { choco install llvm -y --no-progress }
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+          & 'C:\Program Files\LLVM\bin\clang-cl.exe' --version
+          cmake --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-${{ matrix.arch }}
+      - name: Build
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -StageOnly -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-unsigned-${{ matrix.arch }}
+          path: target/stage/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Signs every program, then makes the zips and the installers from the signed files and signs the
+  # installers and their uninstallers, so the website and the GitHub release get the same signed
+  # files. No cargo build runs here (ssign is installed, alone, from crates.io).
+  windows-package:
+    name: Windows (sign and package)
+    needs: [version, windows]
+    runs-on: windows-latest
+    # The signing secrets, on main only; a branch's run has none to read.
+    environment: ${{ github.ref == 'refs/heads/main' && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Signing or not
+        id: signing
+        shell: pwsh
+        env:
+          CERTUM_EMAIL: ${{ github.ref == 'refs/heads/main' && secrets.CERTUM_EMAIL || '' }}
+          CERTUM_OTP: ${{ github.ref == 'refs/heads/main' && secrets.CERTUM_OTP || '' }}
+          MAIN: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          if ($env:MAIN -ne 'true') {
+            'not main: the Windows programs are not signed'
+          } elseif (-not ($env:CERTUM_EMAIL -and $env:CERTUM_OTP)) {
+            "::error::no Windows signing: set the release environment's CERTUM_EMAIL and CERTUM_OTP"
+            exit 1
+          } else {
+            "sign=true" >> $env:GITHUB_OUTPUT
+          }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: windows-unsigned-*
+          path: target/stage
+          merge-multiple: true
+      # ssign at one version, from crates.io with its own lock file: the only code besides asides'
+      # scripts that sees the signing secrets. Installed into a folder of its own, handed on by its
+      # path (SSIGN): cargo's bin folder isn't on this runner's PATH.
+      - name: ssign
+        id: ssign
+        if: steps.signing.outputs.sign
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal; rustup default stable
+          $root = Join-Path $env:RUNNER_TEMP 'ssign'
+          cargo install ssign --version 0.1.8 --locked --root $root
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Join-Path $root 'bin\ssign.exe'
+          if (-not (Test-Path $exe)) { "::error::cargo install left no $exe"; exit 1 }
+          & $exe --version
+          "path=$exe" >> $env:GITHUB_OUTPUT
+      - name: Sign and package
+        shell: pwsh
+        env:
+          SIGN: ${{ steps.signing.outputs.sign }}
+          SSIGN: ${{ steps.ssign.outputs.path }}
+          CERTUM_EMAIL: ${{ steps.signing.outputs.sign && secrets.CERTUM_EMAIL || '' }}
+          CERTUM_OTP: ${{ steps.signing.outputs.sign && secrets.CERTUM_OTP || '' }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          foreach ($arch in 'x64', 'arm64') {
+            $staged = "target/stage/asides-$env:VERSION-windows-$arch"
+            if ($env:SIGN) {
+              ./scripts/package-windows.ps1 -From $staged -Arch $arch -Sign
+            } else {
+              ./scripts/package-windows.ps1 -From $staged -Arch $arch
+            }
+          }
+      # Signed, each program says by whom: the publisher Windows' update requires of the next.
+      - name: The publisher
+        if: steps.signing.outputs.sign
+        shell: pwsh
+        run: |
+          Get-ChildItem target/stage -Recurse -Filter *.exe | ForEach-Object {
+            $s = Get-AuthenticodeSignature $_.FullName
+            "$($_.Name): $($s.Status), $($s.SignerCertificate.Subject)"
+            if ($s.Status -ne 'Valid') { "::error::$($_.FullName) isn't validly signed"; exit 1 }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-windows
+          path: |
+            dist/*-windows-*.zip
+            dist/*-windows-*-setup.exe
+          if-no-files-found: error
+
+  # The archive, the .deb and the .rpm, on the oldest Ubuntu the packages run on (its glibc).
+  linux:
+    name: Linux (${{ matrix.arch }})
+    needs: version
+    if: needs.version.outputs.new == 'true' || github.event_name != 'push'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      # As in ci.yml.
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libasound2-dev libclang-dev libfontconfig-dev \
+            libfreetype-dev libssl-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev pkg-config rpm
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release
+      - name: Build and package
+        run: scripts/package-linux.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+
+  # Every file signed with the release key. A job of its own: no build runs here, and the job that
+  # writes the release never holds the key. Each signature's trusted comment names its file
+  # (version, system, architecture), which Windows' update requires.
+  sign:
+    name: Signatures
+    needs: [macos-package, windows-package, linux]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+      - name: Sign every file
+        env:
+          KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$PASSWORD" ]; then
+            echo "::error::no release key: set the release environment's secrets MINISIGN_SECRET_KEY and MINISIGN_PASSWORD (CONTRIBUTING.md, Releasing)"
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/release.key"
+          mkdir signatures
+          for path in dist/*; do
+            name=$(basename "$path")
+            printf '%s\n' "$PASSWORD" |
+              minisign -S -s "$RUNNER_TEMP/release.key" -m "$path" -x "signatures/$name.minisig" -t "file:$name"
+            # Against the key asides is built with: a secret that isn't its pair fails here, not in
+            # every update.
+            minisign -V -p packaging/release-signing.pub -m "$path" -x "signatures/$name.minisig"
+          done
+          rm -f "$RUNNER_TEMP/release.key"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-signatures
+          path: signatures/*.minisig
+          if-no-files-found: error
+
+  # The website's downloads, before the release: until the tag exists, a run that failed can be run
+  # again from the start.
+  downloads:
+    name: Website downloads
+    needs: [version, sign]
+    if: github.ref == 'refs/heads/main' && needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: dist-*
+          path: release
+          merge-multiple: true
+      - name: Publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WRANGLER: npx --yes wrangler@4.149.0
+        run: scripts/publish-downloads.sh release
+
+  release:
+    name: GitHub release
+    needs: [version, downloads]
+    if: github.ref == 'refs/heads/main' && needs.version.outputs.new == 'true'
+    runs-on: ubuntu-latest
+    # The only job that writes: the release, the cask's branch and pull request, and the approval of
+    # that pull request's CI run. It runs no build, so the checkout keeps its token for git push.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: dist-*
+          path: release
+          merge-multiple: true
+      # The feed: this release's files for each system, then the newest few before it.
+      - name: The update feed
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: python3 -I scripts/make-feed.py "$VERSION" "packaging/notes/$VERSION.md" release > release/appcast.json
+      # Run again after the cask step failed, the release is there already.
+      - name: The release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release view "v$VERSION" >/dev/null 2>&1 ||
+            gh release create "v$VERSION" release/* --target "$GITHUB_SHA" \
+              --title "asides $VERSION" --notes-file "packaging/notes/$VERSION.md"
+      - name: The cask and the PKGBUILD, at the new version, as a pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          branch="cask-$VERSION"
+          sha=$(sha256sum "release/asides-$VERSION.zip" | cut -d' ' -f1)
+          sed -i -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$sha\"/" Casks/asides.rb
+          sed -i -e "s/^pkgver=.*/pkgver=$VERSION/" packaging/linux/PKGBUILD
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add Casks/asides.rb packaging/linux/PKGBUILD
+          git commit -m "Point the cask and the PKGBUILD at $VERSION" -m "Both download from the release, which exists now. From the release workflow."
+          git push origin "$branch"
+          head=$(git rev-parse HEAD)
+          gh pr create --base main --head "$branch" --title "Point the cask and the PKGBUILD at $VERSION" \
+            --body "The Homebrew cask and Arch's PKGBUILD at release v$VERSION. Merging this is what makes \`brew upgrade\` see the release."
+          # GitHub holds the CI run of a pull request a workflow opened until someone approves it, and
+          # main merges only on that run's checks. Approve it here; if this token may not, the pull
+          # request says so and it's approved by hand (Actions). Asked again and again because nothing
+          # tells a job that GitHub has created the run: no event reaches it, and the wait is short.
+          for _ in $(seq 1 20); do
+            run=$(gh run list --branch "$branch" --event pull_request --json databaseId,conclusion,headSha \
+              --jq ".[] | select(.conclusion == \"action_required\" and .headSha == \"$head\") | .databaseId" | head -n 1)
+            [ -n "$run" ] && break
+            sleep 6
+          done
+          if [ -n "$run" ] && gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/approve"; then
+            echo "approved CI run $run"
+          else
+            gh pr comment "$branch" --body "CI on this pull request waits for approval: approve its run in the Actions tab, then merge once it passes."
+          fi

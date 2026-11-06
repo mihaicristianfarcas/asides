@@ -178,6 +178,14 @@ pub fn open_login_items() {
     unsafe { SMAppService::openSystemSettingsLoginItems() };
 }
 
+/// Opens a web page in the default browser. A thread waits for `open`, which hands it over and ends.
+pub fn open(link: &str) {
+    let link = link.to_string();
+    std::thread::spawn(move || {
+        let _ = Command::new("/usr/bin/open").arg(link).status();
+    });
+}
+
 /// Calls `changed` when what macOS lets asides do may have changed: an app came to the front (back
 /// from System Settings, or a permission prompt answered), or Accessibility was turned on or off
 /// for an app. macOS tells nothing more: Screen Recording and Automation change in System

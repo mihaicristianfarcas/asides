@@ -8,7 +8,7 @@ set -euo pipefail
 APP="$1"
 OUT="$2"
 if ! xcrun stapler validate -q "$APP"; then
-    echo "$APP has no notarization ticket; make the disk image from a \`make release\` build." >&2
+    echo "$APP has no notarization ticket; scripts/notarize-macos.sh gives it one, and makes the disk image." >&2
     exit 1
 fi
 

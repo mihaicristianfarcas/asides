@@ -269,29 +269,37 @@ under about 72 characters, and a body that explains why. Fill in the pull reques
 
 ## Releasing (maintainers)
 
-Needs a Developer ID Application certificate.
+A release is made by [its workflow](.github/workflows/release.yml), from the commit that sets a new
+version, as Helio's is:
 
-1. Once: create an app-specific password at [account.apple.com](https://account.apple.com), then
-   `xcrun notarytool store-credentials asides-notary --apple-id <Apple ID> --team-id <Team ID>`
-   (another name: `NOTARY_PROFILE`).
-2. Set the version in `Cargo.toml` (`[workspace.package]`), and write the release notes in
-   `dist/notes-<version>.md` (Markdown, what changes for people: the app's What's New shows them).
-3. `make release`: builds, signs, notarizes and staples; writes `dist/asides-<version>.zip`,
-   `.dmg` and `appcast.json` (the update feed), and the version and checksum into `Casks/asides.rb`.
-4. `make publish-dmg`: uploads the disk image to the download link (Wrangler, logged in to
-   Cloudflare).
-5. `git tag v<version> && git push --tags`, then `gh release create v<version>
-   dist/asides-<version>.zip dist/asides-<version>.dmg dist/appcast.json --notes-file
-   dist/notes-<version>.md` (`make release` prints it). Installed copies update from the latest
-   release's `appcast.json`, so it goes up with the zip it names.
-6. Windows, on Windows on Arm (both build there; the x64 one runs there too, emulated):
-   `scripts\package-windows.ps1` and `scripts\package-windows.ps1 -Arch x64`, then `gh release
-   upload v<version> dist\asides-<version>-windows-arm64-setup.exe
-   dist\asides-<version>-windows-x64-setup.exe` (the zips too, if wanted).
-7. Linux, on Ubuntu 22.04, on each architecture: `scripts/package-linux.sh`, then `gh release upload
-   v<version> dist/asides-<version>-linux-*.tar.gz dist/asides_<version>_*.deb dist/asides-<version>-1.*.rpm`.
-   Set `pkgver` in `packaging/linux/PKGBUILD`.
-8. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
+1. Set the version in `Cargo.toml` (`[workspace.package]`; `cargo check` updates `Cargo.lock`), and
+   write `packaging/notes/<version>.md` (Markdown, what changes for people: the app's What's New
+   shows them).
+2. Merge that into `main`. Each system builds on its own runner, with no secrets, and is signed on
+   another that builds nothing. Then the website's downloads go up (`scripts/publish-downloads.sh`),
+   then the release `v<version>` with the update feed (`scripts/make-feed.py`), from which installed
+   copies update.
+3. Merge the pull request the workflow opens: it brings the Homebrew cask and Arch's PKGBUILD to the
+   new version.
+
+To check everything but publishing, run it by hand on `main` (`gh workflow run release.yml`): with no
+new version it builds and signs, and leaves the files as the run's artifacts. A pull request that
+changes how a release is made builds everything too, with no secrets.
+
+| Signs | With | Secrets |
+|---|---|---|
+| macOS | Developer ID, notarized and stapled (`scripts/notarize-macos.sh`) | `MACOS_CERTIFICATE_P12` (base64), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` |
+| Windows: the programs, the installer and its uninstaller | Certum's open-source certificate, in its cloud, through [ssign](https://crates.io/crates/ssign) | `CERTUM_EMAIL`, `CERTUM_OTP` (the account's TOTP seed) |
+| Every file, a `.minisig` beside it | The release key (minisign), whose public half is `packaging/release-signing.pub` | `MINISIGN_SECRET_KEY` (the key file), `MINISIGN_PASSWORD` |
+
+These are the environment `release`'s, which only `main` can read. The website's downloads use the
+repository's `CLOUDFLARE_API_TOKEN` (a Worker serves files of 25 MiB at most: the job fails above
+that).
+
+Windows copies install an update only if the release key signed it and its publisher is theirs. So
+keep the key and its password outside GitHub too, and know that a new key, or a certificate with
+another subject, stops copies already out there from updating themselves: they'd need the new version
+installed by hand.
 
 ## The website
 

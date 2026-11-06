@@ -14,6 +14,10 @@
 ; the PATH, asides:// links and its start at login. It keeps the settings, the voice models and
 ; the log (%LOCALAPPDATA%\asides) and the history (%USERPROFILE%\.asides), as the Mac app's
 ; uninstall does.
+;
+; /DSign signs Setup and the uninstaller with the sign tool named ssign (package-windows.ps1 -Sign
+; defines it: Certum's cloud certificate, through ssign). The programs are signed before they get
+; here. An update is this installer run again, silently, by the app (`update.rs`).
 
 #ifndef Version
   #error Pass /DVersion=X.Y.Z, the workspace's version
@@ -75,6 +79,10 @@ OutputDir={#Output}
 OutputBaseFilename={#Name}-setup
 Compression={#Compression}
 SolidCompression=yes
+#ifdef Sign
+SignTool=ssign
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "en"; MessagesFile: "compiler:Default.isl"

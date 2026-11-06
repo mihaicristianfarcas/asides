@@ -457,6 +457,25 @@ pub fn activate_app(pid: i32) {
     }
 }
 
+/// asides' entry in Settings > Apps, as the installer names it: its `AppId` with Inno Setup's
+/// `_is1` (`packaging/windows/asides.iss`).
+const INSTALLED_ENTRY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\io.github.mihaicristianfarcas.asides_is1";
+
+/// The installer put asides in `dir` (its entry in Settings > Apps says so): a copy there is the
+/// one an update replaces.
+pub fn installed_in(dir: &Path) -> bool {
+    let normal = |p: &str| p.trim_end_matches('\\').to_lowercase();
+    registry_string(HKEY_CURRENT_USER, INSTALLED_ENTRY, "InstallLocation")
+        .is_some_and(|found| normal(&found) == normal(&dir.to_string_lossy()))
+}
+
+/// Windows' build (`26100`), what releases name the oldest they run on by (`10.0.19041`).
+pub fn build_number() -> Option<u32> {
+    let key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+    registry_string(HKEY_LOCAL_MACHINE, key, "CurrentBuild")?.trim().parse().ok()
+}
+
 /// Opens a link (a Settings page) with what Windows opens it with.
 pub fn open(link: &str) {
     // SAFETY: plain strings, nul-terminated by `HSTRING`.
