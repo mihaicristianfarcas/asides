@@ -19,7 +19,9 @@ else
 fi
 
 codesign --verify --deep --strict "$APP"
-if ! codesign -dv "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:'; then
+# Only -dvv lists the certificates. Read it whole first: grep -q stops at its match, and codesign,
+# still writing, fails on the closed pipe (pipefail).
+if ! grep -q '^Authority=Developer ID Application:' <<<"$(codesign -dvv "$APP" 2>&1)"; then
     echo "$APP isn't signed with a Developer ID Application certificate (make sign SIGN_ID=…)" >&2
     exit 1
 fi
