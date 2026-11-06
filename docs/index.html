@@ -134,7 +134,9 @@ kbd {
    or with reduced motion, it's all simply there, as it ends. */
 .hero { position: relative; display: flex; flex-direction: column; min-height: calc(100vh - 56px); min-height: calc(100svh - 56px); padding: 24px 0 28px; }
 .hero-main { margin-block: auto; }
-.hero h1 { isolation: isolate; font-size: var(--text-display); font-weight: 750; line-height: 1.04; letter-spacing: -0.04em; text-wrap: balance; }
+/* Its box ends at the last line's baseline, where the measurement under it starts, as asides measures
+   from the letters. */
+.hero h1 { isolation: isolate; font-size: var(--text-display); font-weight: 750; line-height: 1.04; letter-spacing: -0.04em; text-wrap: balance; text-box: trim-end cap alphabetic; }
 .lede { max-width: 36em; line-height: 1.5; color: #3d3d42; text-wrap: pretty; }
 .lede .combo { vertical-align: 2px; }
 .buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 32px; }
@@ -168,7 +170,8 @@ kbd {
 /* Its number where the drag began, as in asides. */
 .area .spot { top: -15px; left: -15px; }
 
-/* A measurement: pink lines with a dark label, as in the overlay. The gap it measures really is 32. */
+/* A measurement: pink lines with a dark label, as in the overlay. The gap it measures really is 32, from
+   the bottom of the heading's letters to the top of the line under it. */
 .gap { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding-left: 4px; }
 .guide { position: absolute; left: calc(50% - 50vw); width: 100vw; border-top: 1px dashed rgba(255, 45, 85, 0.45); }
 .guide.first { top: 0; }
@@ -211,7 +214,8 @@ kbd {
 .plays .pointer { display: block; will-change: transform; }
 .plays .ap-tool { width: 0; margin-left: -4px; }
 .plays .asides-pill, .plays .ap-tool, .plays .area-box, .plays .spot, .plays .guide, .plays .ruler, .plays .tag, .plays .note, .plays .say, .plays .say span, .plays .say i, .plays .pointer { opacity: 0; }
-.plays .drawn path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+/* A gap longer than the path: with one as long, Chromium drew the next dash's round cap at its end. */
+.plays .drawn path { stroke-dasharray: 1 2; stroke-dashoffset: 1; }
 
 /* How it goes: cards with what each step looks like. */
 .flow { display: grid; gap: 16px; margin-top: 24px; }
@@ -458,7 +462,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .top nav a:not(.pill) { display: none; }
   .page { padding: 0 16px; }
   .hero { padding-top: 12px; }
-  .ap-icon:first-child, .dots { display: none; }
+  .ap-icon:first-child { display: none; }
   /* The tool by its icon alone, as the pill's buttons are. */
   .ap-name { display: none; }
   .ap-face { padding: 0 8px; }
@@ -479,6 +483,14 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .code pre { padding-right: 16px; }
   .copy { display: none; }
   .last { padding: 44px 20px; }
+}
+
+/* The narrowest phones: the pin's card a little tighter, to stay on one line. */
+@media (max-width: 359px) {
+  .note { gap: 8px; padding: 8px; }
+  .note-field { padding-inline: 10px; }
+  .dots { gap: 6px; }
+  .dots i { width: 12px; height: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1019,9 +1031,13 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
 <script>
 (() => {
   // The opening plays out on the page itself: what's said below, word by word, and as each word is
-  // said what asides shows for it. Every step is an animation on one clock (`at`), each lasting to the
-  // end of the scene, so together they pause, go on and start over. Its first frame hides what `.plays`
-  // hides; its pauses are only while it's off screen. Without `.plays` the page shows the last frame.
+  // said what asides shows for it. Every step is made with the scene (`at`), waiting its moment, so
+  // together they pause, go on and start over. Its first frame hides what `.plays` hides; its pauses are
+  // only while it's off screen. Without `.plays` the page shows the last frame.
+  //
+  // Chromium leaves to the main thread, where the pill's fade stalled, an animation with an end delay
+  // or one changing what another on its element changes: none has an end delay, and each element's
+  // steps are one animation (`settle`).
   if (!document.documentElement.classList.contains('plays')) return;
   const hero = document.querySelector('.hero');
   const $ = (selector) => hero.querySelector(selector);
@@ -1072,6 +1088,38 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
 
   let scene = [];
   let master;
+
+  // An element's steps as one animation, each property held from one step to its next, and before its
+  // first and after its last. One animating what the compositor can't (the pointer's place, the tool's
+  // width) is drawn on the main thread anyway, and keeps its steps apart.
+  const COMPOSITED = new Set(['opacity', 'transform']);
+  const NOT_PROPERTIES = new Set(['offset', 'computedOffset', 'easing', 'composite']);
+  function settle(el, steps) {
+    const parts = steps.map(([keyframes, timing]) => [new KeyframeEffect(null, keyframes).getKeyframes(), timing]);
+    const properties = new Set(parts.flatMap(([frames]) => frames.flatMap((f) => Object.keys(f))).filter((p) => !NOT_PROPERTIES.has(p)));
+    if (steps.length === 1 || [...properties].some((p) => !COMPOSITED.has(p))) return steps.map(([keyframes, timing]) => el.animate(keyframes, timing));
+    const start = Math.min(...steps.map(([, t]) => t.delay));
+    const span = Math.max(...steps.map(([, t]) => t.delay + t.duration)) - start;
+    const frames = [];
+    for (const [step, { delay, duration, easing }] of parts) {
+      // A step eased as a whole is eased over its one interval.
+      if (easing !== 'linear') {
+        if (step.length !== 2 || step[0].easing !== 'linear') throw new Error('A step eased as a whole has two keyframes.');
+        step[0].easing = easing;
+      }
+      step.at(-1).easing = 'steps(1, end)';
+      for (const { offset, computedOffset, composite, ...frame } of step) {
+        frames.push({ ...frame, offset: Math.min(1, Math.max(0, (delay - start + computedOffset * duration) / span)) });
+      }
+    }
+    frames.sort((a, b) => a.offset - b.offset);
+    for (const p of properties) {
+      const held = frames.filter((f) => p in f);
+      frames.unshift({ offset: 0, [p]: held[0][p] });
+      frames.push({ offset: 1, [p]: held.at(-1)[p] });
+    }
+    return [el.animate(frames, { delay: start, duration: span, fill: 'both' })];
+  }
   let talked = 0;
   let onScreen = false;
 
@@ -1079,6 +1127,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     for (const a of scene) a.cancel();
     master?.cancel();
     scene = [];
+    const steps = new Map();
 
     // Where everything is, before any of it is animated: each animation holds its first frame from the
     // moment it's made, which for the card is 0.98 of its size and for the ruler no height at all.
@@ -1116,17 +1165,14 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     const END = SEND + 180 + 260 + REST;
 
     const at = (el, ms, keyframes, options) => {
-      const timing = { delay: ms, duration: 200, fill: 'both', easing: EASE, ...options };
-      timing.endDelay = END - timing.delay - timing.duration;
-      const a = el.animate(keyframes, timing);
-      a.pause();
-      scene.push(a);
-      return a;
+      if (!steps.has(el)) steps.set(el, []);
+      steps.get(el).push([keyframes, { delay: ms, duration: 200, fill: 'both', easing: EASE, ...options }]);
     };
     const show = (el, ms, options) => at(el, ms, { opacity: [0, 1] }, options);
     // Going: only from its moment on, or it would show what's hidden before it (fill: forwards).
     const hide = (el, ms, options) => at(el, ms, { opacity: [1, 0] }, { fill: 'forwards', ...options });
-    const pop = (el, ms) => at(el, ms, { opacity: [0, 1, 1], transform: ['scale(0.4)', 'scale(1.08)', 'none'] }, { duration: 280 });
+    // EASE over the whole, in its two parts: past its size at 13%, then settling.
+    const pop = (el, ms) => at(el, ms, [{ opacity: 0, transform: 'scale(0.4)', easing: 'cubic-bezier(0.36, 0.41, 0.68, 0.74)' }, { offset: 0.131, opacity: 1, transform: 'scale(1.08)', easing: 'cubic-bezier(0.19, 1, 0.38, 1)' }, { opacity: 1, transform: 'none' }], { duration: 280, easing: 'linear' });
     const press = (el, ms, keyframes) => at(el, ms, keyframes, { duration: 460, fill: 'none', easing: 'ease-out' });
 
     const down = { transform: ['none', 'translateY(1px)', 'translateY(1px)', 'none'], offset: [0, 0.2, 0.75, 1], backgroundColor: ['#fff', '#c2d6f6', '#c2d6f6', '#fff'], boxShadow: ['0 1px 0 #cfcfd6', 'none', 'none', '0 1px 0 #cfcfd6'] };
@@ -1138,7 +1184,9 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     show($('.ap-lit'), OPEN, { duration: 200 });
 
     // The words, and the microphone filling with them.
-    show(say, FIRST_WORD - 80, { duration: 180 });
+    // The caption's box, gently, just before its first word: a gentler curve than EASE, which shows
+    // nearly all of a fade in its first moments.
+    at(say, FIRST_WORD - 320, { opacity: [0, 1], transform: ['translateY(6px)', 'none'] }, { duration: 420, easing: 'cubic-bezier(0.33, 1, 0.68, 1)' });
     for (const word of words) show(word, times.get(word), { duration: 140 });
     const heard = [{ offset: 0, transform: 'scaleY(0)' }];
     const share = (ms) => ms / talked;
@@ -1232,6 +1280,13 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     for (const el of [box, ...pins, ...guides, ruler, tag, stroke, note, say]) hide(el, SEND + 180, { duration: 220 });
     at(pill, SEND + 180, { opacity: [1, 0], transform: ['none', 'translateY(-10px)'] }, { duration: 260, fill: 'forwards' });
 
+    for (const [el, list] of steps) {
+      for (const a of settle(el, list)) {
+        a.pause();
+        scene.push(a);
+      }
+    }
+
     // The clock of the whole, and from the top once it's over: all of it new, because Safari rewinding
     // these left the caption's box hidden from the second time on, while its words went on appearing.
     master = new Animation(new KeyframeEffect(null, null, { duration: END }));
@@ -1252,11 +1307,12 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     if (master.playState === 'running' && now < talked) ticking = setTimeout(tick, now < OPEN ? OPEN - now : 1000 - since % 1000);
   }
 
-  // It runs while it's seen.
+  // It runs while it's seen. A step that's over stays as it ended: played again, it would start over.
   function sync() {
     const run = onScreen && !document.hidden;
     for (const a of [...scene, master]) {
-      if (run) a.play(); else a.pause();
+      if (!run) a.pause();
+      else if ((a.currentTime ?? 0) < a.effect.getComputedTiming().endTime) a.play();
     }
     tick();
   }
