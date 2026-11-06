@@ -2,7 +2,7 @@
 
 ## Your data
 
-- **Audio** stays on your Mac, in memory until it's transcribed, then discarded (unless you turn on
+- **Audio** stays on your computer, in memory until it's transcribed, then discarded (unless you turn on
   keeping it).
 - **asides** are kept in `~/.asides/history` (what was sent, its screenshots, where it went) and
   deleted after `history_days`.

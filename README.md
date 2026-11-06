@@ -22,6 +22,12 @@ click     pin what's under the pointer; drag to pin an area; talk
 
 ## Install
 
+[asides.mihaicristian.dev](https://asides.mihaicristian.dev/#install) picks the download for your
+system. Every file is signed, and also in the
+[releases](https://github.com/mihaicristianfarcas/asides/releases).
+
+### macOS
+
 macOS 14 or later, Apple silicon.
 
 ```bash
@@ -35,26 +41,21 @@ asides to Applications. On first launch it offers to link the `asides` command i
 
 ### Windows
 
-Windows 10 (2004) or 11, x64 or Arm64: run `asides-<version>-windows-<arch>-setup.exe` from the
-[releases](https://github.com/mihaicristianfarcas/asides/releases) (no administrator needed), or,
-before a release has one, build it with `scripts\package-windows.ps1` ([how](CONTRIBUTING.md#windows)).
-It isn't signed yet, so Windows asks first (**More info**, **Run anyway**). On first launch asides
-puts the `asides` command on your PATH. [What differs](guide/using.md#on-windows).
+Windows 10 (2004) or 11: run the installer for
+[x64](https://download.asides.mihaicristian.dev/asides-windows-x64-setup.exe) or
+[Arm64](https://download.asides.mihaicristian.dev/asides-windows-arm64-setup.exe) (no administrator needed). On first
+launch asides puts the `asides` command on your PATH. [What differs](guide/using.md#on-windows).
 
 ### Linux
 
-GNOME or KDE on Wayland, or any X11 desktop, x86_64 or Arm64, with Vulkan. From the
-[releases](https://github.com/mihaicristianfarcas/asides/releases), or, before a release has them,
-built with `scripts/package-linux.sh` ([how](CONTRIBUTING.md#linux)):
+GNOME or KDE on Wayland, or any X11 desktop, with Vulkan. [What differs](guide/using.md#on-linux).
 
-```bash
-sudo apt install ./asides_<version>_<arch>.deb    # Debian, Ubuntu, Mint
-sudo dnf install ./asides-<version>-1.<arch>.rpm  # Fedora; zypper install on openSUSE
-makepkg -si                                       # Arch, beside packaging/linux/PKGBUILD
-./install.sh                                      # any other: for you alone, from the .tar.gz
-```
-
-[What differs](guide/using.md#on-linux).
+| | x86_64 | Arm64 | Then |
+|---|---|---|---|
+| Debian, Ubuntu, Mint | [.deb](https://download.asides.mihaicristian.dev/asides-linux-x86_64.deb) | [.deb](https://download.asides.mihaicristian.dev/asides-linux-aarch64.deb) | `sudo apt install ./asides-linux-*.deb` |
+| Fedora, openSUSE | [.rpm](https://download.asides.mihaicristian.dev/asides-linux-x86_64.rpm) | [.rpm](https://download.asides.mihaicristian.dev/asides-linux-aarch64.rpm) | `sudo dnf install ./asides-linux-*.rpm` (`zypper install` on openSUSE) |
+| Arch | | | `makepkg -si`, beside [PKGBUILD](packaging/linux/PKGBUILD) |
+| Any other | [.tar.gz](https://download.asides.mihaicristian.dev/asides-linux-x86_64.tar.gz) | [.tar.gz](https://download.asides.mihaicristian.dev/asides-linux-aarch64.tar.gz) | `./install.sh`, from the archive, for you alone |
 
 ### From source
 
@@ -64,6 +65,9 @@ Needs Rust, the Xcode Command Line Tools and CMake (`brew install cmake`).
 git clone https://github.com/mihaicristianfarcas/asides && cd asides
 make install   # ~/Applications/asides.app, and the command in ~/.local/bin
 ```
+
+On [Windows](CONTRIBUTING.md#windows), `scripts\package-windows.ps1`; on
+[Linux](CONTRIBUTING.md#linux), `scripts/package-linux.sh`.
 
 ## Get started
 
