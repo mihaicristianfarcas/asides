@@ -43,6 +43,33 @@ there's no desktop: run the app, and anything that types into a console, in the 
 session (a scheduled task does), and read output as code points (SSH's PowerShell prints in the OEM
 code page).
 
+### Linux
+
+Stable Rust, a C++ compiler, CMake, clang, and the headers (Debian and Ubuntu; a VM works, Lima runs
+them on a Mac):
+
+```bash
+sudo apt install build-essential clang cmake pkg-config libclang-dev libasound2-dev libfontconfig-dev \
+  libfreetype-dev libssl-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+cargo build -p asides-app -p asides-overlay -p asides-cli -p asides-keys --features asides-app/dev-hooks
+sudo setcap cap_sys_ptrace+ep target/debug/asides-keys  # if /proc/sys/kernel/yama/ptrace_scope isn't 0
+target/debug/asides-app
+```
+
+Debug builds compile shaders slowly under Mesa's software driver: in a VM use `--release`.
+
+`scripts/package-linux.sh` builds the archive, the `.deb` and the `.rpm` in `dist/` (Ubuntu 22.04 for
+the oldest glibc; `dpkg-deb` and `rpmbuild` if present). `scripts/e2e-linux.sh` is `make e2e` on Linux,
+on a headless GNOME Shell. To drive a desktop in a VM: `gnome-shell --headless --virtual-monitor
+1280x800` with Mutter's RemoteDesktop D-Bus API for real input (and hot corners off:
+their barriers eat motion; the Shell deadlocks starting Xwayland unless an `LD_PRELOAD` stub of
+libpulse's `pa_client_conf_load` passes on `false` for X11; if it hangs anyway, every X client waits,
+and tests fail as if asides had; two `--virtual-monitor`s and DisplayConfig's `ApplyMonitorsConfig`
+change monitors under a running asides), or `kwin_wayland --virtual --xwayland` with its fake-input
+protocol (allowed by a desktop entry naming it in `X-KDE-Wayland-Interfaces`, or
+`KWIN_WAYLAND_NO_PERMISSION_CHECKS=1`; KWin 5's Xwayland needs `-shm`, and KWin 6.8 without OpenGL
+crashes taking a screenshot), or Xvfb, a window manager and xdotool.
+
 ## Before a pull request
 
 ```bash
@@ -52,8 +79,8 @@ make test
 make e2e          # if CLI or app behavior changed
 ```
 
-CI runs formatting, clippy, the unit tests and the bundle, and on Windows clippy, the unit tests
-and the package. `main` only takes pull requests that pass it.
+CI runs formatting, clippy, the unit tests and the bundle, and on Windows and Linux clippy, the unit
+tests and the package. `main` only takes pull requests that pass it.
 
 ## Development loop
 
@@ -184,6 +211,12 @@ Run what your change touches, and say in the pull request what you tried.
   sending to Claude Code and Codex in Windows Terminal, VS Code's terminal and a console, and a new
   session in each terminal setting; the asides window's acrylic, light and dark; uninstalling
   removes the PATH entry and the `asides://` links.
+- [ ] **Linux** (a real computer with a GPU; GNOME on Wayland, KDE on Wayland, and X11): the package
+  installs and the launcher opens asides; `[a]` where the panel shows status icons; `Ctrl+Alt+Space`
+  freezes every monitor at its scale and takes the keyboard without a click (GNOME's first screenshot
+  prompt once); typing returns to the app after; the pill out of a freeze taken live; talking;
+  Allow… in setup asks for the password where `ptrace_scope` needs it; sending to Claude Code and
+  Codex in the desktop's terminal, tmux and Konsole, and a new session; opening at login.
 
 ## Common changes
 
@@ -255,7 +288,10 @@ Needs a Developer ID Application certificate.
    `scripts\package-windows.ps1` and `scripts\package-windows.ps1 -Arch x64`, then `gh release
    upload v<version> dist\asides-<version>-windows-arm64-setup.exe
    dist\asides-<version>-windows-x64-setup.exe` (the zips too, if wanted).
-7. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
+7. Linux, on Ubuntu 22.04, on each architecture: `scripts/package-linux.sh`, then `gh release upload
+   v<version> dist/asides-<version>-linux-*.tar.gz dist/asides_<version>_*.deb dist/asides-<version>-1.*.rpm`.
+   Set `pkgver` in `packaging/linux/PKGBUILD`.
+8. Commit and push `Casks/asides.rb` (only after the release exists: the cask downloads from it).
 
 ## The website
 
@@ -268,7 +304,7 @@ shortcuts, requirements and install steps from the README: update both.
 
 ## Reporting bugs
 
-Use the bug report template, with your macOS version, `asides --version`, `asides status`,
+Use the bug report template, with your system's version, `asides --version`, `asides status`,
 `asides log` and the steps. asides can contain private things: share only what's relevant.
 
 By contributing, you agree your contributions are dual licensed under MIT and Apache-2.0.

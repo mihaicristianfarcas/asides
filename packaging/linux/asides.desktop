@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=asides
+Comment=Freeze the screen, click what's wrong, say why; it goes to your coding agent
+Exec=@EXEC@ %u
+Icon=asides
+Terminal=false
+Categories=Development;
+MimeType=x-scheme-handler/asides;
+StartupWMClass=io.github.mihaicristianfarcas.asides
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

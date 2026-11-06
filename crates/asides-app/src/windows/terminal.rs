@@ -69,6 +69,7 @@ fn run_step(step: &Step, kept: &mut Option<clipboard::Snapshot>) -> Result<()> {
             run(Command::new(cli()).arg("type-into").arg(pid.to_string()), Some(text), DETACHED_PROCESS)?
         }
         Step::Script(_) => bail!("AppleScript is macOS's"),
+        Step::Pty { .. } | Step::Konsole { .. } => bail!("that's how Linux's terminals are typed into"),
         Step::ClipboardImage(path) => {
             if kept.is_none() {
                 *kept = Some(clipboard::snapshot());

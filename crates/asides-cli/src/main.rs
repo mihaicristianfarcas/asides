@@ -4,7 +4,7 @@ mod measure;
 mod windows;
 
 use std::path::PathBuf;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use std::process::Command as Process;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,21 +13,39 @@ use asides_core::config::{Config, pretty_shortcut};
 use asides_core::history::{self, Aside};
 use asides_core::link::Link;
 use asides_core::markdown::Part;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use asides_core::paths::BUNDLE_ID;
 use asides_core::paths::{self, tilde};
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
 use clap::{Parser, Subcommand};
 
+/// The long help, in each system's words: its shortcut, terminals and history folder.
+macro_rules! long_about {
+    ($keys:literal, $terminals:literal, $history:literal) => {
+        concat!(
+            "asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.\n\n",
+            $keys,
+            " opens asides over any app: click to pin an element, drag an area, talk, and press ",
+            $keys,
+            " again. The aside is typed into the agent session you last typed into (Claude Code, Codex, OpenCode… in ",
+            $terminals,
+            "), as your own message, and kept in ",
+            $history,
+            ". Run `asides` to open the asides window."
+        )
+    };
+}
+
 /// asides: freeze the screen, click what's wrong, say why; it goes to your coding agent.
-///
-/// `⌃⌥Space` opens asides over any app: click to pin an element, drag an area, talk, and press
-/// `⌃⌥Space` again. The aside is typed into the agent session you last typed into (Claude Code,
-/// Codex, OpenCode… in Terminal, Ghostty or Diri), as your own message, and kept in
-/// ~/.asides/history. Run `asides` to open the asides window.
 #[derive(Parser)]
 #[command(name = "asides", version)]
+#[cfg_attr(
+    target_os = "macos",
+    command(long_about = long_about!("`⌃⌥Space`", "Terminal, Ghostty or Diri", "~/.asides/history"))
+)]
+#[cfg_attr(windows, command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "%USERPROFILE%\\.asides\\history")))]
+#[cfg_attr(target_os = "linux", command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "~/.asides/history")))]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -35,8 +53,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Open asides on the screen, as ⌃⌥Space does (open, it sends the aside).
+    #[cfg_attr(
+        target_os = "macos",
+        command(about = "Open asides on the screen, as ⌃⌥Space does (open, it sends the aside)")
+    )]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        command(about = "Open asides on the screen, as Ctrl+Alt+Space does (open, it sends the aside)")
+    )]
     Open,
+    #[cfg_attr(
+        target_os = "macos",
+        command(about = "Open asides over the live screen, as ⌃⌥P does (open, it switches between frozen and live)")
+    )]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        command(
+            about = "Open asides over the live screen, as Ctrl+Alt+P does (open, it switches between frozen and live)"
+        )
+    )]
+    Live,
     /// List the agent sessions asides can send asides to (the default first).
     Sessions {
         #[arg(long)]
@@ -69,8 +105,8 @@ enum Command {
     Download { model: Option<String> },
     /// Show whether asides is running and what it's doing.
     Status,
-    /// What went wrong lately: the problems in asides' log (~/Library/Logs/asides), the crash
-    /// reports macOS kept, and the log's last lines.
+    /// What went wrong lately: the problems in asides' log (`asides log` says where it is), crash
+    /// reports, and the log's last lines.
     Log {
         /// How many of the log's last lines.
         #[arg(short = 'n', default_value_t = 30)]
@@ -79,7 +115,8 @@ enum Command {
         #[arg(long, default_value_t = 7)]
         days: i64,
     },
-    /// Quit the menu-bar app.
+    #[cfg_attr(target_os = "macos", command(about = "Quit the menu-bar app"))]
+    #[cfg_attr(not(target_os = "macos"), command(about = "Quit asides"))]
     Quit,
     /// Run the MCP server (stdio): agents can measure screenshots and read your asides.
     Mcp,
@@ -151,6 +188,7 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Command::Open) => send(&Link::Open { request: None }),
+        Some(Command::Live) => send(&Link::Live { request: None }),
         Some(Command::Sessions { json }) => list_sessions(json),
         Some(Command::History { count, json }) => list_history(count, json),
         Some(Command::Show { id }) => {
@@ -225,7 +263,7 @@ fn list_sessions(json: bool) -> Result<()> {
         return Ok(());
     }
     if found.is_empty() {
-        let terminals = if cfg!(windows) { "any terminal" } else { "Terminal, Ghostty or Diri" };
+        let terminals = if cfg!(target_os = "macos") { "Terminal, Ghostty or Diri" } else { "any terminal" };
         println!("No agent sessions are running. Start Claude Code, Codex or OpenCode in {terminals}.");
         return Ok(());
     }
@@ -474,9 +512,14 @@ pub(crate) fn is_running(pid: u32) -> bool {
     windows::is_running(pid)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn is_running(pid: u32) -> bool {
     pid != 0 && Process::new("kill").args(["-0", &pid.to_string()]).output().is_ok_and(|o| o.status.success())
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn is_running(pid: u32) -> bool {
+    pid != 0 && std::path::Path::new("/proc").join(pid.to_string()).exists()
 }
 
 /// Hands the link to the app: the copy beside this command, which hands it to the one running.
@@ -485,10 +528,34 @@ pub(crate) fn send(link: &Link) -> Result<()> {
     windows::send(link)
 }
 
+/// Hands the link to the app running, over its socket; if none runs, starts the one beside this
+/// command with it.
+#[cfg(target_os = "linux")]
+pub(crate) fn send(link: &Link) -> Result<()> {
+    use std::io::Write;
+    let url = link.to_url();
+    if let Ok(mut socket) = std::os::unix::net::UnixStream::connect(paths::links_socket()) {
+        return Ok(socket.write_all(format!("{url}\n").as_bytes())?);
+    }
+    let app = std::env::var_os("ASIDES_APP")
+        .map_or_else(|| std::env::current_exe().unwrap_or_default().with_file_name("asides-app"), PathBuf::from);
+    if !app.is_file() {
+        bail!("could not find asides ({}). Is it installed?", app.display());
+    }
+    std::process::Command::new(&app)
+        .arg(url.as_str())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("could not start {}", app.display()))?;
+    Ok(())
+}
+
 /// Hands the link to the app via Launch Services (launching it if needed, without stealing focus):
 /// the copy `ASIDES_APP` names, or the one this command ships in. Several copies share the bundle
 /// ID, and Launch Services, left to pick, may start another one beside the running one.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn send(link: &Link) -> Result<()> {
     let mut open = Process::new("open");
     open.arg("-g");
@@ -507,7 +574,7 @@ pub(crate) fn send(link: &Link) -> Result<()> {
 }
 
 /// The app this command ships in (`asides.app/Contents/Helpers/asides`), when it runs from one.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn own_app() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let helpers = exe.parent()?;

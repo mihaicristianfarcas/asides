@@ -23,12 +23,16 @@ serde_json.workspace = true
 url.workspace = true
 zip.workspace = true
 cpal = "0.18"
-global-hotkey = "0.8"
 hound = "3.5"
 sha2 = "0.11"
+ureq = "3"
+
+# The event loop, global shortcuts and the status item on a Mac and on Windows. On Linux they'd bring
+# GTK and libappindicator: there it's `linux/` (a channel, X11 and D-Bus, the StatusNotifierItem).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+global-hotkey = "0.8"
 tao = "0.37"
 tray-icon = "0.26"
-ureq = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
@@ -71,6 +75,19 @@ windows = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The clipboard: text and screenshots, through X11 (Xwayland on a Wayland desktop).
+arboard = { version = "3", default-features = false, features = ["image-data"] }
+libc = "0.2"
+png = "0.18"
+serde.workspace = true
+# On the processor, as on Windows: no one GPU API whisper.cpp builds for everywhere.
+whisper-rs = "0.16"
+x11rb = { version = "0.13", features = ["randr", "xkb"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+# The status item (StatusNotifierItem), without GTK.
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
 
 [dev-dependencies]
 tempfile.workspace = true

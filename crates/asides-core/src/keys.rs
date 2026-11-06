@@ -22,17 +22,17 @@ pub struct Mods {
 }
 
 /// The system's command key as written before another (`⌘S`, `Ctrl+S`).
-pub const COMMAND: &str = if cfg!(windows) { "Ctrl+" } else { "⌘" };
+pub const COMMAND: &str = if cfg!(not(target_os = "macos")) { "Ctrl+" } else { "⌘" };
 /// Shift, as written before a key or an action (`⇧Tab`, `Shift+Tab`).
-pub const SHIFT: &str = if cfg!(windows) { "Shift+" } else { "⇧" };
+pub const SHIFT: &str = if cfg!(not(target_os = "macos")) { "Shift+" } else { "⇧" };
 /// Return, as a key's label.
-pub const RETURN: &str = if cfg!(windows) { "Enter" } else { "⏎" };
+pub const RETURN: &str = if cfg!(not(target_os = "macos")) { "Enter" } else { "⏎" };
 
 impl Mods {
     /// A key press's modifiers as the chords name them: `cmd` is the system's command key, ⌘ on
     /// macOS and Ctrl on Windows (whose Windows key stays the system's).
     pub fn of(platform: bool, control: bool, alt: bool, shift: bool) -> Mods {
-        match cfg!(windows) {
+        match cfg!(not(target_os = "macos")) {
             true => Mods { cmd: control, shift, alt, ctrl: false },
             false => Mods { cmd: platform, shift, alt, ctrl: control },
         }
@@ -173,7 +173,7 @@ impl Chord {
 
     /// `⇧⌘C`, `⏎`, `Esc`, `Space`; on Windows `Ctrl+Shift+C`, `Enter`.
     pub fn label(&self) -> String {
-        if cfg!(windows) {
+        if cfg!(not(target_os = "macos")) {
             return self.windows_label();
         }
         let mut text = String::new();
@@ -278,7 +278,8 @@ impl Chord {
             k => GLOBAL_NAMES.iter().find(|(plain, _)| *plain == k)?.1.to_string(),
         };
         // ⌘ is Ctrl on Windows (`Mods::of`).
-        let (ctrl, cmd) = if cfg!(windows) { (self.ctrl || self.cmd, false) } else { (self.ctrl, self.cmd) };
+        let (ctrl, cmd) =
+            if cfg!(not(target_os = "macos")) { (self.ctrl || self.cmd, false) } else { (self.ctrl, self.cmd) };
         let mods = [(ctrl, "ctrl+"), (self.alt, "alt+"), (self.shift, "shift+"), (cmd, "cmd+")];
         Some(mods.iter().filter(|(on, _)| *on).map(|(_, m)| *m).collect::<String>() + &key)
     }
@@ -312,7 +313,7 @@ mod tests {
         let copy = parse("cmd+shift+c");
         assert!(matches(&copy, "c", mods(true, true, false)));
         assert!(!matches(&copy, "c", mods(true, false, false)));
-        let mac = !cfg!(windows);
+        let mac = !cfg!(not(target_os = "macos"));
         assert_eq!(label(&copy), if mac { "⇧⌘C" } else { "Ctrl+Shift+C" });
         let undo = parse("delete, cmd+z");
         assert_eq!(undo.len(), 2);
@@ -342,7 +343,7 @@ mod tests {
         assert_eq!(chord("space", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+Space"));
         assert_eq!(chord("p", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+KeyP"));
         // ⌘ is Ctrl on Windows.
-        let command = if cfg!(windows) { "ctrl+shift+Digit1" } else { "shift+cmd+Digit1" };
+        let command = if cfg!(not(target_os = "macos")) { "ctrl+shift+Digit1" } else { "shift+cmd+Digit1" };
         assert_eq!(chord("1", mods(true, true, false)).to_global().as_deref(), Some(command));
         assert_eq!(chord("f5", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+F5"));
         assert_eq!(chord("/", ctrl_alt).to_global().as_deref(), Some("ctrl+alt+Slash"));
@@ -353,11 +354,11 @@ mod tests {
     #[test]
     fn ctrl_is_the_command_key_on_windows() {
         let pressed = Mods::of(false, true, false, true);
-        match cfg!(windows) {
+        match cfg!(not(target_os = "macos")) {
             true => assert_eq!(pressed, Mods { cmd: true, shift: true, ..Mods::default() }),
             false => assert_eq!(pressed, Mods { ctrl: true, shift: true, ..Mods::default() }),
         }
-        assert_eq!(Mods::of(true, false, false, false).cmd, !cfg!(windows));
+        assert_eq!(Mods::of(true, false, false, false).cmd, !cfg!(not(target_os = "macos")));
     }
 
     #[test]

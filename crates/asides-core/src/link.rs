@@ -16,6 +16,10 @@ pub enum Link {
     Open {
         request: Option<String>,
     },
+    /// Opens asides live, as `⌃⌥P` does; while it's open, switches between frozen and live.
+    Live {
+        request: Option<String>,
+    },
     /// Opens the asides window (History, Sessions, Settings).
     Window {
         request: Option<String>,
@@ -91,7 +95,7 @@ impl Link {
         {
             let mut q = url.query_pairs_mut();
             match self {
-                Link::Open { .. } | Link::Window { .. } | Link::Sessions { .. } | Link::Quit => {}
+                Link::Open { .. } | Link::Live { .. } | Link::Window { .. } | Link::Sessions { .. } | Link::Quit => {}
                 Link::Send { id, to, .. } => {
                     q.append_pair("id", id);
                     if let Some(to) = to {
@@ -155,6 +159,7 @@ impl Link {
         let nonempty = |key: &str| get(key).filter(|v| !v.trim().is_empty());
         match url.host_str()? {
             "open" => Some(Link::Open { request }),
+            "live" => Some(Link::Live { request }),
             "window" => Some(Link::Window { request }),
             "send" => Some(Link::Send { id: nonempty("id")?, to: nonempty("to"), request }),
             "new-session" => Some(Link::NewSession {
@@ -191,6 +196,7 @@ impl Link {
     fn action(&self) -> &'static str {
         match self {
             Link::Open { .. } => "open",
+            Link::Live { .. } => "live",
             Link::Window { .. } => "window",
             Link::Send { .. } => "send",
             Link::NewSession { .. } => "new-session",
@@ -210,6 +216,7 @@ impl Link {
     pub fn request(&self) -> Option<&String> {
         match self {
             Link::Open { request }
+            | Link::Live { request }
             | Link::Window { request }
             | Link::Send { request, .. }
             | Link::NewSession { request, .. }
@@ -238,6 +245,7 @@ mod tests {
     #[test]
     fn links_round_trip() {
         round_trip(Link::Open { request: Some("r1".into()) });
+        round_trip(Link::Live { request: None });
         round_trip(Link::Window { request: None });
         round_trip(Link::Send { id: "2026-10-18-221530".into(), to: Some("95393".into()), request: Some("r2".into()) });
         round_trip(Link::Send { id: "last".into(), to: None, request: None });

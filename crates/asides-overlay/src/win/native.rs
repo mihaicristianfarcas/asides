@@ -106,6 +106,11 @@ pub fn dress(window: &Window) {
     }
 }
 
+/// Linux's: Windows draws no window's title bar for it.
+pub fn draws_its_title_bar(_window: &Window) -> bool {
+    false
+}
+
 /// macOS's Dock icon: Windows' tool windows have no taskbar button.
 pub fn accessory() {}
 

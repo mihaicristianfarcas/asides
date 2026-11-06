@@ -5,6 +5,8 @@
 use std::cell::RefCell;
 use std::f64::consts::{PI, TAU};
 
+#[cfg(target_os = "linux")]
+use crate::tray_icon;
 use tray_icon::Icon;
 
 /// tray-icon shows icons at most 22 pt tall; we draw at 2× on a 22 pt canvas.
@@ -238,9 +240,10 @@ fn digit(d: u32, x: f64, y: f64) -> Vec<Shape> {
 
 /// Straight-alpha RGBA pixels of the mark on the status-item canvas, black unless `color` is given.
 /// The ink of an icon the system tints (a template): black, which macOS tints for the menu bar. On
-/// Windows, which tints nothing, the taskbar's own: white on a dark one, black on a light one.
+/// Windows, which tints nothing, the taskbar's own: white on a dark one, black on a light one. On
+/// Linux, panels are mostly dark: white, unless the desktop's theme is light (`light_taskbar`).
 fn template_ink() -> [u8; 3] {
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     if !crate::system::light_taskbar() {
         return [255, 255, 255];
     }

@@ -199,6 +199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -307,6 +316,7 @@ dependencies = [
  "cpal",
  "global-hotkey",
  "hound",
+ "ksni",
  "libc",
  "objc2",
  "objc2-app-kit",
@@ -317,6 +327,7 @@ dependencies = [
  "objc2-screen-capture-kit",
  "objc2-service-management",
  "png 0.18.1",
+ "serde",
  "serde_json",
  "sha2 0.11.1",
  "tao",
@@ -327,6 +338,8 @@ dependencies = [
  "whisper-rs",
  "windows 0.61.3",
  "winresource",
+ "x11rb",
+ "zbus",
  "zip",
 ]
 
@@ -349,6 +362,7 @@ dependencies = [
 name = "asides-core"
 version = "1.0.8"
 dependencies = [
+ "asides-keys",
  "chrono",
  "libc",
  "notify",
@@ -360,7 +374,16 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "url",
  "windows 0.61.3",
+ "x11rb",
+ "zbus",
  "zip",
+]
+
+[[package]]
+name = "asides-keys"
+version = "1.0.8"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -388,8 +411,11 @@ dependencies = [
  "tempfile",
  "tiny-skia",
  "unicode-segmentation",
+ "url",
  "windows 0.61.3",
  "winresource",
+ "x11rb",
+ "zbus",
 ]
 
 [[package]]
@@ -677,7 +703,7 @@ dependencies = [
  "log",
  "num-rational",
  "num-traits",
- "pastey",
+ "pastey 0.1.1",
  "rayon",
  "thiserror 2.0.21",
  "v_frame",
@@ -2835,8 +2861,6 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -3849,6 +3873,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ksni"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bcc1cb43797140f74b711f1c4a49f48a7a7429f211c5fb78264e7bcd1e99caf"
+dependencies = [
+ "arc-swap",
+ "async-executor",
+ "async-io",
+ "async-lock",
+ "crossbeam-queue",
+ "futures-channel",
+ "futures-lite 2.6.1",
+ "futures-util",
+ "pastey 0.2.3",
+ "serde",
+ "task-local",
+ "zbus",
+]
+
+[[package]]
 name = "kurbo"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3924,9 +3968,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.190"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdbus-sys"
@@ -5145,6 +5189,12 @@ name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
 name = "pathfinder_geometry"
@@ -6941,6 +6991,15 @@ name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
+name = "task-local"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2972044a9e5e448a506a7ff6f0d03b566d8ef4cd6918a58fc59835a0f8666626"
+dependencies = [
+ "pin-project-lite",
+]
 
 [[package]]
 name = "tempfile"

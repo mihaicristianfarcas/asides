@@ -42,6 +42,9 @@ impl<F: Fn(u32, Message) + Send + 'static> Notify for F {}
 pub struct Standby {
     child: Child,
     stdin: ChildStdin,
+    /// It draws on the CPU (`gpu`): a crash isn't the GPU's.
+    #[cfg(target_os = "linux")]
+    pub on_cpu: bool,
 }
 
 impl Standby {
@@ -50,9 +53,9 @@ impl Standby {
     }
 
     /// How it ended, having quit by itself.
-    pub fn ended(mut self) -> String {
+    pub fn ended(mut self) -> std::io::Result<std::process::ExitStatus> {
         drop(self.stdin);
-        self.child.wait().map_or_else(|err| err.to_string(), |status| status.to_string())
+        self.child.wait()
     }
 
     /// Opens the session in `dir`: the process is the session's now. `None` if it quit.
@@ -69,14 +72,28 @@ impl Standby {
 
 /// Starts an overlay ahead of time, telling `notify` what it says.
 pub fn standby(notify: impl Notify) -> anyhow::Result<Standby> {
-    let (child, stdin) = spawn(STANDBY, notify)?;
-    Ok(Standby { child, stdin })
+    let (child, stdin, _on_cpu) = spawn(STANDBY, notify)?;
+    Ok(Standby {
+        child,
+        stdin,
+        #[cfg(target_os = "linux")]
+        on_cpu: _on_cpu,
+    })
 }
 
 /// Starts `asides-overlay` with `arg` (a session directory, or `STANDBY`), relaying what it says to
-/// `notify`.
-fn spawn(arg: impl AsRef<OsStr>, notify: impl Notify) -> anyhow::Result<(Child, ChildStdin)> {
-    let mut child = Process::new(helper())
+/// `notify`; and whether it draws on the CPU (Linux, `gpu`).
+fn spawn(arg: impl AsRef<OsStr>, notify: impl Notify) -> anyhow::Result<(Child, ChildStdin, bool)> {
+    let mut process = Process::new(helper());
+    // On a Wayland desktop the overlay is an X11 client (Xwayland), as on an X11 one: only X11 lets
+    // a window cover the whole screen and take the keyboard at once, on every desktop.
+    #[cfg(target_os = "linux")]
+    process.env_remove("WAYLAND_DISPLAY");
+    #[cfg(target_os = "linux")]
+    let on_cpu = crate::gpu::configure(&mut process);
+    #[cfg(not(target_os = "linux"))]
+    let on_cpu = false;
+    let mut child = process
         .arg(arg)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -96,7 +113,7 @@ fn spawn(arg: impl AsRef<OsStr>, notify: impl Notify) -> anyhow::Result<(Child, 
         }
         notify(pid, Message::Exited);
     });
-    Ok((child, stdin))
+    Ok((child, stdin, on_cpu))
 }
 
 pub struct Overlay {
@@ -149,7 +166,7 @@ pub fn start(
     let (child, stdin) = match standby.and_then(|s| s.open(&dir)) {
         Some(process) => process,
         // None waiting, or it quit.
-        None => spawn(&dir, notify)?,
+        None => spawn(&dir, notify).map(|(child, stdin, _)| (child, stdin))?,
     };
     Ok(Overlay {
         child,
@@ -227,6 +244,11 @@ impl Drop for Overlay {
             && !status.success()
         {
             asides_core::log::problem(format_args!("the overlay ({}) ended: {status}", self.child.id()));
+            // Crashed, maybe in the GPU's driver: the next ones draw on the CPU.
+            #[cfg(target_os = "linux")]
+            if crate::gpu::crashed(status) {
+                crate::gpu::draw_on_cpu();
+            }
         }
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -241,7 +263,7 @@ pub fn seconds_between(from: Instant, to: Instant) -> f32 {
 }
 
 /// An image file's pixels (a PNG), for simulated sessions.
-#[cfg(all(feature = "dev-hooks", windows))]
+#[cfg(all(feature = "dev-hooks", not(target_os = "macos")))]
 pub fn load_image(path: &Path) -> Option<Frame> {
     let mut decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);

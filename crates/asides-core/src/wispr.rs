@@ -1,18 +1,18 @@
 //! Wispr Flow's dictation history, read from the app's local `flow.sqlite` with the system's
-//! `sqlite3` (Windows has none: SQLite built in, `rusqlite`), read-only. The schema is Wispr Flow's
+//! `sqlite3` (a Mac's; elsewhere it may not be there: SQLite built in, `rusqlite`), read-only. The schema is Wispr Flow's
 //! own and changes between its versions, so columns are discovered at run time and the optional
 //! ones may be missing.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Duration, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const SQLITE3: &str = "/usr/bin/sqlite3";
 /// The most recent rows looked at each time; far more than anyone dictates between two changes.
 const RECENT_ROWS: u32 = 50;
@@ -22,12 +22,15 @@ const WINDOW: Duration = Duration::minutes(15);
 const DONE: &[&str] = &["formatted", "raw_transcript"];
 
 /// `~/Library/Application Support/Wispr Flow/flow.sqlite`: Electron's folder for the app's data.
-/// On Windows, Electron's is `%APPDATA%\Wispr Flow`.
+/// On Windows, Electron's is `%APPDATA%\Wispr Flow`; on Linux, `~/.config/Wispr Flow`.
 pub fn default_db() -> PathBuf {
     #[cfg(windows)]
     if let Some(roaming) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
         return PathBuf::from(roaming).join("Wispr Flow").join("flow.sqlite");
     }
+    #[cfg(target_os = "linux")]
+    return std::env::home_dir().expect("HOME is not set").join(".config/Wispr Flow/flow.sqlite");
+    #[cfg(not(target_os = "linux"))]
     std::env::home_dir().expect("HOME is not set").join("Library/Application Support/Wispr Flow/flow.sqlite")
 }
 
@@ -190,7 +193,7 @@ fn parse_timestamp(value: &Value) -> Option<DateTime<Utc>> {
 
 /// Runs one read-only query on a database another app writes; rows come back as JSON objects, as
 /// `sqlite3 -json` gives them.
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
     use rusqlite::types::ValueRef;
     let failed = |e: rusqlite::Error| format!("could not read Wispr Flow's history: {e}");
@@ -218,7 +221,7 @@ pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String,
 }
 
 /// Runs one read-only query on a database another app writes; rows come back as JSON objects.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn sqlite(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
     let out = Command::new(SQLITE3)
         .args(["-readonly", "-json", "-cmd", ".timeout 3000"])
@@ -244,13 +247,13 @@ mod tests {
         \"timestamp\" DATETIME, app VARCHAR(255), url TEXT, status VARCHAR(255), formattedText TEXT, asrText TEXT, \
         isArchived TINYINT(1) DEFAULT 0, audio BLOB);";
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     fn exec(db: &Path, sql: &str) {
         let ok = Command::new(SQLITE3).arg(db).arg(sql).status().unwrap().success();
         assert!(ok, "sqlite3 failed: {sql}");
     }
 
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     fn exec(db: &Path, sql: &str) {
         let connection = rusqlite::Connection::open(db).unwrap();
         connection.execute_batch(sql).unwrap_or_else(|e| panic!("sqlite failed: {sql}: {e}"));

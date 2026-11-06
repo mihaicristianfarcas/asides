@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Instant;
 
+use notify::event::{AccessKind, AccessMode, EventKind};
 use notify::{RecursiveMode, Watcher as _};
 
 /// A folder watched, until it's dropped.
@@ -14,7 +15,9 @@ pub struct Watch(#[allow(dead_code)] notify::RecommendedWatcher);
 /// created, written, renamed or removed.
 pub fn folder(dir: &Path, deep: bool, changed: impl Fn(&Path) + Send + 'static) -> notify::Result<Watch> {
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if let Ok(event) = event {
+        if let Ok(event) = event
+            && is_change(event.kind)
+        {
             for path in &event.paths {
                 changed(path);
             }
@@ -23,6 +26,12 @@ pub fn folder(dir: &Path, deep: bool, changed: impl Fn(&Path) + Send + 'static) 
     let mode = if deep { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
     watcher.watch(dir, mode)?;
     Ok(Watch(watcher))
+}
+
+/// Linux says when a file is opened too (inotify): reading what changed would be a change again,
+/// and the app and its window read the settings over and over. Only a write finishing counts.
+fn is_change(kind: EventKind) -> bool {
+    !matches!(kind, EventKind::Access(access) if access != AccessKind::Close(AccessMode::Write))
 }
 
 /// Calls `changed` each time the file at `path` changes (it may not exist yet): its folder is
@@ -83,6 +92,26 @@ mod tests {
         std::fs::write(&tmp, "{}").unwrap();
         std::fs::rename(&tmp, &path).unwrap();
         assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the replaced file was reported");
+    }
+
+    #[test]
+    fn reading_a_file_is_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "a = 1").unwrap();
+        let (tx, rx) = channel();
+        let _watch = file(&path, move || {
+            let _ = tx.send(());
+        })
+        .unwrap();
+        // What the system still had to say about the file's creation.
+        while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+        for _ in 0..3 {
+            std::fs::read_to_string(&path).unwrap();
+        }
+        assert!(rx.recv_timeout(Duration::from_millis(500)).is_err(), "a read was reported as a change");
+        std::fs::write(&path, "a = 2").unwrap();
+        assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok(), "the write was reported");
     }
 
     #[test]

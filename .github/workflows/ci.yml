@@ -30,6 +30,45 @@ jobs:
       - name: Bundle
         run: make bundle
 
+  linux:
+    # The oldest system packages should run on: what's built here needs its glibc (2.35) or later.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake libasound2-dev libclang-dev libfontconfig-dev \
+            libfreetype-dev libssl-dev libwayland-dev libx11-xcb-dev libxcb1-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev pkg-config rpm
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      # A debug build: the packaging is what's checked.
+      - name: Package
+        env:
+          ASIDES_PROFILE: dev
+        run: scripts/package-linux.sh
+      - name: An archive, a .deb and an .rpm, each with the four programs
+        run: |
+          set -euo pipefail
+          programs="asides asides-app asides-overlay asides-keys"
+          tar -tzf dist/asides-*-linux-*.tar.gz >archive.txt
+          dpkg-deb -c dist/asides_*.deb >deb.txt
+          rpm -qlp dist/asides-*.rpm >rpm.txt
+          for program in $programs; do
+            grep -q "/$program\$" archive.txt
+            grep -q "/usr/lib/asides/$program\$" deb.txt
+            grep -q "^/usr/lib/asides/$program\$" rpm.txt
+          done
+          grep -q "usr/bin/asides" deb.txt
+          grep -q "^/usr/bin/asides\$" rpm.txt
+
   windows:
     # x64: whisper.cpp builds with MSVC (on Arm64, ggml needs clang-cl: CONTRIBUTING.md).
     runs-on: windows-latest

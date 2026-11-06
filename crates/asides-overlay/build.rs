@@ -1,5 +1,5 @@
 //! Embeds the Help page's clips (`help/`, made by `scripts/make-help.py`; Windows', made on Windows,
-//! in `help-windows/`): each file by its name, for the window's assets (`assets.rs`). On Windows,
+//! in `help-windows/`, which show Linux's keys too): each file by its name, for the window's assets (`assets.rs`). On Windows,
 //! also the icon (`packaging/asides.ico`) and version information: GPUI gives its windows the
 //! program's icon (the asides window's taskbar button).
 
@@ -7,8 +7,9 @@ use std::path::Path;
 
 fn main() {
     let crate_dir = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).to_path_buf();
-    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
-    let dir = match windows && crate_dir.join("help-windows").is_dir() {
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let windows = os == "windows";
+    let dir = match os != "macos" && crate_dir.join("help-windows").is_dir() {
         true => crate_dir.join("help-windows"),
         false => crate_dir.join("help"),
     };

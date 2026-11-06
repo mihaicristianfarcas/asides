@@ -1,0 +1,19 @@
+[package]
+name = "asides-keys"
+description = "Types what asides sends into a terminal on Linux, as the keyboard would: the small helper that alone may hold the capability it needs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "asides-keys"
+path = "src/main.rs"
+
+[lib]
+name = "asides_keys"
+path = "src/lib.rs"
+
+[dependencies]
+libc = "0.2"

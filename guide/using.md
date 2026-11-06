@@ -150,7 +150,7 @@ Copies built from source don't update themselves.
 ## When something goes wrong
 
 asides keeps a log in `~/Library/Logs/asides` (Console shows it under Log Reports; on Windows
-`%LOCALAPPDATA%\asides\Logs`). `asides status`
+`%LOCALAPPDATA%\asides\Logs`, on Linux `~/.local/state/asides`). `asides status`
 says when something went wrong in the last day, and `asides log` shows what: errors, crashes, and
 moments asides was stuck. If the frozen screen stops responding for 10 seconds, asides closes it
 and gives your screens back; what you said is kept in History. Add `asides log` to a bug report.
@@ -184,3 +184,20 @@ asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with t
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `%USERPROFILE%\.asides\history`; settings, voice models and the log in `%LOCALAPPDATA%\asides`. |
 | Updates | Not automatic yet: install the new version over the old one. |
+
+## On Linux
+
+asides works the same on X11 and on GNOME's and KDE's Wayland, x86_64 or Arm64, with these
+differences:
+
+| | |
+|---|---|
+| Keys | `⌃` and `⌘` are `Ctrl`, `⌥` is `Alt`: `Ctrl+Alt+Space` opens and sends, `Ctrl+Alt+P` goes live. They're in your desktop's keyboard settings on GNOME (Custom Shortcuts) and KDE (Shortcuts). On another Wayland desktop, bind keys to `asides open` and `asides live` yourself if it doesn't offer them. |
+| Where it lives | `[a]` in the panel, where it shows status icons: KDE, Ubuntu, Cinnamon, GNOME with the AppIndicator extension. Without one, the shortcuts, the `asides` command and the launcher's window do everything. |
+| Sessions | Agents in any terminal. tmux, Konsole and WezTerm take text themselves; kitty too with remote control on. Others go through a small helper, which where the system restricts it (Ubuntu, Arch) you allow once in setup. New sessions open in your desktop's terminal, or `[agents] terminal` in Settings. |
+| Frozen | Panels and keys aren't held back as on a Mac: `Alt+Tab` and the desktop's own shortcuts may still work. |
+| Permissions | GNOME on Wayland asks once before the first screenshot, with asides' window in front: **Allow…** by Screenshots in setup (a freeze not yet allowed opens it there). Pins name elements through AT-SPI: GTK apps always, Qt and browsers when the desktop's accessibility is on; KDE's and GNOME's Wayland tell asides nothing about windows, so otherwise a pin is a point. |
+| Scaled screens | On Wayland the overlay runs under Xwayland, which may draw it slightly soft at fractional scales. Screenshots keep the screen's full resolution. |
+| Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
+| Files | History in `~/.asides/history`; settings in `~/.config/asides`; voice models in `~/.local/share/asides`; the log in `~/.local/state/asides`. |
+| Updates | With your package manager, or install the new release over the old one. |

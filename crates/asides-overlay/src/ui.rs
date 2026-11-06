@@ -913,7 +913,7 @@ impl Overlay {
     }
 
     /// A message the user must read (an error from the app): it stays longer.
-    fn notice(&mut self, text: impl Into<SharedString>) {
+    pub fn notice(&mut self, text: impl Into<SharedString>) {
         self.toast = Some((text.into(), Instant::now() + NOTICE));
         self.toast_waits = true;
     }
@@ -2502,7 +2502,10 @@ fn listen(
         if phase != DispatchPhase::Bubble || !h.is_hovered(window) {
             return;
         }
-        // The keyboard follows the screen being worked on.
+        // The keyboard follows the screen being worked on. (A click moves it between a Mac's or
+        // Windows' windows by itself; nothing moves it between X11's override-redirect ones.)
+        #[cfg(target_os = "linux")]
+        crate::native::click_takes_keyboard(crate::native::view_pointer(window));
         let focus = v.read(cx).focus_handle();
         if o.read(cx).card.is_none() {
             window.focus(&focus);
@@ -2811,7 +2814,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             vec![
                 ("Annotate (click, or drag)", k(Cmd::Tool(Tool::Annotate))),
                 (
-                    if cfg!(windows) { "Draw (Shift for an arrow)" } else { "Draw (⇧ for an arrow)" },
+                    if cfg!(target_os = "macos") { "Draw (⇧ for an arrow)" } else { "Draw (Shift for an arrow)" },
                     k(Cmd::Tool(Tool::Draw)),
                 ),
                 ("Screenshot", k(Cmd::Tool(Tool::Shot))),
@@ -2911,7 +2914,9 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         .id("keys")
         .top(slide)
         .opacity(shown)
-        .w(px(KEYS_WIDTH as f32))
+        // At least as wide: a wider font than a Mac's or Windows' (Linux's vary) makes it wider.
+        .when(cfg!(target_os = "macos"), |d| d.w(px(KEYS_WIDTH as f32)))
+        .when(!cfg!(target_os = "macos"), |d| d.min_w(px(KEYS_WIDTH as f32)))
         .p(px(14.))
         .flex()
         .flex_col()
@@ -3186,12 +3191,12 @@ fn glass_panel(t: Theme) -> Div {
     div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
 }
 
-/// The pill's tint. Windows blurs nothing behind the pill's window (`windows.rs`): there it's
-/// nearly solid, as Windows' own acrylic is without its blur, or a page reads through the list.
+/// The pill's tint. Only macOS blurs behind the pill's window (`windows.rs`): elsewhere it's nearly
+/// solid, as Windows' own acrylic is without its blur, or a page reads through the list.
 fn pill_tint(t: Theme) -> Hsla {
-    match cfg!(windows) {
-        true => Hsla { a: 0.95, ..t.sidebar },
-        false => t.sidebar,
+    match cfg!(target_os = "macos") {
+        false => Hsla { a: 0.95, ..t.sidebar },
+        true => t.sidebar,
     }
 }
 

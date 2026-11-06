@@ -9,24 +9,41 @@
 
 mod audio;
 #[cfg_attr(windows, path = "windows/capture.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/capture.rs")]
 mod capture;
 #[cfg_attr(windows, path = "windows/clipboard.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/clipboard.rs")]
 mod clipboard;
 #[cfg_attr(windows, path = "windows/elements.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/elements.rs")]
 mod elements;
+#[cfg(target_os = "linux")]
+#[path = "linux/gpu.rs"]
+mod gpu;
+#[cfg_attr(target_os = "linux", path = "linux/hotkeys.rs")]
 mod hotkeys;
 mod icons;
-#[cfg(windows)]
-#[path = "windows/instance.rs"]
+#[cfg(any(windows, target_os = "linux"))]
+#[cfg_attr(windows, path = "windows/instance.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/instance.rs")]
 mod instance;
 mod overlay;
 mod stt;
 #[cfg_attr(target_os = "macos", path = "macos.rs")]
 #[cfg_attr(windows, path = "windows/system.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/system.rs")]
 mod system;
+// On Linux, the event loop and the status item without GTK, by the names the app uses elsewhere.
+#[cfg(target_os = "linux")]
+#[path = "linux/event_loop.rs"]
+mod tao;
 #[cfg_attr(windows, path = "windows/terminal.rs")]
+#[cfg_attr(target_os = "linux", path = "linux/terminal.rs")]
 mod terminal;
 mod tray;
+#[cfg(target_os = "linux")]
+#[path = "linux/status_item.rs"]
+mod tray_icon;
 mod update;
 mod watch;
 mod worker;
@@ -58,6 +75,7 @@ use asides_core::takes;
 use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
 use chrono::{DateTime, Local};
+#[cfg(not(target_os = "linux"))]
 use global_hotkey::{GlobalHotKeyEvent, HotKeyState};
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
@@ -69,6 +87,8 @@ use tray_icon::menu::MenuEvent;
 use crate::capture::{Capture, ScreenInfo};
 use crate::elements::WindowInfo;
 use crate::hotkeys::{Action, Hotkeys};
+#[cfg(target_os = "linux")]
+use crate::hotkeys::{GlobalHotKeyEvent, HotKeyState};
 use crate::icons::{Icons, Mark};
 use crate::overlay::{Message as OverlayMessage, Overlay, Standby};
 use crate::stt::{ModelManager, ModelState};
@@ -127,8 +147,11 @@ enum UserEvent {
     Heard,
     /// The overlay started ahead of time (`App::stand_by`), or why not.
     StandingBy(Result<Standby, String>),
-    /// An `asides://` link (Windows: handed over by a second copy started with it).
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// The asides window's process ended (Linux: it may have crashed in the GPU's driver).
+    #[cfg(target_os = "linux")]
+    WindowEnded,
+    /// An `asides://` link (Windows and Linux: handed over by a second copy, or the command).
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Link(url::Url),
 }
 
@@ -257,6 +280,9 @@ struct App {
     overlay_tips_seen: bool,
     /// The asides window's process.
     window: Option<Child>,
+    /// It draws on the CPU (`gpu`): a crash isn't the GPU's.
+    #[cfg(target_os = "linux")]
+    window_on_cpu: bool,
     /// The microphones, for the window's settings.
     input_devices: Vec<String>,
     /// asides' own updates: the thread that checks and downloads, and where the update is.
@@ -288,8 +314,9 @@ fn main() {
     // What goes wrong is kept in ~/Library/Logs/asides (`asides log`): launched from the Dock or at
     // login, standard error went nowhere.
     asides_core::log::init("app");
-    // Windows: the links this copy was started with go to the one already running, if there's one.
-    #[cfg(windows)]
+    // Windows and Linux: the links this copy was started with go to the one already running, if
+    // there's one.
+    #[cfg(any(windows, target_os = "linux"))]
     let Some(instance) = instance::first() else { return };
     if let Err(err) = asides_core::log::capture_stderr() {
         asides_core::log::problem(format_args!("standard error not in the log: {err}"));
@@ -305,7 +332,7 @@ fn main() {
         event_loop.set_activate_ignoring_other_apps(false);
     }
     let proxy = event_loop.create_proxy();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     {
         let p = proxy.clone();
         instance.listen(move |url| p.send_event(UserEvent::Link(url)).is_ok());
@@ -412,6 +439,8 @@ impl App {
             last_measure: Saved::default(),
             overlay_tips_seen: previous.overlay_tips_seen,
             window: None,
+            #[cfg(target_os = "linux")]
+            window_on_cpu: false,
             input_devices: audio::input_device_names(),
             updater: None,
             updates,
@@ -430,7 +459,7 @@ impl App {
     fn init(&mut self) {
         // Windows: `asides://` links open this copy (the command, the window, setup).
         system::register_links();
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if self.config.measure.identify_elements {
             elements::warm_up();
         }
@@ -439,6 +468,10 @@ impl App {
             Ok(tray) => self.tray = Some(tray),
             Err(err) => eprintln!("could not create the status item: {err:#}"),
         }
+        // A desktop with nowhere for a status item (GNOME without its extension): started by hand,
+        // the user would see nothing happen. At login it just waits for its shortcuts.
+        let started_by_hand = !std::env::args().any(|a| a == "--background" || a.starts_with("asides:"));
+        let without_tray = self.tray.is_none() && started_by_hand && !cfg!(feature = "dev-hooks");
         self.icons = Some(icons);
         match Hotkeys::new(&self.config.shortcuts) {
             Ok(hotkeys) => {
@@ -479,6 +512,8 @@ impl App {
         let setup = !cfg!(feature = "dev-hooks") || std::env::var_os("ASIDES_SETUP").is_some();
         if !self.onboarded && setup {
             self.open_window_at(Some("setup"));
+        } else if without_tray {
+            self.open_window();
         }
         self.refresh();
         self.publish();
@@ -488,8 +523,9 @@ impl App {
     /// Homebrew cask does: /usr/local/bin/asides → the CLI in the bundle. Skipped when an `asides`
     /// is already set up, or once the user declined the password prompt.
     fn link_command(&self) {
-        // Windows: the app's folder (which has asides.exe) goes on the user's PATH.
-        #[cfg(windows)]
+        // Windows: the app's folder (which has asides.exe) goes on the user's PATH. Linux, when not
+        // installed by a package: ~/.local/bin/asides → the command beside the app.
+        #[cfg(not(target_os = "macos"))]
         let Some(cli) = system::command_to_link() else { return };
         #[cfg(target_os = "macos")]
         let cli = {
@@ -536,6 +572,8 @@ impl App {
                 }
             }
             UserEvent::Heard => self.show_level(),
+            #[cfg(target_os = "linux")]
+            UserEvent::WindowEnded => self.window_ended(),
             UserEvent::StandingBy(started) => {
                 self.standing_by = false;
                 match started {
@@ -562,9 +600,9 @@ impl App {
             }
             UserEvent::Delivered { id, delivery } => self.delivered(&id, delivery, true),
             UserEvent::CommandLinked(CommandLink::Linked) => {
-                let status = match cfg!(windows) {
-                    true => "You can now run `asides` in a new terminal".to_string(),
-                    false => format!("You can now run `asides` in any terminal ({})", install::LINK),
+                let status = match cfg!(target_os = "macos") {
+                    false => "You can now run `asides` in a new terminal".to_string(),
+                    true => format!("You can now run `asides` in any terminal ({})", install::LINK),
                 };
                 self.flash(SENT_FLASH, Mark::Check, status);
                 self.refresh();
@@ -574,7 +612,7 @@ impl App {
                 self.publish();
             }
             UserEvent::CommandLinked(CommandLink::Failed(message)) => {
-                let place = if cfg!(windows) { "your PATH" } else { install::LINK };
+                let place = if cfg!(target_os = "macos") { install::LINK } else { "your PATH" };
                 self.fail(format!("Could not add the asides command to {place}: {message}"));
             }
             // asides frozen as it opens, or, open, frozen again.
@@ -616,6 +654,7 @@ impl App {
         self.last_request = link.request().cloned();
         match link {
             Link::Open { .. } => self.open_or_send(),
+            Link::Live { .. } => self.freeze(),
             Link::Window { .. } => self.open_window(),
             Link::Send { id, to, .. } => self.send_again(&id, to),
             Link::NewSession { id, agent, dir, .. } => self.send_again_to(&id, Target::New { agent, dir }),
@@ -1113,15 +1152,15 @@ impl App {
             return;
         }
         if !self.screen_permitted && !capture::permitted() {
-            capture::request();
-            return self.fail(
-                "asides needs to see the screen to freeze it: allow it in System Settings → Privacy & Security → \
-                 Screen & System Audio Recording, then quit and reopen asides."
-                    .into(),
-            );
+            return self.screen_not_permitted();
         }
         self.screen_permitted = true;
         let screens = capture::screens(self.mtm);
+        // The X server didn't answer: no use asking it for the rest.
+        #[cfg(target_os = "linux")]
+        if screens.is_empty() {
+            return self.fail("Could not reach the X server (Xwayland on Wayland), which asides' windows need.".into());
+        }
         let displays = screens
             .iter()
             .map(|s| {
@@ -1150,6 +1189,27 @@ impl App {
         // While the screens are taken: where the user is, for the screenshot's aside, and the
         // windows as they are now, before the overlay covers them.
         self.capturing = Some(Capturing { at: Instant::now(), screens, windows, place });
+    }
+
+    /// The screen can't be seen yet: macOS is asked, and says where to allow it.
+    #[cfg(not(target_os = "linux"))]
+    fn screen_not_permitted(&mut self) {
+        capture::request();
+        self.fail(
+            "asides needs to see the screen to freeze it: allow it in System Settings → Privacy & Security → \
+             Screen & System Audio Recording, then quit and reopen asides."
+                .into(),
+        );
+    }
+
+    /// The screen can't be seen yet: GNOME shows its question only for the app in front, so asides'
+    /// window comes up with the button that asks.
+    #[cfg(target_os = "linux")]
+    fn screen_not_permitted(&mut self) {
+        self.setup_step = Some("permissions".into());
+        self.publish();
+        self.open_window_at(Some("setup"));
+        self.fail("To freeze the screen, GNOME must allow asides: press Allow… in its window.".into());
     }
 
     /// asides, open over the live screen, frozen: the screenshots go to its overlay.
@@ -1291,7 +1351,19 @@ impl App {
             if matches!(message, OverlayMessage::Exited)
                 && let Some(standby) = self.standby.take()
             {
-                asides_core::log::problem(format_args!("the overlay standing by ({pid}) ended: {}", standby.ended()));
+                #[cfg(target_os = "linux")]
+                let on_cpu = standby.on_cpu;
+                let ended = standby.ended();
+                let how = match &ended {
+                    Ok(status) => status.to_string(),
+                    Err(err) => err.to_string(),
+                };
+                asides_core::log::problem(format_args!("the overlay standing by ({pid}) ended: {how}"));
+                // Crashed on the GPU: another, on the CPU.
+                #[cfg(target_os = "linux")]
+                if ended.is_ok_and(|status| gpu::crashed(status) && !on_cpu) && gpu::draw_on_cpu() {
+                    self.stand_by();
+                }
             }
             return;
         }
@@ -1337,6 +1409,17 @@ impl App {
                 self.refresh();
             }
             OverlayMessage::Event(OverlayEvent::Target { target }) => self.target = Some(target),
+            OverlayMessage::Event(OverlayEvent::Clipboard { text, png }) => {
+                if let Some(text) = text {
+                    clipboard::put_text(&text);
+                }
+                if let Some(png) = png {
+                    if let Ok(bytes) = std::fs::read(&png) {
+                        clipboard::put_png(&bytes);
+                    }
+                    let _ = std::fs::remove_file(&png);
+                }
+            }
             OverlayMessage::Event(OverlayEvent::PillPlaced { at }) => {
                 self.pill_at = at;
                 self.publish();
@@ -1583,10 +1666,21 @@ impl App {
         if let Some(page) = page {
             command.env("ASIDES_WINDOW_PAGE", page);
         }
+        #[cfg(target_os = "linux")]
+        {
+            self.window_on_cpu = gpu::configure(&mut command);
+        }
         let spawned = command.spawn();
         match spawned {
             Ok(child) => {
                 system::allow_focus(child.id() as i32);
+                #[cfg(target_os = "linux")]
+                {
+                    let proxy = self.proxy.clone();
+                    gpu::when_ended(child.id(), move || {
+                        let _ = proxy.send_event(UserEvent::WindowEnded);
+                    });
+                }
                 self.window = Some(child);
             }
             Err(err) => self.fail(format!("Could not open the asides window: {err}")),
@@ -1869,8 +1963,18 @@ impl App {
     fn ask_permission(&mut self, permission: Permission) {
         match permission {
             Permission::Microphone => self.request_mic(),
+            #[cfg(not(target_os = "linux"))]
             Permission::Screen => {
                 capture::request();
+            }
+            // The desktop waits for the user's answer; then the permissions are looked at again.
+            #[cfg(target_os = "linux")]
+            Permission::Screen => {
+                let proxy = self.proxy.clone();
+                std::thread::spawn(move || {
+                    capture::request();
+                    let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
+                });
             }
             Permission::Accessibility => {
                 elements::request_trust();
@@ -1884,6 +1988,22 @@ impl App {
                     let _ = proxy.send_event(UserEvent::PermissionsMayHaveChanged);
                 });
             }
+        }
+    }
+
+    /// The asides window's process ended: crashed as it drew on the GPU, it opens again on the CPU.
+    #[cfg(target_os = "linux")]
+    fn window_ended(&mut self) {
+        let Some(window) = self.window.as_mut() else { return };
+        let Ok(Some(status)) = window.try_wait() else { return };
+        let pid = window.id();
+        self.window = None;
+        if status.success() {
+            return;
+        }
+        asides_core::log::problem(format_args!("the asides window ({pid}) ended: {status}"));
+        if gpu::crashed(status) && !self.window_on_cpu && gpu::draw_on_cpu() {
+            self.open_window();
         }
     }
 

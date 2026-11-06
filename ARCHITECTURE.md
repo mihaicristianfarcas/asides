@@ -56,6 +56,43 @@ in `asides-app`, `win/` in `asides-overlay`).
   each page's strip along the top (32 pt, which moves the window), the sidebar's first row as near
   the top as its foot is to the bottom, Segoe UI Variable and Cascadia Mono (`controls::init_fonts`).
 
+### On Linux
+
+The same processes and protocol, on X11 and on Wayland desktops. Modules are named as on the other
+systems (`linux/` in `asides-app`, `lin/` in `asides-overlay`). GPUI is vendored, patched
+(`third_party/gpui`, `PATCHES.md` lists why).
+
+- **The overlay is always an X11 client** (Xwayland on Wayland desktops): Wayland has no way for an
+  app to place its windows over everything or take the keyboard unasked. The app starts it without
+  `WAYLAND_DISPLAY`. Its windows are override-redirect; a hidden one stays mapped off-screen (GPUI
+  on X11 draws only what's mapped). The asides window is an ordinary window, native on the session's
+  display server.
+- **The keyboard**: on X11 and GNOME, `XSetInputFocus`. KWin gives keys only to its active managed
+  window, so there a 1×1 managed stand-in is activated and the overlay grabs the keyboard; a grab's
+  keys reach only the grabbing connection, so a thread forwards them to GPUI's (`lin/native.rs`).
+  Handing back, the window manager refocuses, or the window saved, if it's a real client.
+- **Freezing** (`linux/capture.rs`): X11's `GetImage`; on Wayland, KWin's `ScreenShot2` (it allows
+  apps whose desktop entry names the interface) or the Screenshot portal, which gives one picture
+  of all monitors, cut up by RandR's layout. GNOME asks the user once, and shows its question only
+  for the app in front: asides' window asks (setup's Screenshots row), and a freeze not yet allowed
+  opens it there. The answer is read from the portal's permission store (`portal.rs`).
+- **Drawing**: GPUI on Vulkan. A GPUI process that crashes as it draws on the GPU (a driver's crash)
+  is started again with Mesa's software Vulkan, and so is every one after (`linux/gpu.rs`).
+- **Shortcuts** (`linux/hotkeys.rs`): the first that applies of `XGrabKey`, GNOME's custom keyboard
+  shortcuts (running `asides open`), KDE's `kglobalaccel`, and the GlobalShortcuts portal; otherwise
+  the error says to bind the commands.
+- **Sessions** come from `/proc` (`sessions_linux.rs`); the terminal from the environment.
+- **Typing in** (`deliver.rs`): what a terminal takes itself (tmux, Konsole's D-Bus, WezTerm, kitty)
+  needs nothing allowed. Any other pty: `asides-keys` gets the terminal's pty master with
+  `pidfd_getfd` and writes what the keyboard would. Where `ptrace_scope` is 1 or more (Ubuntu, Arch)
+  that needs `cap_sys_ptrace` on the helper alone, granted by the user in setup (`pkexec setcap`),
+  never by a package. It's small on purpose: it checks the terminal is the user's and drops the
+  capability before reading anything.
+- **What's under a pin** (`linux/elements.rs`): AT-SPI, and the X window list for the app and window.
+- **No GTK**: `linux/event_loop.rs` and `linux/status_item.rs` (`ksni`) are the little of `tao` and
+  `tray-icon` the app uses. No Metal or GPU acceleration for whisper.cpp: the CPU, as on Windows.
+- **One app per user**: a Unix socket (`linux/instance.rs`). A later copy hands it its links and ends.
+
 ## Code map
 
 ```
@@ -85,7 +122,9 @@ crates/
     update.rs         updating asides: the feed, versions, the status shown, release notes
     paths.rs          bundle ID, URL scheme, paths
     sessions_windows.rs  Windows: sessions from processes' memory, their consoles, their last input
-    display.rs        monitors: AppKit's coordinates ↔ Windows' pixels
+    sessions_linux.rs Linux: sessions from /proc, their terminals
+    portal.rs         Linux: asking an XDG desktop portal, and waiting for its answer
+    display.rs        monitors: AppKit's coordinates ↔ Windows' and Linux's pixels
     launch.rs         Windows: finding and starting an agent without a shell (npm's shims)
   asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
@@ -109,6 +148,7 @@ crates/
     replay.rs         development: replays AppKit events and captures windows
     assets.rs         SVG icons, and help/ (embedded by build.rs)
     win/              Windows' native.rs (Win32 windows, focus, kiosk hook) and export.rs (tiny-skia)
+    lin/              Linux's native.rs (X11 windows, focus, grabs); export.rs is Windows'
     help/             the clips' frames and clips.json, made by scripts/make-help.py
     help-windows/     the same, made on Windows (Edge, Windows Terminal, Windows' keys)
   asides-app/      the menu-bar app (asides-app, renamed asides in the bundle)
@@ -129,9 +169,15 @@ crates/
     sounds/           its sounds (embedded by macos.rs), made by scripts/make-sounds.py
     windows/          Windows' system.rs (macos.rs's), instance.rs (one copy, links), capture.rs
                       (GDI), elements.rs (UI Automation), clipboard.rs, terminal.rs (consoles)
+    linux/            Linux's system.rs, instance.rs, capture.rs (X11, portal, KWin), elements.rs
+                      (AT-SPI), clipboard.rs, terminal.rs, hotkeys.rs, event_loop.rs, status_item.rs
+  asides-keys/     Linux: the helper that types into a pty (any terminal, where the system allows)
+third_party/gpui/     GPUI, patched for Linux (PATCHES.md)
 packaging/            Info.plist, icons, entitlements, Cloudflare Workers (download/, site/),
-                      windows/asides.iss (the Windows installer)
-scripts/              e2e, fixtures, signing, release, dmg, Windows package, website images, icon, sounds
+                      windows/asides.iss (the Windows installer), linux/ (desktop entry, install.sh,
+                      PKGBUILD)
+scripts/              e2e, fixtures, signing, release, dmg, Windows and Linux packages, website images,
+                      icon, sounds
 docs/                 the website
 guide/                user documentation
 Casks/asides.rb       the Homebrew cask (the repository is a tap)
@@ -240,7 +286,7 @@ Break these only on purpose, and update this list.
 
 1. **`asides-core` is platform-independent**: no AppKit, objc2 or audio crates. On Windows it reads
    what only the system knows through Win32 (processes, monitors, the registry's PATH), behind
-   `cfg(windows)`.
+   `cfg(windows)`; on Linux through `/proc` and D-Bus (`portal.rs`).
 2. **Nothing polls.** Everything waits on what happens (input, notifications, FSEvents through
    `watch.rs`, kqueue, a process ending, a channel) or sleeps until the exact time something is
    due. A timer only where nothing says, and the code says why (the update check, the watchdog's
@@ -257,20 +303,22 @@ Break these only on purpose, and update this list.
    words in testing).
 8. **The CLI ↔ app protocol is `link.rs` plus `state.rs`.** Change both sides together.
 9. **Launch Services launches the app**, never a terminal (or the terminal gets the microphone
-   permission, and the app dies with it). On Windows, one copy runs per user (`instance.rs`).
+   permission, and the app dies with it). On Windows and Linux, one copy runs per user
+   (`instance.rs`).
 10. **Binary names differ by more than case** (case-insensitive APFS).
 11. **Stable signing identity, hardened runtime**: permissions follow the identity; every capability
     needs an entitlement.
 12. **No new permissions without discussion.** Today: Microphone, Screen Recording, Accessibility
     (optional), Automation for Terminal and Ghostty. Not Input Monitoring. On Windows, only the
-    microphone.
+    microphone. On Linux, where the kernel requires it, `cap_sys_ptrace` on `asides-keys` alone,
+    which the user grants; a Wayland desktop may ask once before a screenshot.
 13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so).
 14. **The overlay needs no permission**: the app captures and identifies. Its stdout carries only
     protocol lines.
 15. **Measuring logic stays in `asides-core`**, shared by the overlay, `asides measure` and
     `measure_image`.
 16. **On-screen UI is GPUI**, in `asides-overlay`. Exported images use AppKit (GPUI can't render
-    offscreen), following `style.rs`; on Windows, tiny-skia (`win/export.rs`).
+    offscreen), following `style.rs`; on Windows and Linux, tiny-skia (`win/export.rs`).
 17. **Each aside goes to one place**: a session, a new session, or the history.
 18. **Only a notarized asides from the same team, of the version promised, replaces asides**, and
     only once it has quit. Copies that aren't notarized never update themselves, nor, for now, do

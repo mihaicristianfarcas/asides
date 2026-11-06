@@ -531,6 +531,11 @@ pub fn monitor_keys() {
 
 /// The asides window's glass: GPUI puts an `NSVisualEffectView` under its view, blurring the
 /// whole window.
+/// Linux's: a Mac's windows have their title bars from AppKit.
+pub fn draws_its_title_bar(_window: &gpui::Window) -> bool {
+    false
+}
+
 pub fn window_glass() -> gpui::WindowBackgroundAppearance {
     gpui::WindowBackgroundAppearance::Blurred
 }

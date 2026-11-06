@@ -2,6 +2,9 @@
 //! are macOS's: global points from the top left of the main screen (CoreGraphics', y down) and
 //! frames from its bottom left (AppKit's, y up).
 //!
+//! On Linux, the X server's monitors are read the same way (`monitors`, through RandR), Xwayland's on
+//! a Wayland desktop: its pixels are the desktop's points there.
+//!
 //! Windows lays its monitors out in physical pixels, each at a scale of its own (per-monitor DPI).
 //! Points can't be global the way macOS's are: dividing every monitor's position by its own scale
 //! would overlap a 100 % monitor left of a 150 % one. So a monitor keeps its corner where Windows
@@ -106,8 +109,9 @@ pub fn pixels_to_frame(monitors: &[Monitor], (x, y, w, h): (f64, f64, f64, f64))
     PtRect::new(r.x, flip_y(monitors, r.y, r.height), r.width, r.height)
 }
 
-/// A monitor as Windows lists it (`EnumDisplayMonitors`, whose order is GPUI's display ids).
-#[cfg(windows)]
+/// A monitor as the system lists it (Windows' `EnumDisplayMonitors`, whose order is GPUI's display
+/// ids; RandR's on Linux).
+#[cfg(any(windows, target_os = "linux"))]
 #[derive(Debug, Clone)]
 pub struct Listed {
     pub monitor: Monitor,
@@ -163,6 +167,102 @@ pub fn monitors() -> Vec<Listed> {
         let _ = EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut found as *mut Vec<Listed> as isize));
     }
     found
+}
+
+/// How long [`connect_x11`] waits for the X server.
+#[cfg(target_os = "linux")]
+const X_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// A new connection to the X server, if it takes one in time. Connecting waits for as long as the
+/// server doesn't answer, and on a Wayland desktop it may still be starting, or hung with the
+/// compositor that starts it: a GUI's main thread mustn't wait with it. (One that comes too late
+/// goes with its thread.)
+#[cfg(target_os = "linux")]
+pub fn connect_x11() -> Option<(x11rb::rust_connection::RustConnection, usize)> {
+    let (connected, connection) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("asides-x-connect".into())
+        .spawn(move || {
+            let _ = connected.send(x11rb::connect(None).ok());
+        })
+        .ok()?;
+    connection.recv_timeout(X_WAIT).ok().flatten()
+}
+
+/// The monitors, on a new connection to the X server (none without one).
+#[cfg(target_os = "linux")]
+pub fn monitors() -> Vec<Listed> {
+    match connect_x11() {
+        Some((connection, screen)) => monitors_on(&connection, screen),
+        None => Vec::new(),
+    }
+}
+
+/// The monitors as the X server lays them out (RandR), the primary one first, as GPUI's scale says
+/// (`x11_scale`); a screen without RandR is one monitor.
+#[cfg(target_os = "linux")]
+pub fn monitors_on(connection: &impl x11rb::connection::Connection, screen: usize) -> Vec<Listed> {
+    use x11rb::protocol::randr::ConnectionExt as _;
+    use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
+    let Some(root) = connection.setup().roots.get(screen) else { return Vec::new() };
+    let scale = x11_scale(connection, screen);
+    let area: Option<Vec<u32>> =
+        connection.intern_atom(false, b"_NET_WORKAREA").ok().and_then(|cookie| cookie.reply().ok()).and_then(|atom| {
+            let cookie = connection.get_property(false, root.root, atom.atom, AtomEnum::CARDINAL, 0, 4).ok()?;
+            cookie.reply().ok()?.value32().map(Iterator::collect)
+        });
+    let work = |left: i32, top: i32, width: i32, height: i32| match area.as_deref() {
+        // One rectangle for the whole screen: what it leaves of this monitor.
+        Some(&[x, y, w, h]) if w > 0 && h > 0 => {
+            let (x, y, w, h) = (x as i32, y as i32, w as i32, h as i32);
+            let (l, t) = (left.max(x), top.max(y));
+            let (r, b) = ((left + width).min(x + w), (top + height).min(y + h));
+            if r > l && b > t { (l, t, r, b) } else { (left, top, left + width, top + height) }
+        }
+        _ => (left, top, left + width, top + height),
+    };
+    let reply = connection.randr_get_monitors(root.root, true).ok().and_then(|cookie| cookie.reply().ok());
+    let mut found: Vec<Listed> = reply
+        .map(|r| r.monitors)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| m.width > 0 && m.height > 0)
+        .map(|m| {
+            let (left, top, width, height) = (m.x as i32, m.y as i32, m.width as i32, m.height as i32);
+            let name = connection.get_atom_name(m.name).ok().and_then(|cookie| cookie.reply().ok());
+            Listed {
+                monitor: Monitor { left, top, width, height, scale, primary: m.primary },
+                device: name.map_or_else(String::new, |n| String::from_utf8_lossy(&n.name).into_owned()),
+                work: work(left, top, width, height),
+            }
+        })
+        .collect();
+    if found.is_empty() {
+        let (width, height) = (root.width_in_pixels as i32, root.height_in_pixels as i32);
+        found.push(Listed {
+            monitor: Monitor { left: 0, top: 0, width, height, scale, primary: true },
+            device: String::new(),
+            work: work(0, 0, width, height),
+        });
+    }
+    if !found.iter().any(|l| l.monitor.primary) {
+        // One must be: the first at the origin, or the first.
+        let at = found.iter().position(|l| l.monitor.left == 0 && l.monitor.top == 0).unwrap_or(0);
+        found[at].monitor.primary = true;
+    }
+    found
+}
+
+/// How many X pixels a point is, as GPUI says for its windows: `GPUI_X11_SCALE_FACTOR`, or `Xft.dpi`
+/// in the X resources over 96, or 1.
+#[cfg(target_os = "linux")]
+fn x11_scale(connection: &impl x11rb::connection::Connection, _screen: usize) -> f64 {
+    if let Some(scale) = std::env::var("GPUI_X11_SCALE_FACTOR").ok().and_then(|v| v.parse::<f64>().ok()) {
+        return scale;
+    }
+    let database = x11rb::resource_manager::new_from_default(connection).ok();
+    let dpi = database.and_then(|db| db.get_value::<f64>("Xft.dpi", "Xft.dpi").ok().flatten());
+    dpi.filter(|dpi| *dpi > 0.0).map_or(1.0, |dpi| dpi / 96.0)
 }
 
 /// The monitor `inside` holds, or else the one nearest to `(x, y)` (by its corner).

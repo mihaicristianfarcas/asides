@@ -290,7 +290,7 @@ fn toolbar_options(display_id: Option<DisplayId>, frame: PtRect) -> WindowOption
         // Glass, as Diri's sidebar: macOS blurs what's behind, only behind the pill's shapes.
         // Windows can't keep a blur to them (its blur takes the whole window): the window is
         // see-through around the pill, which is its tint over what's behind.
-        window_background: if cfg!(windows) {
+        window_background: if cfg!(not(target_os = "macos")) {
             WindowBackgroundAppearance::Transparent
         } else {
             WindowBackgroundAppearance::Blurred
@@ -389,13 +389,13 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     if shown.is_some() {
         hide_pill(overlay, cx)?;
         let followed = follow_toolbar(overlay, cx, None)?;
-        native::draw_now(&followed.redraw);
+        draw_now(&followed.redraw, cx);
     }
     // The pointer left the pill from a button, and GPUI hears only moves in the pill's window: it's
     // told where the pointer is now (`Overlay::left_pill`), for the button to go dark.
     let left = cx.update(|cx| overlay.update(cx, |o, _| std::mem::take(&mut o.left_pill)))?;
     if left && let Some(toolbar) = toolbar {
-        native::pointer_moved(toolbar);
+        pointer_moved(toolbar, cx);
     }
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
@@ -440,7 +440,7 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
     match hide {
         true => native::hide(toolbar),
         false => {
-            native::draw_now(&[toolbar]);
+            draw_now(&[toolbar], cx);
             native::appear(toolbar);
         }
     }
@@ -450,11 +450,33 @@ fn hide_pill(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
 /// The pill's window, drawn at its size where it goes, before it shows: drawn once, the pill knows
 /// its size, and the window fits it (`follow_toolbar` draws it again).
 fn prepare_toolbar(overlay: &Entity<Overlay>, toolbar: usize, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    native::pointer_moved(toolbar);
-    native::draw_now(&[toolbar]);
+    pointer_moved(toolbar, cx);
+    draw_now(&[toolbar], cx);
     let followed = follow_toolbar(overlay, cx, None)?;
-    native::draw_now(&followed.redraw);
+    draw_now(&followed.redraw, cx);
     Ok(())
+}
+
+/// Draws these windows now (`native::draw_now`). On Linux GPUI draws only for the app, in hand here.
+fn draw_now(views: &[usize], cx: &mut AsyncApp) {
+    #[cfg(target_os = "linux")]
+    let _ = cx.update(|cx| native::draw_now(views, cx));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = &cx;
+        native::draw_now(views);
+    }
+}
+
+/// Tells the window where the pointer is now (`native::pointer_moved`).
+fn pointer_moved(view: usize, cx: &mut AsyncApp) {
+    #[cfg(target_os = "linux")]
+    let _ = cx.update(|cx| native::pointer_moved(view, cx));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = &cx;
+        native::pointer_moved(view);
+    }
 }
 
 /// The pill's window, following the pill at once (between the clock's ticks): it was just drawn at
@@ -497,7 +519,7 @@ fn follow_now_inside(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
         let screens = ((waited || followed.changed) && frozen).then(|| o.windows.iter().map(|w| w.view));
         toolbar.into_iter().chain(screens.into_iter().flatten()).collect::<Vec<usize>>()
     });
-    native::draw_now(&views.unwrap_or_default());
+    draw_now(&views.unwrap_or_default(), cx);
 }
 
 /// What following the pill did: whether what goes with it moved, and the pill's window when it
@@ -524,6 +546,10 @@ pub fn ask_folder(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
         let key = cx.update(|cx| {
             overlay.update(cx, |o, cx| {
                 o.folder_chosen(dir);
+                #[cfg(target_os = "linux")]
+                if native::no_folder_picker() {
+                    o.notice("This desktop offers no folder picker (asides log says why)");
+                }
                 cx.notify();
                 let key = pointer_screen(&o.spec().screens).unwrap_or(0);
                 (!o.live).then(|| o.windows.get(key).map(|w| w.view)).flatten()
@@ -551,9 +577,9 @@ fn show_frozen(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<(
     // GPUI still has the pointer where it was when they last showed (development windows show only
     // part of the screen: the pointer stays out of them).
     if !windowed && let Some(&view) = screens.get(key) {
-        native::pointer_moved(view);
+        pointer_moved(view, cx);
     }
-    native::draw_now(&screens);
+    draw_now(&screens, cx);
     // Opening, the pill first: over the live screen for a moment, it looks just the same. It comes
     // in (`native::appear`) over the frozen screens, which show the screen as it was.
     if opening && let Some(toolbar) = toolbar {
@@ -629,7 +655,7 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
                     cx.notify();
                 })
             })?;
-            native::draw_now(&screens);
+            draw_now(&screens, cx);
             return begin_handoff(overlay, cx);
         }
         if !handed_back(overlay, cx)? {

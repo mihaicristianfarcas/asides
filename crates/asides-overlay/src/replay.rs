@@ -169,13 +169,13 @@ pub fn run_window(view: usize, steps: serde_json::Value, dir: std::path::PathBuf
 }
 
 /// Where the window with view `view` is on screen, captured as it shows (glass shows what's behind).
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
     let captured = crate::native::frame(view).is_some_and(|f| crate::native::capture(f, path));
     eprintln!("captured {} ({captured})", path.display());
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub(crate) fn capture_window(view: usize, path: &std::path::Path) {
     let main = crate::native::screens().into_iter().find(|(_, f)| f.x == 0.0 && f.y == 0.0).map(|(_, f)| f.height);
     let Some((f, main)) = crate::native::frame(view).zip(main) else { return };
@@ -222,7 +222,7 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
             }
         });
     }
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     if let Some(path) = &step.capture {
         // A screen's window as it shows, or the pill's window alone; the pill kept in captures.
         let o = overlay.read(cx);
@@ -238,7 +238,7 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
         let captured = view.and_then(crate::native::frame).is_some_and(|f| crate::native::capture(f, &path));
         eprintln!("captured {} ({captured})", path.display());
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     if let Some(path) = &step.capture {
         let o = overlay.read(cx);
         let mut args = vec!["-x".to_string(), "-o".into()];

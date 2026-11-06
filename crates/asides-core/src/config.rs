@@ -22,9 +22,9 @@ const HEADER: &str = r#"# asides settings (the asides window changes every one o
 # [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
 # identify_elements: name what's under each annotation (needs the Accessibility permission);
 # padding: points of screen kept around what you annotated in the screenshot.
-# [agents] terminal: the app new sessions open in ("Terminal" when ""; "Ghostty", "Diri"); claude,
-# codex, opencode, gemini, copilot, qwen: extra arguments for that agent's new sessions, e.g.
-# claude = ["--model", "opus"].
+# [agents] terminal: the app new sessions open in ("Terminal" when ""; "Ghostty", "Diri"; on Linux
+# the desktop's own when "", or any installed: "konsole", "kitty"…); claude, codex, opencode, gemini,
+# copilot, qwen: extra arguments for that agent's new sessions, e.g. claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
@@ -63,7 +63,8 @@ pub struct Config {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Agents {
-    /// The app new sessions open in: "Terminal" (the default when empty), "Ghostty" or "Diri".
+    /// The app new sessions open in: "Terminal" (the default when empty), "Ghostty" or "Diri". On
+    /// Linux, an installed terminal's command; empty, the desktop's own.
     pub terminal: String,
     /// The agent New session in… starts unless the user picks another (its program).
     pub default: String,
@@ -442,12 +443,13 @@ pub fn pretty_shortcut(shortcut: &str) -> String {
     let mut mods = String::new();
     let mut key = String::new();
     let tokens: Vec<String> = shortcut.split('+').map(|t| t.trim().to_ascii_lowercase()).collect();
-    // Windows writes them out: `Ctrl+Alt+Space`.
+    // Windows and Linux write them out: `Ctrl+Alt+Space`.
     let names = |symbol: &str| match symbol {
         "⌃" => "Ctrl+",
         "⌥" => "Alt+",
         "⇧" => "Shift+",
-        _ => "Win+",
+        _ if cfg!(windows) => "Win+",
+        _ => "Super+",
     };
     for symbol in ["⌃", "⌥", "⇧", "⌘"] {
         let present = tokens.iter().any(|t| match symbol {
@@ -457,7 +459,7 @@ pub fn pretty_shortcut(shortcut: &str) -> String {
             _ => t == "cmd" || t == "command" || t == "super",
         });
         if present {
-            mods.push_str(if cfg!(windows) { names(symbol) } else { symbol });
+            mods.push_str(if cfg!(target_os = "macos") { symbol } else { names(symbol) });
         }
     }
     if let Some(last) = shortcut.split('+').map(str::trim).next_back() {
@@ -480,16 +482,17 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(windows)]
+    #[cfg(not(target_os = "macos"))]
     fn pretty_prints_shortcuts() {
         assert_eq!(pretty_shortcut("ctrl+alt+Space"), "Ctrl+Alt+Space");
-        assert_eq!(pretty_shortcut("cmd+shift+KeyN"), "Shift+Win+N");
+        let system = if cfg!(windows) { "Win" } else { "Super" };
+        assert_eq!(pretty_shortcut("cmd+shift+KeyN"), format!("Shift+{system}+N"));
         assert_eq!(pretty_shortcut("Escape"), "Esc");
         assert_eq!(pretty_shortcut("option+F5"), "Alt+F5");
     }
 
     #[test]
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     fn pretty_prints_shortcuts_as_macos_does() {
         assert_eq!(pretty_shortcut("ctrl+alt+Space"), "⌃⌥Space");
         assert_eq!(pretty_shortcut("cmd+shift+KeyN"), "⇧⌘N");

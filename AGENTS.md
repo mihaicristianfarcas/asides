@@ -6,8 +6,8 @@ before changing the app; [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, an
 
 ## The project
 
-asides is a macOS menu-bar app plus a CLI, and runs on Windows too (ARCHITECTURE.md's "On
-Windows"). `⌃⌥Space` freezes every screen under a pill; the user
+asides is a macOS menu-bar app plus a CLI, and runs on Windows and Linux too (ARCHITECTURE.md's "On
+Windows" and "On Linux"). `⌃⌥Space` freezes every screen under a pill; the user
 pins elements, measures, draws and talks; `⌃⌥Space` again types it all, transcribed locally and
 verbatim by whisper.cpp, into a coding agent's session in Terminal, Ghostty or Diri, as the user's
 own message with screenshots. `⌃⌥P` goes live and freezes again (one aside, many freezes). Every
@@ -20,6 +20,9 @@ A Rust workspace:
 - `crates/asides-app`: the menu-bar app (binary `asides-app`, bundled as `asides.app`).
 - `crates/asides-overlay`: the overlay, the pill, the frozen screens and the asides window (binary
   `asides-overlay`, GPUI), bundled beside the app's binary. Any new UI is GPUI.
+- `crates/asides-keys`: Linux's helper that types into a pty (binary `asides-keys`), alone so it alone
+  can hold a capability.
+- `third_party/gpui`: GPUI, patched for Linux (`PATCHES.md`).
 
 ## Commands
 
@@ -39,6 +42,8 @@ A Rust workspace:
 | Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
 | Windows package | `scripts\package-windows.ps1`, on Windows (zip and installer in `dist\`) |
+| Linux package | `scripts/package-linux.sh`, on Linux (archive, `.deb` and `.rpm` in `dist/`) |
+| End-to-end on Linux | `scripts/e2e-linux.sh` (headless GNOME Shell; see CONTRIBUTING.md) |
 | Sounds | `uv run scripts/make-sounds.py` (writes `crates/asides-app/sounds/`) |
 | Notarized release | `make release` (only when the maintainer asks; see Rules) |
 | Deploy the website | pushes to `main` deploy it; `make publish-site` by hand (only when the maintainer asks) |
@@ -392,7 +397,61 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - Real agents without an account, nothing leaving the machine: Claude Code with a made-up
   `ANTHROPIC_API_KEY` (its last 20 characters approved in `~/.claude.json`) and
   `ANTHROPIC_BASE_URL` at a closed port; Codex with a `model_provider` whose `base_url` is a closed
-  port. Their transcripts and rollouts still record exactly what was typed.
+  port (`wire_api = "responses"`: `"chat"` makes it exit). Their transcripts and rollouts still record
+  exactly what was typed. Codex leaves a daemon running: a stale one, its folder deleted, makes the
+  next Codex exit at once (kill every `codex` between runs).
+
+### Linux
+
+- GPUI has `#![deny(missing_docs)]`, and the vendored copy is excluded from the workspace: patches
+  need docs, and clippy doesn't see it. `libc` is pinned in `Cargo.lock` (0.2.189): a newer one broke
+  a dependency's build.
+- `gsettings` values are GVariant: a command in a custom shortcut needs its quotes escaped.
+- X11 sends a key's release with the modifiers still down: a grabbed key must match a release to its
+  press by keycode, or letting go of Ctrl first leaves it stuck and the next shortcut ignored.
+- An X connection closed right after a flush lost requests already flushed (the pill stayed
+  off-screen after a freeze taken live): make a round trip before closing.
+- A keyboard grab's keys reach only the connection that grabbed: the overlay forwards them to GPUI's
+  own (`native::forward_grabbed_keys`). KWin gives keys only to its active window, so an
+  override-redirect window needs a managed stand-in activated first; on Mutter `XSetInputFocus` is
+  enough, and what was focused may be Mutter's own no-focus window, which can't take it back.
+- kglobalaccel's key sequences must be four ints: one int aborts kglobalaccel and KWin with it. A Rust
+  `[&str; 4]` serializes as a D-Bus struct, not `as`: use a `Vec`.
+- Plasma 5.27's portal is allowed only the old screenshot interface and answers 1; KWin's own
+  `ScreenShot2` allows an app whose desktop entry has `X-KDE-DBUS-Restricted-Interfaces` and whose
+  `Exec` is the running binary.
+- Mutter's hot corners have barriers: a test's relative pointer motion toward a corner stops there
+  and opens the overview. `enable-hot-corners false`.
+- llvmpipe is slow, and debug builds compile shaders slowly enough to look hung: test in VMs with
+  release builds. Xwayland under KWin in a VM segfaults with GL: run it with `-shm` (a wrapper in
+  `PATH`).
+- Mesa 26.0's lavapipe on Arm64 with LLVM 22 segfaults compiling GPUI's shaders (unoptimized,
+  `GALLIVM_PERF=nopt`, it compiles forever): Fedora 44 before its updates, in a VM without a GPU.
+  Mesa 26.2 compiles them in seconds: update the VM.
+- Mesa's Venus (UTM's virtual GPU) aborts in `vkCreateShaderModule`: the overlay and the window die
+  as they start. The app then draws with lavapipe (`linux/gpu.rs`).
+- inotify also says when a file is opened: a watcher that took every event for a change saw its
+  own reads, and the app and the window read the settings in a loop (`watch::is_change`).
+- KWin 6.8 without OpenGL (its virtual output in a VM with no display device) segfaults taking a
+  screenshot (`RenderDevice::eglContext`), or even saying its `compositingType`: a test session there
+  can't take pictures. A VM with a display device gets OpenGL from Mesa's software renderer.
+- Mutter's Xwayland socket has a backlog of 1 and only Mutter's main loop starts the server: a blocking
+  X connection from inside Mutter's process deadlocks (its audio library's, with `DISPLAY` set), and
+  from elsewhere it blocks while the server starts: on the app's main thread, `display::connect_x11`.
+  Ubuntu's libpulsecommon calls `pa_client_conf_from_x11` directly (`-Bsymbolic-functions`): a test's
+  stub goes on `pa_client_conf_load`.
+- Mutter keeps override-redirect windows in `global.top_window_group`, stacked as they were mapped:
+  X11's stacking (`xwininfo`) and `global.get_window_actors()` can say the pill is on top while a
+  frozen screen mapped again, or opened for a new monitor, covers it (`native::pill_after`). A normal
+  window opening or closing reorders them, which hides the bug. Check pixels, and read that group
+  through `org.gnome.Shell.Eval`.
+- A minimal VM has no `desktop-file-utils`, so no `mimeinfo.cache`: `gio open asides://…` says
+  "Operation not supported" there, as it wouldn't on a desktop.
+- Override-redirect windows take no focus from a click: the overlay gives its window the keyboard
+  (`native::click_takes_keyboard`), or what's typed into a card on another screen is lost.
+- `pkill -f` in a command matches the shell running it; run test scripts from a file. Test processes
+  left behind hold a tool's output pipe open: end every script by killing what it started.
+- The VM mounts the repository read-only: `Cargo.lock` changes must be made on the host.
 
 ## Commits
 
