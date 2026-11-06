@@ -98,6 +98,7 @@ changes.
   CONTRIBUTING.md. The website (`docs/index.html`) repeats the shortcuts, requirements and install
   steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips (Windows'
   too, made on Windows).
+  What asides protects, the updater's checks included, goes in SECURITY.md.
 
 ## What you can and can't verify
 

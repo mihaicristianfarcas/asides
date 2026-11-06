@@ -1,0 +1,44 @@
+name: Tester report
+description: You tried asides. Say how it went, in under two minutes.
+title: "Tester report: "
+body:
+  - type: dropdown
+    id: result
+    attributes:
+      label: Did it work?
+      options:
+        - It worked
+        - It didn't
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: On Linux, the desktop
+      placeholder: GNOME on Wayland
+    validations:
+      required: false
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and terminal
+      placeholder: Claude Code in Ghostty
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything to add?
+      description: A sentence is plenty. If something broke, a [bug report](https://github.com/mihaicristianfarcas/asides/issues/new?template=bug.yml) has room for the details.
+    validations:
+      required: false
