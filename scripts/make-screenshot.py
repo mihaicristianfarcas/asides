@@ -1,4 +1,4 @@
-"""Renders guide/overlay.png, the README's picture of asides, and the website's two parts of it
+"""Renders guide/overlay.png and the website's two parts of it
 (docs/overlay-*.webp): the real overlay over the demo's checkout page, with all it does: the pill
 recording, pins on elements and an area, an area moved by its number, a pin's card typed in, a
 measurement and a sketch.
