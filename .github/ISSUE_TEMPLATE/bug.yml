@@ -12,7 +12,7 @@ body:
     attributes:
       label: asides version
       description: "`asides --version` says it."
-      placeholder: 1.0.8
+      placeholder: 1.1.0
     validations:
       required: true
   - type: dropdown
