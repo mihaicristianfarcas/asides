@@ -37,7 +37,7 @@ A Rust workspace:
 | Speech tests | `make test-speech` (needs the model; also downloads 190 MB) |
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
-| Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
+| Share image | `python3 scripts/make-og.py` (renders `docs/og.png`, the website's opening as it ends; needs Firefox) |
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png` and the website's `docs/overlay-*.webp`; shows a window for a few seconds) |
 | Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
