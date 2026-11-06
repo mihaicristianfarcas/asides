@@ -179,6 +179,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - Safari rewinding Web Animations (`currentTime = 0`) left the opening's caption at opacity 0 from the
   second loop on, which Firefox never showed: each loop makes them anew. `steps()` in an animation's
   options holds its first keyframe throughout: put it on each keyframe.
+- Moved by `left`/`top` and painted into the page, the website's pointer left trails of its
+  shadow in Safari: it has a layer of its own (`will-change: transform`).
 - Headless Firefox screenshots mid-transition: turn transitions off. On the website, a `padding`
   shorthand on `.wrap` in a media query reset the sections' top padding: set `padding-inline`.
 
