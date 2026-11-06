@@ -1,9 +1,10 @@
-"""Renders guide/overlay.png, the README's picture of asides: the real overlay over the website demo's
-checkout page, with all it does: the pill recording, pins on elements and an area, an area moved by
-its number, a pin's card typed in, a measurement and a sketch.
+"""Renders guide/overlay.png, the README's picture of asides, and the website's two parts of it
+(docs/overlay-*.webp): the real overlay over the demo's checkout page, with all it does: the pill
+recording, pins on elements and an area, an area moved by its number, a pin's card typed in, a
+measurement and a sketch.
 
-The screen is the demo's desktop from docs/index.html (rendered with Firefox), Safari alone over
-its wallpaper; the overlay is
+The screen is the demo's desktop, scripts/demo-desktop/index.html (rendered with Firefox), Safari alone
+over its wallpaper; the overlay is
 target/debug/asides-overlay, run on it in a window at the top left of your screen for a few seconds,
 with a replay of the clicks and a capture (your terminal needs Screen Recording), dark whatever your
 Mac's appearance. Needs Pillow.
@@ -22,6 +23,7 @@ from PIL import Image
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+DEMO = ROOT / "scripts" / "demo-desktop"
 OUT = ROOT / "guide" / "overlay.png"
 FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
 # The screen, the demo's 14-inch MacBook Pro, in points, drawn at 2×.
@@ -30,7 +32,7 @@ WIDTH, HEIGHT = 1512, 945
 SAFARI = (286, 104)
 DX, DY = SAFARI[0] - 24, SAFARI[1] - 62
 
-page = (DOCS / "index.html").read_text()
+page = (DEMO / "index.html").read_text()
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
 desk = re.search(r'<div class="desk".*?(?=<div class="hud")', page, re.S).group(0)
 
@@ -42,7 +44,7 @@ def replace(text, old, new):
 
 # Safari alone (no agent's terminal), and nothing of the demo's own overlay: the real one draws on it.
 desk = re.sub(r'<div class="win term.*?(?=<!-- asides on the frozen screen)', "", desk, flags=re.S)
-html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{DOCS.as_uri()}/">
+html = f"""<!doctype html><html><head><meta charset="utf-8"><base href="{DEMO.as_uri()}/">
 <style>{style}
 html, body {{ margin: 0; overflow: hidden; }}
 *, *::before, *::after {{ transition: none !important; animation: none !important; }}
@@ -154,4 +156,7 @@ with tempfile.TemporaryDirectory() as tmp:
     image = Image.open(tmp / "overlay.png").convert("RGB")
     image = image.resize((2048, round(image.height * 2048 / image.width)), Image.LANCZOS)
     image.save(OUT, optimize=True)
+    # The website's pictures, parts of the same one.
+    for name, box in {"overlay-frozen": (307, 0, 1741, 430), "overlay-pins": (1025, 287, 1925, 729)}.items():
+        image.crop(box).save(DOCS / f"{name}.webp", quality=90, method=6)
 print(f"Wrote {OUT}")
