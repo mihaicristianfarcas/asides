@@ -308,12 +308,12 @@ installed by hand.
 `make publish-site` deploys by hand. Its opening is the page itself with asides open over it: the
 script at its end plays each step at its word, and without motion or JavaScript shows the last frame.
 Its pictures are parts of `guide/overlay.png`. Text sizes come from the `--text-*` values on
-`:root`: don't add another.
+`:root`: don't add another. The share image is the opening's last frame: after changing the
+opening, run `python3 scripts/make-og.py` (needs Firefox).
 
 The checkout desktop in the pictures is `scripts/demo-desktop/index.html`, not served. After
-changing it, or the overlay's look, run `python3 scripts/make-og.py` (the share image, needs
-Firefox), `python3 scripts/make-screenshot.py` (the README's picture and the website's) and
-`python3 scripts/make-help.py` (on a Mac, and on Windows for its clips). The page repeats the main
+changing it, or the overlay's look, run `python3 scripts/make-screenshot.py` (the README's picture
+and the website's) and `python3 scripts/make-help.py` (on a Mac, and on Windows for its clips). The page repeats the main
 shortcut, requirements and install steps from the README: update both.
 
 ## Reporting bugs
