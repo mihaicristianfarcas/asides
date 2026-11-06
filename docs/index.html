@@ -29,7 +29,6 @@
      The focus ring takes its deeper shade on white, to be seen. */
   --accent: #92b6f0;
   --accent-fill: #c2d6f6;
-  --accent-wash: #eff4fc;
   --accent-ink: #3e64a8;
   --on-accent: #16213a;
   /* Recording, red as in the menu bar. */
@@ -219,15 +218,14 @@ kbd {
 
 /* How it goes: cards with what each step looks like. */
 .flow { display: grid; gap: 16px; margin-top: 24px; }
-.step { padding: clamp(24px, 4vw, 48px); background: var(--accent-wash); border-radius: 28px; }
-.step.grey { background: var(--code-bg); }
+.step { padding: clamp(24px, 4vw, 48px); background: var(--code-bg); border-radius: 28px; }
 .step.shown { display: flex; flex-wrap: wrap; align-items: center; gap: 28px 48px; }
 .step-text { flex: 1 1 300px; min-width: 0; }
 .shot { flex: 2 1 520px; min-width: 0; margin: 0; }
 .shot img { display: block; width: 100%; height: auto; border-radius: 16px; }
 .step .combo { margin-bottom: 18px; }
-.step kbd { min-width: 30px; height: 30px; border-color: #c8d6ee; box-shadow: 0 1px 0 #c8d6ee; }
-.step kbd:last-child { padding: 0 14px; color: var(--on-accent); background: var(--accent-fill); border-color: #a9c4ee; box-shadow: 0 1px 0 #a9c4ee; }
+.step kbd { min-width: 30px; height: 30px; }
+.step kbd:last-child { padding: 0 14px; }
 .step-text p, .gets-head p { margin-top: 12px; color: #3d3d42; text-wrap: pretty; }
 
 /* What the agent gets: what comes from where, line by line. Each color is one source, in the list and
@@ -262,7 +260,7 @@ kbd {
 .line img { display: block; width: calc(100% + 104px); height: auto; margin-top: 8px; border-radius: 4px; }
 .chat-prompt { padding: 8px 14px 10px 30px; border-top: 1px solid #3a3a3c; }
 .chat-prompt i { display: inline-block; width: 1ch; height: 1.25em; margin-left: 1ch; vertical-align: -0.25em; background: #e5e5e5; }
-.works { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 32px; padding-top: 22px; font-size: var(--text-small); color: var(--muted); border-top: 1px solid #d8e3f4; }
+.works { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 32px; padding-top: 22px; font-size: var(--text-small); color: var(--muted); border-top: 1px solid #e1e1e6; }
 .works b { font-weight: 550; color: var(--fg); }
 
 /* Sections */
@@ -422,10 +420,10 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
 .qs .a p { padding: 0 24px 16px 0; color: var(--muted); text-wrap: pretty; }
 
 /* And once more, at the end. */
-.last { display: flex; flex-direction: column; align-items: center; margin-top: 120px; padding: 64px 24px; text-align: center; background: var(--accent-wash); border-radius: 24px; }
+.last { display: flex; flex-direction: column; align-items: center; margin-top: 120px; padding: 64px 24px; text-align: center; background: var(--code-bg); border-radius: 24px; }
 .last .sub { margin-top: 10px; }
 .last .buttons { margin-top: 26px; }
-.last .pill.quiet { background: transparent; border-color: #cfd9ec; }
+.last .pill.quiet { background: transparent; border-color: #d4d4da; }
 
 .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; padding: 32px 0 48px; font-size: var(--text-small); color: var(--muted); }
 .foot nav { display: flex; gap: 20px; }
@@ -568,9 +566,9 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
       <figure class="shot"><img src="overlay-frozen.webp" width="1434" height="430" alt="A frozen screen: the menu bar, the asides pill sending to Claude Code (shop), and the top of a checkout page." decoding="async"></figure>
     </section>
 
-    <section class="step shown grey" aria-labelledby="point">
+    <section class="step shown" aria-labelledby="point">
       <div class="step-text">
-        <h2 id="point">Click what's wrong. Say why.</h2>
+        <h2 id="point">Click what's wrong. <br>Say why.</h2>
         <p>Each pin lands at the word you said as you placed it. Measure, draw, or drag a pin's number to show where it should go.</p>
       </div>
       <figure class="shot"><img src="overlay-pins.webp" width="900" height="442" alt="Pins on an order summary and a Pay now button, with a card reading Keep the label on one line." loading="lazy" decoding="async"></figure>
