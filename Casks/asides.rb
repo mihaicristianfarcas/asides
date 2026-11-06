@@ -1,5 +1,5 @@
-# This repository is also a Homebrew tap. scripts/release.sh updates the version and checksum;
-# commit the change after the release is published on GitHub.
+# This repository is also a Homebrew tap. Once a release is published on GitHub, the release workflow
+# opens a pull request with its version and checksum.
 cask "asides" do
   version "1.0.8"
   sha256 "2e7e395580df5d8db7e4ebf6696a832ac0474eb45c21df895021b0c286aa5443"

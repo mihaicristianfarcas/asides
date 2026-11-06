@@ -13,7 +13,7 @@ BIN_DIR    ?= $(HOME)/.local/bin
 # A stable signing identity keeps the microphone permission across rebuilds. Picked automatically:
 # Developer ID Application, Apple Development, "Asides Dev" (`make cert`), else ad hoc ("-").
 SIGN_ID    ?= $(shell scripts/signing-identity.sh)
-# Local builds skip the secure timestamp (no network needed); `make release` asks for it.
+# Local builds skip the secure timestamp (no network needed); the release asks for it.
 TIMESTAMP  ?= --timestamp=none
 # Hardened runtime everywhere; the app's entitlements allow the microphone.
 CODESIGN    = codesign --force --options runtime $(TIMESTAMP) --sign "$(SIGN_ID)"
@@ -23,7 +23,7 @@ CARGO_FEATURES := $(if $(FEATURES),--features asides-app/$(FEATURES))
 
 FIXTURES   := tests/fixtures/en_bug.wav tests/fixtures/ro_bug.wav tests/fixtures/screenshot.png
 
-.PHONY: build test test-speech bundle install uninstall release publish-dmg publish-site e2e cert fixtures clean
+.PHONY: build test test-speech bundle sign install uninstall publish-site e2e cert fixtures clean
 
 build:
 	cargo build --release --workspace $(CARGO_FEATURES)
@@ -43,11 +43,15 @@ bundle: build
 	cp target/release/asides $(APP)/$(CLI_IN_APP)
 	cp target/release/asides-overlay $(APP)/$(OVERLAY_IN_APP)
 	cp packaging/asides.icns $(APP)/Contents/Resources/
-	# Sign inside-out: the nested CLI and overlay first, then the app.
+	$(MAKE) sign SIGN_ID="$(SIGN_ID)" TIMESTAMP="$(TIMESTAMP)"
+
+# Signs $(APP) as it is, built here or elsewhere (the release signs on a runner that builds
+# nothing): inside-out, the nested CLI and overlay first, then the app.
+sign:
 	$(CODESIGN) --identifier $(BUNDLE_ID).cli $(APP)/$(CLI_IN_APP)
 	$(CODESIGN) --identifier $(BUNDLE_ID).overlay $(APP)/$(OVERLAY_IN_APP)
 	$(CODESIGN) --entitlements packaging/asides.entitlements $(APP)
-	@echo "Bundled $(APP) (signed: $(SIGN_ID))"
+	@echo "Signed $(APP) ($(SIGN_ID))"
 
 install: bundle
 	-@test -x $(BIN_DIR)/asides && $(BIN_DIR)/asides quit >/dev/null 2>&1; sleep 1
@@ -67,16 +71,6 @@ uninstall:
 	rm -rf $(APPS_DIR)/$(APP_NAME).app
 	rm -f $(BIN_DIR)/asides
 	@echo "Removed. Settings and models remain in ~/Library/Application Support/$(APP_NAME)."
-
-# Developer ID signature with secure timestamp → Apple notarization → stapled
-# dist/asides-<version>.zip. Needs a notarytool profile (NOTARY_PROFILE, default asides-notary).
-release:
-	scripts/release.sh
-
-# Deploys dist/asides-<version>.dmg (from `make release`) behind the website's download button,
-# on Cloudflare. Needs Wrangler, logged in.
-publish-dmg:
-	scripts/publish-dmg.sh
 
 # Deploys the website (docs/) to asides.mihaicristian.dev, on Cloudflare. Needs Wrangler, logged in.
 publish-site:
