@@ -181,6 +181,9 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   options holds its first keyframe throughout: put it on each keyframe.
 - Moved by `left`/`top` and painted into the page, the website's pointer left trails of its
   shadow in Safari: it has a layer of its own (`will-change: transform`).
+- Chromium runs on the main thread, where the opening's pill stalled, an animation with an end delay
+  or changing what another on its element changes: the opening has neither (`settle`). A dash
+  pattern only as long as its path drew the next dash's round cap at its end (a dot): gap longer.
 - Headless Firefox screenshots mid-transition: turn transitions off. On the website, a `padding`
   shorthand on `.wrap` in a media query reset the sections' top padding: set `padding-inline`.
 
