@@ -39,7 +39,16 @@ if [ "$STATUS" != "Accepted" ]; then
 fi
 
 # The ticket attached, so Gatekeeper accepts the app offline; then the stapled app zipped again.
-xcrun stapler staple "$APP"
+# Stapling fetches the ticket from Apple's CloudKit, and a connection lost on the way fails it (error
+# 68, in a release run): a few tries, further apart each time, since nothing says when it would work.
+for try in 1 2 3 4; do
+    xcrun stapler staple "$APP" && break
+    if [ "$try" = 4 ]; then
+        echo "Stapling failed $try times: run this again (the app is notarized, the ticket is Apple's)." >&2
+        exit 1
+    fi
+    sleep $((try * 15))
+done
 rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 spctl --assess --type execute --verbose=2 "$APP"
