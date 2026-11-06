@@ -143,13 +143,20 @@ kbd {
 /* The pill: glass and a hairline, as on a frozen screen (asides-overlay's ui.rs). Drawn in the app's
    colors over this page's white, so a little darker than over a window. */
 .tool { display: flex; justify-content: center; margin-bottom: clamp(16px, 4vh, 44px); }
-.asides-pill { display: inline-flex; align-items: center; gap: 4px; height: 44px; padding: 0 5px; color: rgba(255, 255, 255, 0.9); font-size: var(--text-small); line-height: 1; white-space: nowrap; background: rgba(30, 29, 28, 0.88); -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; box-shadow: 0 10px 28px rgba(17, 17, 19, 0.2); }
+.asides-pill { display: inline-flex; max-width: 100%; align-items: center; gap: 4px; height: 44px; padding: 0 5px; color: rgba(255, 255, 255, 0.9); font-size: var(--text-small); line-height: 1; white-space: nowrap; background: rgba(30, 29, 28, 0.88); -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; box-shadow: 0 10px 28px rgba(17, 17, 19, 0.2); }
 .asides-pill svg { position: relative; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ap-icon, .ap-mic, .ap-send { position: relative; display: grid; place-items: center; width: 32px; height: 32px; overflow: hidden; border-radius: 9px; }
+.ap-icon, .ap-mic, .ap-send { position: relative; display: grid; flex: none; place-items: center; width: 32px; height: 32px; overflow: hidden; border-radius: 9px; }
 .ap-lit { position: absolute; inset: 0; background: rgba(236, 106, 94, 0.32); }
 .ap-level { position: absolute; inset: 0; background: #ec6a5e; transform: scaleY(0); transform-origin: bottom; }
-.ap-to { padding: 0 14px 0 8px; }
+/* Where it goes: cut short, as asides cuts a long name, when the pill hasn't the room. */
+.ap-to { min-width: 0; padding: 0 14px 0 8px; overflow: hidden; text-overflow: ellipsis; }
 .ap-send { width: 38px; color: var(--on-accent); background: var(--accent-fill); }
+/* The tool, when it isn't Annotate, after where it goes, as in asides: its box eases from one tool's
+   width to the other's while their names cross-fade. The page's last frame is Draw's. */
+.ap-tool { position: relative; display: flex; flex: none; height: 32px; overflow: hidden; background: rgba(255, 255, 255, 0.1); border-radius: 9px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09); }
+.ap-face { display: flex; flex: none; align-items: center; gap: 6px; padding: 0 11px 0 8px; font-weight: 500; color: #fff; }
+.ap-face.measure { position: absolute; inset: 0 auto 0 0; opacity: 0; }
+.asides-pill .ap-face svg { width: 16px; height: 16px; }
 
 /* What's marked. Pins take their number from CSS, so it isn't part of the heading's or the button's text. */
 .spot { position: absolute; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; font: 600 var(--text-small)/1 var(--sans); letter-spacing: 0; color: #fff; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(17, 17, 19, 0.25); user-select: none; -webkit-user-select: none; }
@@ -157,8 +164,9 @@ kbd {
 .spot.blue { background: #2f66d6; }
 .spot.red { background: #d12b36; }
 .area { position: relative; display: inline-block; padding: 0 0.1em; }
-.area-box { position: absolute; z-index: -1; inset: 0; background: rgba(47, 102, 214, 0.09); border-radius: 8px; box-shadow: 0 0 0 2px #2f66d6; }
-.area .spot { top: -14px; right: -14px; }
+.area-box { position: absolute; z-index: -1; inset: 0; background: rgba(47, 102, 214, 0.09); border-radius: min(8px, 25%); box-shadow: 0 0 0 2px #2f66d6; }
+/* Its number where the drag began, as in asides. */
+.area .spot { top: -15px; left: -15px; }
 
 /* A measurement: pink lines with a dark label, as in the overlay. The gap it measures really is 32. */
 .gap { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding-left: 4px; }
@@ -199,8 +207,10 @@ kbd {
 .pointer .arrow { top: -3px; left: -5px; width: 26px; height: 26px; transform-origin: 20% 12%; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
 .pointer .cross { top: -11px; left: -11px; width: 22px; height: 22px; opacity: 0; }
 /* Waiting to be played (`plays`, set in <head> when motion is welcome). */
-.plays .pointer { display: block; }
-.plays .asides-pill, .plays .area-box, .plays .spot, .plays .guide, .plays .ruler, .plays .tag, .plays .note, .plays .say, .plays .say span, .plays .say i, .plays .pointer { opacity: 0; }
+/* A layer of its own: moved by its place, Safari left trails of its shadow on the page. */
+.plays .pointer { display: block; will-change: transform; }
+.plays .ap-tool { width: 0; margin-left: -4px; }
+.plays .asides-pill, .plays .ap-tool, .plays .area-box, .plays .spot, .plays .guide, .plays .ruler, .plays .tag, .plays .note, .plays .say, .plays .say span, .plays .say i, .plays .pointer { opacity: 0; }
 .plays .drawn path { stroke-dasharray: 1; stroke-dashoffset: 1; }
 
 /* How it goes: cards with what each step looks like. */
@@ -449,6 +459,9 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .page { padding: 0 16px; }
   .hero { padding-top: 12px; }
   .ap-icon:first-child, .dots { display: none; }
+  /* The tool by its icon alone, as the pill's buttons are. */
+  .ap-name { display: none; }
+  .ap-face { padding: 0 8px; }
   .step, .step.shown { border-radius: 22px; }
   .list li { grid-template-columns: minmax(0, 1fr); }
   .line { padding: 6px 12px 6px calc(24px + 2ch); }
@@ -506,6 +519,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         <span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
         <span class="ap-mic"><i class="ap-lit"></i><i class="ap-level"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
         <span class="ap-to">Claude Code (asides)</span>
+        <span class="ap-tool"><span class="ap-face measure"><svg viewBox="0 0 24 24"><path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/></svg><span class="ap-name">Measure</span></span><span class="ap-face draw"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg><span class="ap-name">Draw</span></span></span>
         <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span>
         <span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
         <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
@@ -518,14 +532,14 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
     <div class="cta">
       <a class="pill big" href="https://download.asides.mihaicristian.dev/asides.dmg" data-download><svg aria-hidden="true"><use href="#for-mac"></use></svg><span data-download-label>Download for Mac</span><svg class="drawn" viewBox="0 0 240 88" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M125 4C182 2 235 17 235 44C235 72 180 84 118 84C55 83 5 70 5 44C5 18 62 8 139 4"/></svg><span class="spot red" data-n="2" aria-hidden="true"></span></a>
       <div class="note" aria-hidden="true">
-        <span class="note-field"><span class="typed">Keep the label on one line</span><i class="caret"></i></span>
+        <span class="note-field"><span class="typed">Make it a bit bigger</span><i class="caret"></i></span>
         <span class="dots"><i style="background:#e5484d"></i><i style="background:#e8a33d"></i><i style="background:#7c5ce0"></i><i style="background:#3fb0a4"></i></span>
         <span class="note-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
       </div>
     </div>
     <p class="also"><span data-also>Also for <a href="#install" data-pick="windows">Windows</a> and <a href="#install" data-pick="linux">Linux</a>.</span> <a href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a></p>
     </div>
-    <p class="say" aria-hidden="true"><span>These</span> <span>words</span> <i class="blue" data-cue="pin1">1</i> <span>should</span> <span>stand</span> <span data-cue="out">out.</span> <span>The</span> <span data-cue="gap">gap</span> <span>under</span> <span>them</span> <span>is</span> <span data-cue="size">32</span> <span data-cue="points">points,</span> <span data-cue="and">and</span> <span>this</span> <span>button</span> <i class="red" data-cue="pin2">2</i> <span>is</span> <span>the</span> <span>one</span> <span>thing</span> <span>to</span> <span data-cue="click">click.</span></p>
+    <p class="say" aria-hidden="true"><span>These</span> <span>words</span> <i class="blue" data-cue="pin1">1</i> <span>should</span> <span>stand</span> <span data-cue="out">out.</span> <span>The</span> <span data-cue="gap">gap</span> <span>under</span> <span>the</span> <span>title</span> <span>is</span> <span data-cue="size">32</span> <span data-cue="points">points,</span> <span data-cue="and">and</span> <span>this</span> <span>button</span> <i class="red" data-cue="pin2">2</i> <span>is</span> <span>the</span> <span>one</span> <span>thing</span> <span>to</span> <span data-cue="click">click.</span></p>
     <div class="pointer" aria-hidden="true">
       <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
       <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
@@ -1015,6 +1029,8 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   const arrow = $('.pointer .arrow');
   const cross = $('.pointer .cross');
   const pill = $('.asides-pill');
+  const toolSlot = $('.ap-tool');
+  const faces = [$('.ap-face.measure'), $('.ap-face.draw')];
   const area = $('.area');
   const box = $('.area-box');
   const pins = [$('.area .spot'), $('.pill.big .spot')];
@@ -1040,6 +1056,8 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
 
   const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
   const MOVE = 'cubic-bezier(0.4, 0, 0.3, 1)';
+  // A hand's drag: slow to start and to stop, never fast.
+  const SMOOTH = 'cubic-bezier(0.37, 0, 0.63, 1)';
   // One thing at a time: the keys go down and come up; then the pill comes in and the clock starts; then
   // the pointer; then the first word.
   const PRESS = 450;
@@ -1069,8 +1087,9 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       const r = el.getBoundingClientRect();
       return [r.left - bounds.left + r.width * fx, r.top - bounds.top + r.height * fy];
     };
-    const resting = spot(area, 1.05, 1.5);
-    const onArea = spot(area, 0.62, 0.55);
+    const [from, to] = [spot(area, 0, 0), spot(area, 1, 1)];
+    const { width: areaWidth, height: areaHeight } = area.getBoundingClientRect();
+    const [measureWidth, drawWidth] = faces.map((face) => face.getBoundingClientRect().width);
     const onRuler = spot(ruler);
     const onNote = spot($('.note-field'), 0.9, 1.25);
     const ring = drawn.getBoundingClientRect();
@@ -1130,12 +1149,26 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     heard.push({ offset: 1, transform: 'scaleY(0)' });
     at($('.ap-level'), 0, heard, { duration: talked, easing: 'ease-out' });
 
-    // What's marked, each at its word.
-    at(box, cue.pin1 - 60, { opacity: [0, 1], transform: ['scale(0.97)', 'none'] }, { duration: 180 });
+    // What's marked, each at its word. The area is dragged out, as in asides: pressed at one corner,
+    // its other corner follows the pointer to where it's let go, and then it gets its number.
+    const GRAB = FIRST_WORD - 80;
+    const [DRAG, LET_GO] = [GRAB + 60, cue.pin1 - 40];
+    show(box, DRAG, { duration: 1, easing: 'linear' });
+    at(box, DRAG, { right: [`${areaWidth}px`, '0px'], bottom: [`${areaHeight}px`, '0px'] }, { duration: LET_GO - DRAG, easing: SMOOTH });
     pop(pins[0], cue.pin1);
     for (const guide of guides) at(guide, cue.gap, { opacity: [0, 1], transform: ['scaleX(0.3)', 'none'] }, { duration: 420 });
     at(ruler, cue.gap, { opacity: [1, 1], transform: ['scaleY(0)', 'none'] }, { duration: 260 });
     pop(tag, cue.size);
+
+    // The tool on the pill: Measure as the ruler comes, Draw before the circle. Annotate, the pins'
+    // tool, has none. Both measure and draw with a crosshair.
+    const MEASURE = cue.gap - 170;
+    const DRAW = cue.points + 220;
+    at(toolSlot, MEASURE, { width: ['0px', `${measureWidth}px`], marginLeft: ['-4px', '0px'], opacity: [0, 1] }, { duration: 260 });
+    at(toolSlot, DRAW, { width: [`${measureWidth}px`, `${drawWidth}px`] }, { duration: 260, fill: 'forwards' });
+    show(faces[0], MEASURE + 60, { duration: 160 });
+    hide(faces[0], DRAW, { duration: 120 });
+    show(faces[1], DRAW + 60, { duration: 160 });
 
     // The circle around the button, drawn from its measured size, which depends on the label.
     const [w, h] = [ring.width, ring.height];
@@ -1164,10 +1197,11 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       const p = stroke.getPointAtLength(length * i / of);
       return [ring.left - bounds.left + p.x, ring.top - bounds.top + p.y];
     };
-    go(0, resting);
-    go(FIRST_WORD - 150, resting);
-    go(cue.pin1 - 90, onArea);
-    go(cue.out, onArea);
+    // It comes where the area starts, and stays until it drags.
+    go(0, from);
+    go(DRAG, from, SMOOTH);
+    go(LET_GO, to);
+    go(cue.out, to);
     go(cue.gap - 50, onRuler);
     go(cue.points + 80, onRuler);
     go(draw[0], onRing(0, 1));
@@ -1176,17 +1210,18 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     go(cue.click, onRing(1, 1));
     go(NOTE + 120, onNote);
     const whole = path.at(-1).ms;
-    at(pointer, 0, path.map(({ ms, x, y, easing }) => ({ offset: ms / whole, easing, transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)` })), { duration: whole, easing: 'linear' });
+    // By its place rather than a transform: Safari would move a transform on its own thread, and what
+    // the pointer drags (the area, the circle) a frame behind it.
+    at(pointer, 0, path.map(({ ms, x, y, easing }) => ({ offset: ms / whole, easing, left: `${x.toFixed(1)}px`, top: `${y.toFixed(1)}px` })), { duration: whole, easing: 'linear' });
     show(pointer, POINTER, { duration: 240 });
     hide(pointer, talked - 200, { duration: 240 });
-    // Pressed on each thing it marks, and a crosshair while measuring.
-    const click = (ms) => press(arrow, ms, { transform: ['none', 'scale(0.86)', 'none'] });
-    click(cue.pin1 - 60);
-    click(draw[0] - 60);
-    at(arrow, cue.gap - 170, { opacity: [1, 0] }, { duration: 1, easing: 'linear' });
-    at(cross, cue.gap - 170, { opacity: [0, 1] }, { duration: 1, easing: 'linear' });
-    at(arrow, cue.points + 120, { opacity: [0, 1] }, { duration: 1, easing: 'linear', fill: 'forwards' });
-    at(cross, cue.points + 120, { opacity: [1, 0] }, { duration: 1, easing: 'linear', fill: 'forwards' });
+    // Held down while it drags out the area, and a crosshair while it measures and draws.
+    at(arrow, GRAB, { transform: ['none', 'scale(0.86)'] }, { duration: 90, fill: 'forwards', easing: 'ease-out' });
+    at(arrow, LET_GO, { transform: ['scale(0.86)', 'none'] }, { duration: 120, fill: 'forwards', easing: 'ease-out' });
+    at(arrow, MEASURE, { opacity: [1, 0] }, { duration: 1, easing: 'linear' });
+    at(cross, MEASURE, { opacity: [0, 1] }, { duration: 1, easing: 'linear' });
+    at(arrow, cue.click, { opacity: [0, 1] }, { duration: 1, easing: 'linear', fill: 'forwards' });
+    at(cross, cue.click, { opacity: [1, 0] }, { duration: 1, easing: 'linear', fill: 'forwards' });
     // Done talking: the microphone and the clock rest over the finished picture.
     hide($('.ap-lit'), talked, { duration: 300 });
     hide(rec, talked, { duration: 300 });
