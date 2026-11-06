@@ -4,7 +4,7 @@
 own message, with the screenshot, the elements you clicked and what you measured. Transcribed
 locally, on your Mac or PC, on Windows or Linux.
 
-![asides over a checkout page: the pill recording, pins on elements and areas, an area moved by its number, a pin's card typed in, a measured field and a sketch](guide/overlay.png)
+![Report bugs out loud while you test: the asides pill over the heading, a pin on its words, a measurement under it, the download button circled and a card reading Make it a bit bigger](docs/og.png)
 
 ```
 ⌃⌥Space   freeze the screen (and start listening)      Windows, Linux: Ctrl+Alt+Space
