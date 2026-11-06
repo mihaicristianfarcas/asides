@@ -506,18 +506,24 @@ jobs:
           head=$(git rev-parse HEAD)
           gh pr create --base main --head "$branch" --title "Point the cask and the PKGBUILD at $VERSION" \
             --body "The Homebrew cask and Arch's PKGBUILD at release v$VERSION. Merging this is what makes \`brew upgrade\` see the release."
-          # GitHub holds the CI run of a pull request a workflow opened until someone approves it, and
-          # main merges only on that run's checks. Approve it here; if this token may not, the pull
-          # request says so and it's approved by hand (Actions). Asked again and again because nothing
-          # tells a job that GitHub has created the run: no event reaches it, and the wait is short.
+          # GitHub holds every run on a pull request a workflow opened until someone approves it: CI's,
+          # whose checks main merges on, and this workflow's own (the PKGBUILD changed). Approving only
+          # the first found left CI's held in 1.1.0. Each is approved here, until CI's is; if this token
+          # may not, the pull request says so and it's approved by hand (Actions). Asked again and again
+          # because nothing tells a job that GitHub has created the runs: no event reaches it, and the
+          # wait is short.
+          ci=
           for _ in $(seq 1 20); do
-            run=$(gh run list --branch "$branch" --event pull_request --json databaseId,conclusion,headSha \
-              --jq ".[] | select(.conclusion == \"action_required\" and .headSha == \"$head\") | .databaseId" | head -n 1)
-            [ -n "$run" ] && break
+            held=$(gh run list --branch "$branch" --event pull_request --json databaseId,conclusion,headSha,workflowName \
+              --jq ".[] | select(.conclusion == \"action_required\" and .headSha == \"$head\") | \"\(.databaseId)=\(.workflowName)\"")
+            for run in $held; do
+              gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${run%%=*}/approve" || continue
+              echo "approved ${run#*=}'s run ${run%%=*}"
+              [ "${run#*=}" = CI ] && ci=${run%%=*}
+            done
+            [ -n "$ci" ] && break
             sleep 6
           done
-          if [ -n "$run" ] && gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/approve"; then
-            echo "approved CI run $run"
-          else
+          if [ -z "$ci" ]; then
             gh pr comment "$branch" --body "CI on this pull request waits for approval: approve its run in the Actions tab, then merge once it passes."
           fi
