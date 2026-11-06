@@ -37,7 +37,7 @@ A Rust workspace:
 | Speech tests | `make test-speech` (needs the model; also downloads 190 MB) |
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
-| Share image | `python3 scripts/make-og.py` (renders `docs/og.png`, the website's opening as it ends; needs Firefox) |
+| Share image | `python3 scripts/make-og.py` (renders `docs/og.png`, the website's hero as its opening ends; needs Firefox) |
 | README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png` and the website's `docs/overlay-*.webp`; shows a window for a few seconds) |
 | Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
@@ -184,6 +184,7 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - Chromium runs on the main thread, where the opening's pill stalled, an animation with an end delay
   or changing what another on its element changes: the opening has neither (`settle`). A dash
   pattern only as long as its path drew the next dash's round cap at its end (a dot): gap longer.
+- Firefox's headless `--screenshot` ignores `layout.css.devPixelsPerPx`: `make-og.py` uses CSS `zoom`.
 - Headless Firefox screenshots mid-transition: turn transitions off. On the website, a `padding`
   shorthand on `.wrap` in a media query reset the sections' top padding: set `padding-inline`.
 
