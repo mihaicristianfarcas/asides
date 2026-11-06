@@ -4,100 +4,108 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>asides · Report bugs out loud while you test</title>
-<meta name="description" content="A macOS menu-bar app. Freeze your screen, click what's wrong and say why: it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked. Transcribed on your Mac.">
-<meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+<meta name="description" content="For Mac, Windows and Linux. Freeze your screen, click what's wrong and say why: it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked. Transcribed on your computer.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
 <link rel="canonical" href="https://asides.mihaicristian.dev/">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="preload" href="wallpaper.webp" as="image" type="image/webp">
+<link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asides.mihaicristian.dev/">
 <meta property="og:title" content="asides">
-<meta property="og:description" content="Report bugs out loud while you test. Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.">
+<meta property="og:description" content="Report bugs out loud while you test. Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your computer.">
 <meta property="og:image" content="https://asides.mihaicristian.dev/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<script>document.documentElement.classList.add('js');</script>
+<script>document.documentElement.classList.add('js'); if (matchMedia('(prefers-reduced-motion: no-preference)').matches) document.documentElement.classList.add('plays');</script>
 <style>
 :root {
-  /* Light or dark, as the system is. */
+  /* One look, light, whatever the system is. */
+  color-scheme: light;
   --bg: #fff;
   --fg: #111113;
   --muted: #6e6e73;
   --line: #e8e8ec;
-  --code-bg: #f4f4f6;
+  --code-bg: #f5f5f7;
   /* The app's own color (style.rs's UI, "soft blue cloud"): the main buttons, selections, focus.
      The focus ring takes its deeper shade on white, to be seen. */
   --accent: #92b6f0;
   --accent-fill: #c2d6f6;
+  --accent-wash: #eff4fc;
+  --accent-ink: #3e64a8;
   --on-accent: #16213a;
   /* Recording, red as in the menu bar. */
   --red: #ff3b30;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0b0c;
-    --fg: #f2f2f4;
-    --muted: #98989f;
-    --line: #232326;
-    --code-bg: #161618;
-    --accent: #c2d6f6;
-    --red: #ff453a;
-  }
+  /* Type: section titles, what's read, and what's beside it; the opening's heading is the one larger
+     thing. Every size on the page is one of these. */
+  --text-display: clamp(40px, min(8.6vw, 12.5vh), 100px);
+  --text-title: clamp(28px, 3.6vw, 40px);
+  --text-body: 17px;
+  --text-small: 14px;
 }
 
 * { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* The viewport takes html's overflow, which leaves body's clip to clip, past the full-width guides. */
+html { overflow-x: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 15px/1.6 var(--sans);
+  font: var(--text-body)/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: clip;
 }
 ::selection { background: var(--accent-fill); color: var(--on-accent); }
-a { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 150ms ease, color 150ms ease; }
+a { color: inherit; text-decoration: underline; text-decoration-color: #cfcfd6; text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 150ms ease, color 150ms ease; }
 a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
-h1, h2, h3, p, ul, dl, dd { margin: 0; padding: 0; font-size: inherit; font-weight: inherit; }
+h1, h2, h3, p, ul, ol, dl, dd { margin: 0; padding: 0; font-size: inherit; font-weight: inherit; }
 code, pre, kbd, button { font-size: inherit; }
 code, pre { font-family: var(--mono); }
-:not(pre) > code { padding: 0.1em 0.3em; font-size: 0.86em; background: var(--code-bg); border-radius: 4px; white-space: nowrap; }
+:not(pre) > code { padding: 0.12em 0.34em; font-size: var(--text-small); background: var(--code-bg); border-radius: 5px; white-space: nowrap; }
 /* A shortcut is a row of key caps, one per key. */
 .combo { display: inline-flex; gap: 3px; vertical-align: 1px; }
 kbd {
   display: inline-grid;
   place-items: center;
-  min-width: 22px;
-  height: 22px;
+  min-width: 24px;
+  height: 24px;
   padding: 0 6px;
-  font: 500 12px/1 var(--sans);
+  font: 500 var(--text-small)/1 var(--sans);
   color: var(--fg);
-  background: var(--code-bg);
-  border: 1px solid var(--line);
+  background: var(--bg);
+  border: 1px solid #dcdce2;
   border-radius: 6px;
-  box-shadow: 0 1px 0 var(--line);
+  box-shadow: 0 1px 0 #cfcfd6;
   white-space: nowrap;
 }
 
 /* Header */
-.top-bar { position: sticky; top: 0; z-index: 30; background: var(--bg); }
-.top { display: flex; align-items: center; justify-content: space-between; max-width: 1152px; height: 52px; margin: 0 auto; padding: 0 24px; font-size: 14px; }
-.mark { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; text-decoration: none; }
+.top-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  backdrop-filter: saturate(1.6) blur(14px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 200ms ease;
+}
+.top-bar.scrolled { border-color: var(--line); }
+.top { display: flex; align-items: center; justify-content: space-between; max-width: 1200px; height: 56px; margin: 0 auto; padding: 0 24px; font-size: var(--text-small); }
+.mark { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; }
 .mark svg { width: 19px; height: 19px; }
-.top nav { display: flex; align-items: center; gap: 18px; }
+.top nav { display: flex; align-items: center; gap: 20px; }
 .top nav a:not(.pill) { color: var(--muted); text-decoration: none; }
 
 .pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 11px 22px;
   font-weight: 500;
   white-space: nowrap;
   color: var(--on-accent);
@@ -107,429 +115,240 @@ kbd {
   text-decoration: none;
   transition: opacity 150ms ease, transform 160ms ease-out, background-color 150ms ease;
 }
-.pill svg { width: 15px; height: 15px; }
+.pill svg { width: 17px; height: 17px; }
 .pill:active { transform: scale(0.97); }
-.pill.line { color: var(--fg); background: none; border-color: var(--line); }
-.top .pill { padding: 5px 13px; font-size: 13px; }
-.top .pill svg { width: 13px; height: 13px; }
+.pill.quiet { color: var(--fg); background: var(--bg); border-color: #dcdce2; }
+.top .pill { padding: 5px 13px; }
+.top .pill svg { width: 15px; height: 15px; }
 
-/* One narrow column; the demo alone is wide. */
-.page { max-width: 640px; margin: 0 auto; padding: 88px 24px 0; }
+.page { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
 
-/* The menu-bar item while recording, above the headline: the clock runs. */
-.rec { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 20px; font: 500 14px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
-.rec svg { width: 20px; height: 20px; }
+/* The menu-bar item, in the header: it's there while asides records in the opening, its clock running. */
+.rec { display: inline-flex; align-items: center; gap: 6px; font: 500 var(--text-small)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); opacity: 0; }
+.rec svg { width: 18px; height: 18px; }
 .rec circle { animation: pulse 1.6s ease-in-out infinite; }
-/* Its copy in the header, where it lives once the page scrolls, like a menu-bar item. */
-.top .rec { margin: 0; font-size: 13px; color: var(--fg); opacity: 0; transform: translateY(-8px); filter: blur(3px); transition: opacity 250ms var(--ease-out), transform 350ms var(--ease-out), filter 250ms var(--ease-out); }
-.top .rec svg { width: 18px; height: 18px; }
-.top-bar.recording .rec { opacity: 1; transform: none; filter: none; }
-.top-bar { border-bottom: 1px solid transparent; transition: border-color 200ms ease; }
-.top-bar.recording { border-color: var(--line); }
 @keyframes pulse { 50% { opacity: 0.35; } }
-h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025em; text-wrap: balance; }
-.lede { margin-top: 12px; font-size: 17px; color: var(--muted); text-wrap: pretty; }
-.buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
 
-.label { margin-bottom: 12px; font-size: 12px; font-weight: 500; color: var(--muted); }
-.section { margin-top: 56px; }
-.list { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 32px; }
-.list b { display: block; font-weight: 550; }
-.list span { color: var(--muted); }
+/* The opening: this page, with asides open over it. As the words below are said, the pill, the pins,
+   the measurement, the drawing and the card appear on it (the script at the end). Without JavaScript,
+   or with reduced motion, it's all simply there, as it ends. */
+.hero { position: relative; display: flex; flex-direction: column; min-height: calc(100vh - 56px); min-height: calc(100svh - 56px); padding: 24px 0 28px; }
+.hero-main { margin-block: auto; }
+.hero h1 { isolation: isolate; font-size: var(--text-display); font-weight: 750; line-height: 1.04; letter-spacing: -0.04em; text-wrap: balance; }
+.lede { max-width: 36em; line-height: 1.5; color: #3d3d42; text-wrap: pretty; }
+.lede .combo { vertical-align: 2px; }
+.buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 32px; }
+.also { margin-top: clamp(16px, 3vh, 28px); font-size: var(--text-small); color: var(--muted); }
 
-.wide { --w: min(1200px, 100vw - 48px); width: var(--w); margin: 64px 0 0 calc(50% - var(--w) / 2); }
-.wide .device { box-shadow: 0 0 0 1px #2c2c2e inset, 0 30px 70px -30px rgba(0, 0, 0, 0.5); }
-.js .wide { opacity: 0; transform: translateY(16px); transition: opacity 900ms var(--ease-out), transform 900ms var(--ease-out); }
-.js .wide.seen { opacity: 1; transform: none; }
+/* The pill: glass and a hairline, as on a frozen screen (asides-overlay's ui.rs). Drawn in the app's
+   colors over this page's white, so a little darker than over a window. */
+.tool { display: flex; justify-content: center; margin-bottom: clamp(16px, 4vh, 44px); }
+.asides-pill { display: inline-flex; align-items: center; gap: 4px; height: 44px; padding: 0 5px; color: rgba(255, 255, 255, 0.9); font-size: var(--text-small); line-height: 1; white-space: nowrap; background: rgba(30, 29, 28, 0.88); -webkit-backdrop-filter: blur(20px) saturate(1.3); backdrop-filter: blur(20px) saturate(1.3); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 14px; box-shadow: 0 10px 28px rgba(17, 17, 19, 0.2); }
+.asides-pill svg { position: relative; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ap-icon, .ap-mic, .ap-send { position: relative; display: grid; place-items: center; width: 32px; height: 32px; overflow: hidden; border-radius: 9px; }
+.ap-lit { position: absolute; inset: 0; background: rgba(236, 106, 94, 0.32); }
+.ap-level { position: absolute; inset: 0; background: #ec6a5e; transform: scaleY(0); transform-origin: bottom; }
+.ap-to { padding: 0 14px 0 8px; }
+.ap-send { width: 38px; color: var(--on-accent); background: var(--accent-fill); }
 
-/* Demo: a 14-inch MacBook Pro's screen, 1512 × 945 points, drawn after macOS 26. --u is one
-   point of it, so the whole desktop scales with the page, phones included, and every size is the
-   real one (the menu bar's 37 pt, 13 pt text, the overlay's 28 pt buttons). Its text is part of the
-   picture and scales with it; the subtitles don't. */
-.device {
-  margin: 0;
-  padding: 10px;
-  background: #0b0b0c;
-  border-radius: 22px;
-  box-shadow: 0 0 0 1px #2c2c2e inset, 0 32px 64px -28px rgba(0, 0, 0, 0.45);
-}
-.display { position: relative; container-type: inline-size; aspect-ratio: 1512 / 945; border-radius: 12px; overflow: hidden; }
-.desk, .hud { --u: calc(100cqw / 1512); }
-.desk {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: #2e2a5c url(wallpaper.webp) 50% 50% / cover;
-  font: 400 calc(13 * var(--u))/1.25 var(--sans);
-  letter-spacing: -0.003em;
-  color: #1d1d1f;
-  user-select: none;
-  -webkit-user-select: none;
-}
-.desk svg { display: block; flex: none; }
+/* What's marked. Pins take their number from CSS, so it isn't part of the heading's or the button's text. */
+.spot { position: absolute; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; font: 600 var(--text-small)/1 var(--sans); letter-spacing: 0; color: #fff; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(17, 17, 19, 0.25); user-select: none; -webkit-user-select: none; }
+.spot::before { content: attr(data-n); }
+.spot.blue { background: #2f66d6; }
+.spot.red { background: #d12b36; }
+.area { position: relative; display: inline-block; padding: 0 0.1em; }
+.area-box { position: absolute; z-index: -1; inset: 0; background: rgba(47, 102, 214, 0.09); border-radius: 8px; box-shadow: 0 0 0 2px #2f66d6; }
+.area .spot { top: -14px; right: -14px; }
 
-/* The menu bar: no bar at all since macOS 26, white text on the wallpaper, around the notch. */
-.menubar {
-  position: absolute;
-  inset: 0 0 auto;
-  z-index: 5;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: calc(37 * var(--u));
-  padding: 0 calc(10 * var(--u)) 0 calc(20 * var(--u));
-  color: #fff;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 calc(3 * var(--u)) rgba(0, 0, 0, 0.22);
-}
-.menus, .extras { display: flex; align-items: center; height: 100%; }
-.menus { gap: calc(21 * var(--u)); }
-.menus b { font-weight: 700; }
-.menus svg { width: calc(14 * var(--u)); height: calc(17 * var(--u)); margin-right: calc(3 * var(--u)); fill: currentColor; filter: drop-shadow(0 0 calc(3 * var(--u)) rgba(0, 0, 0, 0.2)); }
-.extras { gap: calc(4 * var(--u)); }
-.extras > svg, .extras > .status { filter: drop-shadow(0 0 calc(3 * var(--u)) rgba(0, 0, 0, 0.2)); }
-.extras > svg { width: calc(30 * var(--u)); height: calc(16 * var(--u)); padding: 0 calc(7 * var(--u)); }
-.extras .battery { width: calc(40 * var(--u)); }
-.clock { padding-left: calc(8 * var(--u)); }
-.notch {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: calc(186 * var(--u));
-  height: calc(32 * var(--u));
-  transform: translateX(-50%);
-  background: #000;
-  border-radius: 0 0 calc(10 * var(--u)) calc(10 * var(--u));
-}
-/* The small concave fillets where the notch meets the bezel. */
-.notch::before, .notch::after { content: ""; position: absolute; top: 0; width: calc(6 * var(--u)); height: calc(6 * var(--u)); }
-.notch::before { left: calc(-6 * var(--u)); background: radial-gradient(circle at 0 100%, transparent 70%, #000 72%); }
-.notch::after { right: calc(-6 * var(--u)); background: radial-gradient(circle at 100% 100%, transparent 70%, #000 72%); }
+/* A measurement: pink lines with a dark label, as in the overlay. The gap it measures really is 32. */
+.gap { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding-left: 4px; }
+.guide { position: absolute; left: calc(50% - 50vw); width: 100vw; border-top: 1px dashed rgba(255, 45, 85, 0.45); }
+.guide.first { top: 0; }
+.guide.second { bottom: 0; }
+.ruler { position: relative; width: 9px; height: 100%; transform-origin: top; }
+.ruler::before { content: ""; position: absolute; inset: 0 4px; background: #ff2d55; }
+.ruler::after { content: ""; position: absolute; inset: 0; border-block: 1px solid #ff2d55; }
+.tag { padding: 1px 7px; font: 500 var(--text-small)/18px var(--mono); color: #fff; background: rgba(28, 28, 30, 0.92); border-radius: 5px; }
 
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: calc(4 * var(--u));
-  height: calc(24 * var(--u));
-  padding: 0 calc(8 * var(--u));
-  border-radius: calc(7 * var(--u));
-  white-space: nowrap;
-}
-.status.open { background: rgba(255, 255, 255, 0.24); }
-.status svg { display: none; width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
-.status[data-state="idle"] .i-idle,
-.status[data-state="rec"] .i-rec,
-.status[data-state="busy"] .i-busy,
-.status[data-state="done"] .i-done { display: block; }
-/* Windows: macOS 26's rounder corners and soft shadows. */
-.win {
-  position: absolute;
-  overflow: hidden;
-  background: #fff;
-  border-radius: calc(16 * var(--u));
-  box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.22), 0 calc(16 * var(--u)) calc(48 * var(--u)) rgba(0, 0, 0, 0.3);
-}
-.bar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: calc(6 * var(--u));
-  padding: 0 calc(12 * var(--u)) 0 calc(20 * var(--u));
-  color: #4b4b50;
-}
-.bar svg { width: calc(30 * var(--u)); height: calc(30 * var(--u)); padding: calc(7 * var(--u)); border-radius: 50%; }
-.lights { display: flex; gap: calc(9 * var(--u)); margin-right: calc(14 * var(--u)); }
-.lights i { width: calc(13 * var(--u)); height: calc(13 * var(--u)); border-radius: 50%; box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.12) inset; }
-.lights i:nth-child(1) { background: #ff5f57; }
-.lights i:nth-child(2) { background: #febc2e; }
-.lights i:nth-child(3) { background: #28c840; }
-.inactive .lights i { background: #d9d9dc; }
-.inactive { box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.18), 0 calc(8 * var(--u)) calc(24 * var(--u)) rgba(0, 0, 0, 0.18); }
+.cta { display: flex; flex-wrap: wrap; align-items: center; gap: 30px 44px; margin-top: clamp(24px, 5vh, 44px); }
+.pill.big { position: relative; margin-left: 14px; padding: 15px 28px; font-weight: 600; }
+.pill.big > svg:first-child { width: 19px; height: 19px; }
+.pill.big .spot { top: -24px; right: -24px; }
+.pill .drawn { position: absolute; top: -14px; left: -18px; width: calc(100% + 36px); height: calc(100% + 28px); overflow: visible; pointer-events: none; }
+.drawn path { fill: none; stroke: #e5352b; stroke-width: 3; stroke-linecap: round; }
 
-/* Safari 26's compact toolbar: one row, the address in a glass pill, over the page. */
-.safari { top: calc(62 * var(--u)); left: calc(24 * var(--u)); width: calc(940 * var(--u)); height: calc(820 * var(--u)); }
-.safari .bar { height: calc(52 * var(--u)); background: #fff; }
-.url {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: calc(6 * var(--u));
-  width: calc(420 * var(--u));
-  height: calc(34 * var(--u));
-  margin: 0 auto;
-  color: #1d1d1f;
-  background: rgba(0, 0, 0, 0.045);
-  border-radius: calc(17 * var(--u));
-  box-shadow: 0 0 0 calc(0.5 * var(--u)) rgba(0, 0, 0, 0.06) inset;
-}
-.url svg { width: calc(14 * var(--u)); height: calc(14 * var(--u)); padding: 0; color: #8e8e93; }
+/* A pin's card, as in the overlay. */
+.note { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 100%; padding: 8px 10px; font-size: var(--text-small); line-height: 1.4; color: #fff; background: #38383d; border-radius: 14px; box-shadow: 0 14px 36px rgba(17, 17, 19, 0.25); }
+.note-field { position: relative; padding: 7px 14px 7px 12px; background: #4a4a50; border-radius: 9px; white-space: pre; }
+.caret { display: inline-block; width: 2px; height: 1.15em; margin-left: 1px; vertical-align: -0.22em; background: #fff; }
+.dots { display: flex; align-items: center; gap: 8px; }
+.dots i { width: 14px; height: 14px; border-radius: 50%; }
+.dots i:first-child { margin: 0 3px; outline: 2px solid #fff; outline-offset: 2px; }
+.note-mic { display: grid; place-items: center; width: 34px; height: 34px; background: #e5484d; border-radius: 9px; }
+.note-mic svg { width: 17px; height: 17px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
-/* The page being tested, with its two bugs: the summary card is jammed under the sticky header,
-   and the Pay button's text wraps. */
-.site { height: calc(768 * var(--u)); background: #faf8f4; color: #23271f; }
-.site-head {
-  display: flex;
-  align-items: center;
-  gap: calc(26 * var(--u));
-  height: calc(56 * var(--u));
-  padding: 0 calc(40 * var(--u));
-  background: #fff;
-  border-bottom: calc(1 * var(--u)) solid #e8e4dc;
-  color: #6b6f66;
-  font-size: calc(14 * var(--u));
-}
-.logo { display: flex; align-items: center; gap: calc(7 * var(--u)); margin-right: auto; font-weight: 700; font-size: calc(17 * var(--u)); color: #2f5d3a; letter-spacing: -0.01em; }
-.logo svg { width: calc(18 * var(--u)); height: calc(18 * var(--u)); }
-.cart { color: #23271f; font-weight: 600; }
-.site-body { display: flex; gap: calc(40 * var(--u)); max-width: calc(900 * var(--u)); margin: 0 auto; padding: 0 calc(40 * var(--u)); }
-.form { flex: 1; padding-top: calc(36 * var(--u)); font-size: calc(14 * var(--u)); }
-.form h4 { margin: 0 0 calc(18 * var(--u)); font-size: calc(26 * var(--u)); font-weight: 700; letter-spacing: -0.02em; }
-.form .label { margin: calc(18 * var(--u)) 0 calc(7 * var(--u)); font-size: calc(11 * var(--u)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #8a8d84; }
-.field {
-  display: flex;
-  align-items: center;
-  height: calc(38 * var(--u));
-  padding: 0 calc(13 * var(--u));
-  background: #fff;
-  border: calc(1 * var(--u)) solid #dedad1;
-  border-radius: calc(8 * var(--u));
-}
-.form > .field + .field, .form > .pair + .field, .form > .field + .pair { margin-top: calc(10 * var(--u)); }
-.pair { display: flex; gap: calc(10 * var(--u)); }
-.pair .field { flex: 1; }
-.dim { color: #9a9d94; }
-.card {
-  flex: none;
-  align-self: flex-start;
-  width: calc(320 * var(--u));
-  padding: calc(6 * var(--u)) calc(20 * var(--u)) calc(20 * var(--u));
-  font-size: calc(14 * var(--u));
-  background: #fff;
-  border: calc(1 * var(--u)) solid #e8e4dc;
-  border-top: 0;
-  border-radius: 0 0 calc(12 * var(--u)) calc(12 * var(--u));
-}
-.card h5 { margin: 0 0 calc(14 * var(--u)); font-size: calc(15 * var(--u)); font-weight: 700; }
-.line { display: flex; align-items: center; gap: calc(11 * var(--u)); }
-.line + .line { margin-top: calc(11 * var(--u)); }
-.line span:first-of-type { flex: 1; }
-.thumb { flex: none; width: calc(38 * var(--u)); height: calc(38 * var(--u)); border-radius: calc(7 * var(--u)); }
-.thumb.tote { background: linear-gradient(160deg, #e9dcc3, #d4c09b); }
-.thumb.book { background: linear-gradient(160deg, #7fa37a, #4f7a52); }
-.rule { height: calc(1 * var(--u)); margin: calc(14 * var(--u)) 0; background: #eeebe4; }
-.total { font-weight: 700; }
-.pay {
-  width: calc(124 * var(--u));
-  margin-top: calc(18 * var(--u));
-  padding: calc(8 * var(--u)) calc(14 * var(--u));
-  border-radius: calc(9 * var(--u));
-  background: #2f5d3a;
-  color: #fff;
-  font-weight: 600;
-  text-align: center;
-}
+/* What's said, as a video's captions: the box takes the whole sentence's size at once, and the words
+   appear in it as they're spoken. */
+.say { flex: none; width: fit-content; max-width: 100%; margin: clamp(16px, 4vh, 44px) auto 0; padding: 0.45em 0.9em; font-weight: 500; line-height: 1.45; color: #fff; text-align: center; text-wrap: balance; background: rgba(17, 17, 19, 0.88); border-radius: 0.6em; }
+.say i { display: inline-grid; place-items: center; width: 1.3em; height: 1.3em; margin: 0 0.05em; font: 600 var(--text-small)/1 var(--sans); vertical-align: 0.1em; border-radius: 50%; }
+.say i.blue { background: #2f66d6; }
+.say i.red { background: #d12b36; }
 
-/* Terminal beside Safari, with Claude Code: the aside arrives in its chat while Safari stays in
-   front. The chat starts at the top; once it fills the window, older lines leave at the top. */
-.term {
-  top: calc(62 * var(--u));
-  left: calc(976 * var(--u));
-  width: calc(512 * var(--u));
-  height: calc(560 * var(--u));
-  background: #1e1e1e;
-}
-.term .bar { height: calc(28 * var(--u)); background: #2d2d2d; color: #a1a1a6; border-bottom: calc(1 * var(--u)) solid #111; }
-.term.inactive .bar { background: #282828; }
-.term.inactive .lights i { background: #48484b; }
-.term-title { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 600; }
-.screen {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: calc(9 * var(--u));
-  height: calc(532 * var(--u));
-  overflow: hidden;
-  padding: calc(12 * var(--u)) calc(16 * var(--u));
-  font: calc(12 * var(--u))/1.5 var(--mono);
-  color: #e5e5e5;
-}
-.screen::after { content: ""; flex: 1 0 0; margin-top: calc(-9 * var(--u)); }
-.screen p { margin: 0; white-space: pre-wrap; }
-.screen [hidden] { display: none; }
-.screen .you { padding: calc(2 * var(--u)) calc(7 * var(--u)); background: #2b2b2b; color: #b8b8b8; }
-/* Like Claude Code, a message's lines go under its text, not under its > or ⏺. */
-.screen .aside, .screen .reply { padding-left: calc(7 * var(--u) + 2ch); text-indent: -2ch; }
-.screen .reply { padding-left: 2ch; }
-.screen .star { color: #d97757; }
-.screen .dim { color: #8a8a8e; }
-.input {
-  display: flex;
-  align-items: center;
-  gap: calc(8 * var(--u));
-  min-height: calc(32 * var(--u));
-  margin-top: calc(4 * var(--u));
-  padding: 0 calc(11 * var(--u));
-  border: calc(1 * var(--u)) solid #5a5a5e;
-  border-radius: calc(7 * var(--u));
-}
-.caret { width: calc(8 * var(--u)); height: calc(16 * var(--u)); background: #d4d4d4; }
-.typed b { font-weight: 400; color: #a8c7fa; }
+.pointer { display: none; position: absolute; top: 0; left: 0; z-index: 5; pointer-events: none; }
+.pointer svg { position: absolute; }
+.pointer .arrow { top: -3px; left: -5px; width: 26px; height: 26px; transform-origin: 20% 12%; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
+.pointer .cross { top: -11px; left: -11px; width: 22px; height: 22px; opacity: 0; }
+/* Waiting to be played (`plays`, set in <head> when motion is welcome). */
+.plays .pointer { display: block; }
+.plays .asides-pill, .plays .area-box, .plays .spot, .plays .guide, .plays .ruler, .plays .tag, .plays .note, .plays .say, .plays .say span, .plays .say i, .plays .pointer { opacity: 0; }
+.plays .drawn path { stroke-dasharray: 1; stroke-dashoffset: 1; }
 
-/* The keys being pressed, and the pointer */
-/* Above the subtitles, which can show at the same moment. */
-.hud {
-  position: absolute;
-  bottom: calc(150 * var(--u));
-  left: 50%;
-  z-index: 9;
-  padding: calc(12 * var(--u)) calc(24 * var(--u));
-  border-radius: calc(18 * var(--u));
-  background: rgba(28, 28, 30, 0.78);
-  -webkit-backdrop-filter: blur(calc(16 * var(--u)));
-  backdrop-filter: blur(calc(16 * var(--u)));
-  color: #fff;
-  font-size: calc(36 * var(--u));
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateX(-50%) scale(0.94);
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
-}
-.hud.on { opacity: 1; transform: translateX(-50%); }
-.pointer {
+/* How it goes: cards with what each step looks like. */
+.flow { display: grid; gap: 16px; margin-top: 24px; }
+.step { padding: clamp(24px, 4vw, 48px); background: var(--accent-wash); border-radius: 28px; }
+.step.grey { background: var(--code-bg); }
+.step.shown { display: flex; flex-wrap: wrap; align-items: center; gap: 28px 48px; }
+.step-text { flex: 1 1 300px; min-width: 0; }
+.shot { flex: 2 1 520px; min-width: 0; margin: 0; }
+.shot img { display: block; width: 100%; height: auto; border-radius: 16px; }
+.step .combo { margin-bottom: 18px; }
+.step kbd { min-width: 30px; height: 30px; border-color: #c8d6ee; box-shadow: 0 1px 0 #c8d6ee; }
+.step kbd:last-child { padding: 0 14px; color: var(--on-accent); background: var(--accent-fill); border-color: #a9c4ee; box-shadow: 0 1px 0 #a9c4ee; }
+.step-text p, .gets-head p { margin-top: 12px; color: #3d3d42; text-wrap: pretty; }
+
+/* What the agent gets: what comes from where, line by line. Each color is one source, in the list and
+   in the message, and pointing at a source in the list picks out its lines. */
+.gets { --voice: #ec6a5e; --marks: #92b6f0; --place: #a1a1a6; }
+.gets-body { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: 40px; }
+.gets-side { display: flex; flex-direction: column; gap: 36px; min-width: 0; }
+.sources { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 28px; }
+.source { position: relative; isolation: isolate; cursor: default; }
+.source::before { content: ""; position: absolute; z-index: -1; inset: -10px -12px; background: color-mix(in srgb, var(--tint) 55%, transparent); border-radius: 14px; opacity: 0; transition: opacity 150ms ease; }
+.source h3 { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; }
+.source h3 i { display: grid; place-items: center; width: 30px; height: 30px; color: var(--on); background: var(--tint); border-radius: 50%; transition: color 150ms ease, background-color 150ms ease; }
+.source h3 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.source ul { display: grid; gap: 8px; margin-top: 10px; padding-left: 40px; list-style: none; color: #55555a; }
+.source b { font-weight: 600; color: var(--fg); }
+.source.voice { --tint: #fbdfdc; --on: #a8281f; }
+.source.marks { --tint: var(--accent-fill); --on: var(--on-accent); }
+.source.place { --tint: #e4e4e8; --on: #3d3d42; }
+.chat { display: flex; flex-direction: column; min-width: 0; margin: 0; overflow: hidden; font: var(--text-small)/1.6 var(--mono); color: #e5e5e5; background: #1e1e1e; border-radius: 12px; box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 30px 60px -30px rgba(23, 22, 60, 0.45); }
+.chat-bar { position: relative; padding: 7px 76px; overflow: hidden; font-family: var(--sans); font-weight: 500; color: #a8a8ad; text-align: center; white-space: nowrap; text-overflow: ellipsis; background: #38383a; border-bottom: 1px solid #000; box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.18); }
+.chat-bar::before { content: ""; position: absolute; top: 50%; left: 14px; width: 12px; height: 12px; margin-top: -6px; background: #ff5f57; border-radius: 50%; box-shadow: 20px 0 0 #febc2e, 40px 0 0 #28c840; }
+.lines { flex: 1; display: grid; align-content: space-between; gap: 2px; padding: 10px 0; }
+.line { position: relative; padding: 6px 118px 6px calc(30px + 2ch); background: color-mix(in srgb, var(--c) 8%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; transition: opacity 180ms ease; }
+.line:first-child { text-indent: -2ch; }
+.line::before { content: ""; position: absolute; top: 13px; left: 14px; width: 8px; height: 8px; background: var(--c); border-radius: 50%; }
+.line::after { content: attr(data-from); position: absolute; top: 7px; right: 14px; text-indent: 0; font: 500 var(--text-small)/18px var(--sans); color: var(--c); }
+.line.voice { --c: var(--voice); color: #fff; }
+.line.marks { --c: var(--marks); }
+.line.place { --c: var(--place); }
+.line b { font-weight: 600; color: #fff; }
+.line u { font-weight: 600; color: #fff; text-decoration: none; background: rgba(255, 255, 255, 0.16); border-radius: 3px; padding: 0 3px; }
+.line img { display: block; width: calc(100% + 104px); height: auto; margin-top: 8px; border-radius: 4px; }
+.chat-prompt { padding: 8px 14px 10px 30px; border-top: 1px solid #3a3a3c; }
+.chat-prompt i { display: inline-block; width: 1ch; height: 1.25em; margin-left: 1ch; vertical-align: -0.25em; background: #e5e5e5; }
+.works { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 32px; padding-top: 22px; font-size: var(--text-small); color: var(--muted); border-top: 1px solid #d8e3f4; }
+.works b { font-weight: 550; color: var(--fg); }
+
+/* Sections */
+.section { margin-top: 120px; scroll-margin-top: 88px; }
+h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-spacing: -0.025em; text-wrap: balance; }
+.sub { margin-top: 12px; color: var(--muted); text-wrap: pretty; }
+/* The heading beside what it heads, staying in sight past a long section. */
+.split { display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: 48px; }
+.split > header { position: sticky; top: 88px; align-self: start; }
+
+/* More than a screenshot: a row for each, as Questions has. */
+.list { list-style: none; }
+.list li { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 2px 32px; align-items: baseline; padding: 14px 0; border-top: 1px solid var(--line); }
+.list li:first-child { padding-top: 2px; border-top: 0; }
+.list li:last-child { border-bottom: 1px solid var(--line); }
+.list b { font-weight: 600; letter-spacing: -0.01em; }
+.list span { color: var(--muted); text-wrap: pretty; }
+.list kbd { margin: 0 1px; vertical-align: 1px; }
+
+/* Install: the steps, on a line, the first holding each system's files. */
+.steps { list-style: none; display: flex; flex-direction: column; gap: 40px; counter-reset: step; }
+.steps > li { position: relative; min-width: 0; padding-left: 44px; counter-increment: step; }
+.steps > li::before {
+  content: counter(step);
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 10;
-  opacity: 0;
-  transform: translate(calc(var(--x, 800) * var(--u)), calc(var(--y, 600) * var(--u)));
-  transition: transform var(--move, 0ms) cubic-bezier(0.4, 0, 0.3, 1), opacity 200ms ease;
-}
-.pointer.on { opacity: 1; }
-.pointer svg { position: absolute; transition: transform 90ms ease-out; }
-.pointer .arrow { top: calc(-3 * var(--u)); left: calc(-5 * var(--u)); width: calc(26 * var(--u)); height: calc(26 * var(--u)); transform-origin: 20% 12%; filter: drop-shadow(0 calc(1 * var(--u)) calc(2 * var(--u)) rgba(0, 0, 0, 0.3)); }
-.pointer .cross { display: none; top: calc(-11 * var(--u)); left: calc(-11 * var(--u)); width: calc(22 * var(--u)); height: calc(22 * var(--u)); }
-.pointer.crosshair .arrow { display: none; }
-.pointer.crosshair .cross { display: block; }
-.pointer.down .arrow { transform: scale(0.86); }
-
-/* Subtitles: what the tester says, inside the picture like a video's captions. The box takes the
-   whole sentence's size at once, and the words appear in it as they're spoken. */
-.say {
-  position: absolute;
-  bottom: clamp(10px, 2.6cqw, 26px);
-  left: 50%;
-  z-index: 11;
-  width: max-content;
-  max-width: min(88%, 34em);
-  padding: 0.3em 0.7em;
-  font-size: clamp(14px, 1.85cqw, 18px);
-  font-weight: 500;
-  line-height: 1.4;
-  color: #fff;
-  text-align: center;
-  text-wrap: balance;
-  background: rgba(0, 0, 0, 0.74);
-  border-radius: 0.45em;
-  transform: translateX(-50%);
-}
-.say:empty, .say.swap { opacity: 0; }
-.say.swap { filter: blur(2px); }
-.say .w { transition: opacity 160ms ease; }
-.say .w.off { opacity: 0; }
-.say { transition: opacity 180ms ease, filter 180ms ease; }
-
-/* asides on a frozen screen, drawn after the overlay itself (asides-overlay's ui.rs and style.rs).
-   The menu bar is part of the frozen picture, so it stays: the pill comes in under it, glass with a
-   hairline, its microphone soft red while listening and filling with how loud it hears. Measurements
-   are pink lines with dark labels, pins numbered blue markers where they were clicked. */
-.apill {
-  position: absolute;
-  top: calc(47 * var(--u));
-  left: 50%;
-  z-index: 7;
-  display: flex;
-  align-items: center;
-  gap: calc(4 * var(--u));
-  height: calc(38 * var(--u));
-  padding: 0 calc(4 * var(--u));
-  color: rgba(255, 255, 255, 0.88);
-  font: 400 calc(13 * var(--u))/1 var(--sans);
-  white-space: nowrap;
-  background: rgba(28, 27, 26, 0.66);
-  -webkit-backdrop-filter: blur(calc(20 * var(--u))) saturate(1.3);
-  backdrop-filter: blur(calc(20 * var(--u))) saturate(1.3);
-  border: calc(1 * var(--u)) solid rgba(255, 255, 255, 0.1);
-  border-radius: calc(12 * var(--u));
-  opacity: 0;
-  transform: translateX(-50%) scale(0.98);
-  transition: opacity 160ms ease-out, transform 160ms ease-out;
-}
-.apill.on { opacity: 1; transform: translateX(-50%); }
-.apill svg { position: relative; width: calc(16 * var(--u)); height: calc(16 * var(--u)); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.ap-icon, .ap-mic, .ap-send { position: relative; display: grid; place-items: center; width: calc(28 * var(--u)); height: calc(28 * var(--u)); overflow: hidden; border-radius: calc(8 * var(--u)); }
-.ap-mic.listening { color: #fff; background: rgba(236, 106, 94, 0.32); }
-.ap-mic .level { position: absolute; inset: auto 0 0; height: 0; background: #ec6a5e; transition: height 90ms linear; }
-.ap-to { padding: 0 calc(16 * var(--u)) 0 calc(8 * var(--u)); }
-.ap-tool { display: none; align-items: center; gap: calc(6 * var(--u)); height: calc(28 * var(--u)); padding: 0 calc(10 * var(--u)); margin-right: calc(12 * var(--u)); border-radius: calc(8 * var(--u)); background: rgba(255, 255, 255, 0.07); }
-.ap-tool svg { width: calc(14 * var(--u)); height: calc(14 * var(--u)); }
-.apill.measuring .ap-tool { display: flex; }
-.ap-send { width: calc(32 * var(--u)); color: #16213a; background: #c2d6f6; }
-
-.ruler, .outline, .marker { position: absolute; z-index: 6; opacity: 0; pointer-events: none; }
-.ruler, .outline { left: calc(var(--bx, 0) * var(--u)); top: calc(var(--by, 0) * var(--u)); height: calc(var(--bh, 0) * var(--u)); }
-.ruler { width: calc(1.5 * var(--u)); background: #ff2d55; }
-.ruler::before, .ruler::after { content: ""; position: absolute; left: calc(-4 * var(--u)); width: calc(9.5 * var(--u)); height: calc(1.5 * var(--u)); background: #ff2d55; }
-.ruler::before { top: 0; }
-.ruler::after { bottom: 0; }
-.ruler i {
-  position: absolute;
-  top: 50%;
-  right: calc(10 * var(--u));
-  padding: calc(3 * var(--u)) calc(7 * var(--u));
-  font: 700 calc(12 * var(--u))/1 var(--sans);
-  font-style: normal;
-  color: #fff;
-  background: rgba(28, 28, 30, 0.92);
-  border-radius: calc(6 * var(--u));
-  transform: translateY(-50%);
-}
-.outline { width: calc(var(--bw, 0) * var(--u)); border: calc(1.5 * var(--u)) solid #3b82f6; border-radius: calc(4 * var(--u)); }
-.ruler.on, .outline.on { opacity: 1; }
-.marker {
-  left: calc(var(--bx, 0) * var(--u));
-  top: calc(var(--by, 0) * var(--u));
   display: grid;
   place-items: center;
-  width: calc(22 * var(--u));
-  height: calc(22 * var(--u));
-  font: 700 calc(12 * var(--u))/1 var(--sans);
-  color: #fff;
-  background: #3b82f6;
+  width: 28px;
+  height: 28px;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent-fill);
   border-radius: 50%;
-  box-shadow: 0 0 0 calc(2.5 * var(--u)) #fff, 0 calc(2 * var(--u)) calc(6 * var(--u)) rgba(0, 0, 0, 0.3);
-  transform: translate(-50%, -50%) scale(0.4);
-  transition: opacity 120ms ease, transform 260ms var(--ease-out);
 }
-.marker.on { opacity: 1; transform: translate(-50%, -50%); }
-/* Install */
-.steps { display: flex; flex-direction: column; gap: 12px; }
-.steps p { color: var(--muted); }
-.code { position: relative; border: 1px solid var(--line); border-radius: 10px; }
-.code pre { margin: 0; padding: 11px 48px 11px 14px; overflow-x: auto; font-size: 13px; line-height: 1.7; }
+.steps > li.extra::before {
+  content: "";
+  background:
+    linear-gradient(var(--muted), var(--muted)) center / 10px 2px no-repeat,
+    linear-gradient(var(--muted), var(--muted)) center / 2px 10px no-repeat,
+    var(--code-bg);
+}
+.steps > li:not(:last-child)::after { content: ""; position: absolute; top: 36px; bottom: -32px; left: 13.5px; width: 1px; background: var(--line); }
+.steps h3 { font-weight: 600; letter-spacing: -0.01em; line-height: 28px; }
+.steps h3 .combo { margin: 0 2px; vertical-align: 1px; }
+.steps p { margin-top: 4px; color: var(--muted); text-wrap: pretty; }
+.steps .code, .steps .panel { margin-top: 12px; }
+
+.panel { overflow: hidden; background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 1px 2px rgba(17, 17, 19, 0.04), 0 18px 36px -28px rgba(17, 17, 19, 0.28); }
+.systems { display: flex; gap: 2px; padding: 5px; background: var(--code-bg); border-bottom: 1px solid var(--line); }
+.systems[hidden] { display: none; }
+.systems button {
+  flex: 1;
+  height: 34px;
+  font: 500 var(--text-small)/1 var(--sans);
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 150ms ease, transform 160ms ease-out;
+}
+.systems button[aria-selected="true"] { color: var(--fg); background: var(--bg); box-shadow: 0 0 0 0.5px rgba(17, 17, 19, 0.1), 0 1px 3px rgba(17, 17, 19, 0.1); }
+.systems button:active { transform: scale(0.98); }
+.system[hidden] { display: none; }
+/* Without JavaScript, every system is listed, each under its name. */
+.system-name { padding: 16px 20px 0; font-size: var(--text-small); font-weight: 600; color: var(--muted); }
+.js .system-name { display: none; }
+.files { padding: 4px 20px; }
+.file { display: flex; align-items: center; justify-content: space-between; gap: 8px 20px; padding: 14px 0; }
+.file + .file { border-top: 1px solid var(--line); }
+.file.wrap { flex-direction: column; align-items: stretch; }
+.file.wrap .code { margin-top: 0; }
+.file .what { min-width: 0; }
+.file b { font-weight: 600; letter-spacing: -0.01em; }
+.file b small { margin-left: 4px; font: 500 var(--text-small) var(--mono); color: var(--muted); }
+.file .how { display: block; margin-top: 2px; font-size: var(--text-small); line-height: 1.5; color: var(--muted); }
+.file .how code { white-space: normal; overflow-wrap: anywhere; }
+.get { display: flex; flex: none; gap: 8px; }
+.get .pill { min-width: 86px; padding: 6px 14px; font-size: var(--text-small); }
+.get .pill svg { width: 15px; height: 15px; }
+.keep { display: grid; gap: 6px; padding: 14px 20px 16px; font-size: var(--text-small); line-height: 1.5; color: var(--muted); background: #fafafb; border-top: 1px solid var(--line); }
+.keep b { font-weight: 600; color: var(--fg); }
+.keep code { background: #efeff2; }
+
+.code { position: relative; background: var(--code-bg); border-radius: 12px; }
+.code pre { margin: 0; padding: 12px 48px 12px 16px; overflow-x: auto; font-size: var(--text-small); line-height: 1.7; }
 .copy {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 7px;
+  right: 7px;
   display: grid;
   place-items: center;
   width: 30px;
   height: 30px;
   padding: 0;
   color: var(--muted);
-  background: var(--bg);
+  background: var(--code-bg);
   border: 0;
   border-radius: 7px;
   cursor: pointer;
@@ -547,7 +366,7 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .agents button {
   height: 26px;
   padding: 0 9px;
-  font: 500 12px/1 var(--sans);
+  font: 500 var(--text-small)/1 var(--sans);
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
@@ -555,32 +374,30 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
   cursor: pointer;
   transition: color 150ms ease, transform 160ms ease-out;
 }
-.agents button[aria-selected="true"] { color: var(--fg); background: var(--code-bg); }
+.agents button[aria-selected="true"] { color: var(--fg); background: var(--bg); box-shadow: 0 0 0 0.5px rgba(17, 17, 19, 0.1); }
 .agents button:active { transform: scale(0.97); }
 .agents + pre { padding-top: 8px; }
-.agents ~ .copy { top: auto; bottom: 6px; }
-
-/* Shortcuts */
-.keys { display: grid; grid-template-columns: max-content 1fr; align-items: center; gap: 10px 20px; }
-.keys dt { display: flex; }
-.keys dd { color: var(--muted); }
+.agents ~ .copy { top: auto; bottom: 7px; }
 
 /* Questions */
 .qs details { border-top: 1px solid var(--line); }
+.qs details:first-child { border-top: 0; }
 .qs details:last-child { border-bottom: 1px solid var(--line); }
 .qs summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 0;
-  font-weight: 500;
+  padding: 14px 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   list-style: none;
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
+.qs details:first-child summary { padding-top: 2px; }
 .qs summary::-webkit-details-marker { display: none; }
 /* A plus drawn from two lines, turning into a cross as it opens. */
 .qs .x { position: relative; flex: none; width: 11px; height: 11px; color: var(--muted); transition: transform 300ms var(--ease-out), color 150ms ease; }
@@ -588,44 +405,83 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
 .qs .x::after { transform: rotate(90deg); }
 .qs details.open .x { transform: rotate(45deg); color: var(--fg); }
 .qs .a { overflow: hidden; }
-.qs .a p { padding: 0 24px 14px 0; color: var(--muted); }
+.qs .a p { padding: 0 24px 16px 0; color: var(--muted); text-wrap: pretty; }
 
-.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; margin-top: 72px; padding: 20px 0 48px; font-size: 13px; color: var(--muted); }
+/* And once more, at the end. */
+.last { display: flex; flex-direction: column; align-items: center; margin-top: 120px; padding: 64px 24px; text-align: center; background: var(--accent-wash); border-radius: 24px; }
+.last .sub { margin-top: 10px; }
+.last .buttons { margin-top: 26px; }
+.last .pill.quiet { background: transparent; border-color: #cfd9ec; }
+
+.foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 24px; padding: 32px 0 48px; font-size: var(--text-small); color: var(--muted); }
+.foot nav { display: flex; gap: 20px; }
 
 @media (hover: hover) and (pointer: fine) {
   a:hover { text-decoration-color: var(--fg); }
-  .top nav a:not(.pill):hover, .copy:hover, .agents button:hover, .qs summary:hover .x { color: var(--fg); }
-  .copy:hover { background: var(--code-bg); }
+  .top nav a:not(.pill):hover, .copy:hover, .agents button:hover, .systems button:hover, .qs summary:hover .x { color: var(--fg); }
+  .copy:hover { background: #eaeaee; }
   .pill:hover { opacity: 0.85; }
-  .pill.line:hover { opacity: 1; background: var(--code-bg); }
+  .pill.quiet:hover { opacity: 1; background: var(--code-bg); }
+  .last .pill.quiet:hover { background: rgba(255, 255, 255, 0.6); }
+  .source:hover::before { opacity: 1; }
+  .source:hover h3 i { color: #fff; background: var(--on); }
+  .gets-body:has(.source.voice:hover) .line:not(.voice),
+  .gets-body:has(.source.marks:hover) .line:not(.marks),
+  .gets-body:has(.source.place:hover) .line:not(.place) { opacity: 0.32; }
+}
+
+/* A short window: the opening still fits, caption included. */
+@media (max-height: 660px) and (min-width: 641px) {
+  .hero { padding-block: 10px 12px; }
+  .tool { margin-bottom: 10px; }
+}
+
+@media (max-width: 900px) {
+  .gets-body { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .split { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .split > header { position: static; }
 }
 
 @media (max-width: 640px) {
+  :root { --text-small: 13px; }
   .top { padding: 0 16px; }
   .top nav a:not(.pill) { display: none; }
-  .page { padding: 48px 16px 0; }
-  h1 { font-size: 26px; }
-  .list { grid-template-columns: minmax(0, 1fr); }
-  .wide { --w: calc(100vw - 16px); margin-top: 48px; }
-  .device { padding: 5px; border-radius: 13px; }
-  .display { border-radius: 8px; }
-  .code pre { padding-right: 14px; font-size: 12px; }
+  .page { padding: 0 16px; }
+  .hero { padding-top: 12px; }
+  .ap-icon:first-child, .dots { display: none; }
+  .step, .step.shown { border-radius: 22px; }
+  .list li { grid-template-columns: minmax(0, 1fr); }
+  .line { padding: 6px 12px 6px calc(24px + 2ch); }
+  .line img { width: 100%; }
+  .line::before { left: 10px; }
+  .chat-prompt { padding-left: 24px; }
+  .line::after { position: static; display: block; margin-top: 2px; }
+  .section, .last { margin-top: 80px; }
+  .steps > li { padding-left: 38px; }
+  .files { padding: 2px 16px; }
+  .keep { padding: 12px 16px 14px; }
+  .system-name { padding: 14px 16px 0; }
+  .file { flex-direction: column; align-items: stretch; }
+  .get .pill { flex: 1; }
+  .code pre { padding-right: 16px; }
   .copy { display: none; }
-  .code pre { padding-right: 14px; }
-  .keys { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .keys dd { margin-bottom: 10px; }
+  .last { padding: 44px 20px; }
 }
 
-.desk.instant, .desk.instant * { transition: none !important; }
-
 @media (prefers-reduced-motion: reduce) {
-  .desk, .desk *, .say, .say .w { transition-duration: 0ms !important; }
   .rec circle { animation: none; }
-  .js .wide { opacity: 1; transform: none; transition: none; }
+  .line, .source::before, .source h3 i { transition: none; }
 }
 </style>
 </head>
 <body>
+
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+  <symbol id="for-mac" viewBox="0 0 24 24"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></symbol>
+  <symbol id="for-windows" viewBox="0 0 24 24"><path fill="currentColor" d="M1 1h10.4v10.4H1zm11.6 0H23v10.4H12.6zM1 12.6h10.4V23H1zm11.6 0H23V23H12.6z"/></symbol>
+  <symbol id="for-linux" viewBox="0 0 24 24"><path fill="currentColor" stroke="currentColor" stroke-width="0.7" stroke-linejoin="round" d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></symbol>
+  <symbol id="for-any" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></symbol>
+</svg>
 
 <div class="top-bar">
   <header class="top">
@@ -634,247 +490,326 @@ h1 { font-size: 30px; font-weight: 650; line-height: 1.2; letter-spacing: -0.025
       asides
     </a>
     <nav aria-label="Main">
-      <span class="rec" aria-hidden="true"><svg viewBox="0 0 22 22" fill="none" stroke="var(--red)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="var(--red)" stroke="none"/></svg><span class="clock">0:07</span></span>
+      <span class="rec" aria-hidden="true"><svg viewBox="0 0 22 22" fill="none" stroke="var(--red)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="var(--red)" stroke="none"/></svg><span class="clock">0:00</span></span>
       <a href="#install">Install</a>
+      <a href="#questions">Questions</a>
       <a href="https://github.com/mihaicristianfarcas/asides">GitHub</a>
-      <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download</a>
+      <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg" data-download><svg aria-hidden="true"><use href="#for-mac"></use></svg>Download</a>
     </nav>
   </header>
 </div>
 
 <main class="page">
-  <p class="rec" aria-hidden="true"><svg viewBox="0 0 22 22" fill="none" stroke="var(--red)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="var(--red)" stroke="none"/></svg><span class="clock">0:07</span></p>
-  <h1>Report bugs out loud while you test.</h1>
-  <p class="lede">A Mac menu-bar app. Press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>, click what's wrong and say why. Press it again, and it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked.</p>
-  <div class="buttons">
-    <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Download for Mac</a>
-    <a class="pill line" href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a>
+  <div class="hero">
+    <div class="tool" aria-hidden="true">
+      <div class="asides-pill">
+        <span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
+        <span class="ap-mic"><i class="ap-lit"></i><i class="ap-level"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+        <span class="ap-to">Claude Code (asides)</span>
+        <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span>
+        <span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+        <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
+      </div>
+    </div>
+    <div class="hero-main">
+    <h1>Report bugs <span class="area"><span class="area-box" aria-hidden="true"></span>out loud<span class="spot blue" data-n="1" aria-hidden="true"></span></span> while you test.</h1>
+    <div class="gap" aria-hidden="true"><i class="guide first"></i><i class="guide second"></i><i class="ruler"></i><span class="tag">32 pt</span></div>
+    <p class="lede">Press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>, click what's wrong and say why. Press it again, and it's typed into your coding agent's chat as your own message, with the screenshot and the element you clicked.</p>
+    <div class="cta">
+      <a class="pill big" href="https://download.asides.mihaicristian.dev/asides.dmg" data-download><svg aria-hidden="true"><use href="#for-mac"></use></svg><span data-download-label>Download for Mac</span><svg class="drawn" viewBox="0 0 240 88" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M125 4C182 2 235 17 235 44C235 72 180 84 118 84C55 83 5 70 5 44C5 18 62 8 139 4"/></svg><span class="spot red" data-n="2" aria-hidden="true"></span></a>
+      <div class="note" aria-hidden="true">
+        <span class="note-field"><span class="typed">Keep the label on one line</span><i class="caret"></i></span>
+        <span class="dots"><i style="background:#e5484d"></i><i style="background:#e8a33d"></i><i style="background:#7c5ce0"></i><i style="background:#3fb0a4"></i></span>
+        <span class="note-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+      </div>
+    </div>
+    <p class="also"><span data-also>Also for <a href="#install" data-pick="windows">Windows</a> and <a href="#install" data-pick="linux">Linux</a>.</span> <a href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a></p>
+    </div>
+    <p class="say" aria-hidden="true"><span>These</span> <span>words</span> <i class="blue" data-cue="pin1">1</i> <span>should</span> <span>stand</span> <span data-cue="out">out.</span> <span>The</span> <span data-cue="gap">gap</span> <span>under</span> <span>them</span> <span>is</span> <span data-cue="size">32</span> <span data-cue="points">points,</span> <span data-cue="and">and</span> <span>this</span> <span>button</span> <i class="red" data-cue="pin2">2</i> <span>is</span> <span>the</span> <span>one</span> <span>thing</span> <span>to</span> <span data-cue="click">click.</span></p>
+    <div class="pointer" aria-hidden="true">
+      <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
+    </div>
   </div>
 
-  <section class="section" aria-labelledby="features">
-    <h2 class="label" id="features">Features</h2>
+  <div class="flow">
+    <section class="step shown" aria-labelledby="frozen">
+      <div class="step-text">
+        <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>
+        <h2 id="frozen">Every screen freezes.</h2>
+        <p>Opens in about 110 ms on a Mac, over anything on screen, under one small pill.</p>
+      </div>
+      <figure class="shot"><img src="overlay-frozen.webp" width="1434" height="430" alt="A frozen screen: the menu bar, the asides pill sending to Claude Code (shop), and the top of a checkout page." decoding="async"></figure>
+    </section>
+
+    <section class="step shown grey" aria-labelledby="point">
+      <div class="step-text">
+        <h2 id="point">Click what's wrong. Say why.</h2>
+        <p>Each pin lands at the word you said as you placed it. Measure, draw, or drag a pin's number to show where it should go.</p>
+      </div>
+      <figure class="shot"><img src="overlay-pins.webp" width="900" height="442" alt="Pins on an order summary and a Pay now button, with a card reading Keep the label on one line." loading="lazy" decoding="async"></figure>
+    </section>
+
+    <section class="step gets" aria-labelledby="gets">
+      <div class="gets-body">
+        <div class="gets-side">
+        <div class="gets-head">
+          <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span>
+          <h2 id="gets">It's in your agent's chat.</h2>
+          <p>As your own message, typed in the way you would, with your voice and your annotations already in place. Nothing to connect, nothing listening.</p>
+        </div>
+        <div class="sources">
+          <div class="source voice">
+            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></i>From your voice</h3>
+            <ul><li><b>What you said</b>, word for word, each pin's number where you said it.</li></ul>
+          </div>
+          <div class="source marks">
+            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg></i>From your annotations</h3>
+            <ul>
+              <li><b>The screenshot</b>, around what you marked, with its pins.</li>
+              <li><b>Each pin:</b> the element's role and label, and a CSS-like location.</li>
+              <li><b>What you typed</b> on a pin, under that pin.</li>
+              <li><b>What you measured</b>, in points, and on which screen.</li>
+            </ul>
+          </div>
+          <div class="source place">
+            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9.5h18"/></svg></i>From your screen</h3>
+            <ul><li><b>Where it was:</b> the app, the window and the page.</li></ul>
+          </div>
+        </div>
+        </div>
+        <figure class="chat" aria-label="An example message">
+          <figcaption class="chat-bar">shop — claude — 96×34</figcaption>
+          <div class="lines">
+            <div class="line marks" data-from="annotations">&gt; [Image #1]<img src="overlay-pins.webp" width="900" height="442" alt="The screenshot your agent gets: the same pins on the order summary and the button." loading="lazy" decoding="async"></div>
+            <div class="line place" data-from="screen"><b>**In:**</b> Safari ("Checkout · meadow", localhost:5173/checkout)</div>
+            <div class="line voice" data-from="voice">The summary card <u>[1]</u> is jammed under the header.</div>
+            <div class="line marks" data-from="annotations"><b>**Measured**</b> in pt (screen: Built-in Retina Display, 1512 × 945 pt, @2x)
+- Distance from (610, 173): 6 down (y 170 to y 176)</div>
+            <div class="line voice" data-from="voice">And this button <u>[2]</u> wraps.</div>
+            <div class="line marks" data-from="annotations"><b>### 1. group "Order summary"</b>
+<b>**Location:**</b> main &gt; aside.summary</div>
+            <div class="line marks" data-from="annotations"><b>### 2. button "Pay now · $72.00"</b>
+<b>**Location:**</b> aside.summary &gt; button.pay
+<b>**Feedback:**</b> Keep the label on one line</div>
+          </div>
+          <div class="chat-prompt" aria-hidden="true">&gt;<i></i></div>
+        </figure>
+      </div>
+      <p class="works"><span>Works with</span> <b>Claude Code</b> <b>Codex</b> <b>OpenCode</b> <b>Gemini CLI</b> <b>Copilot CLI</b> <b>Qwen Code</b></p>
+    </section>
+  </div>
+
+  <section class="section split" aria-labelledby="features">
+    <header>
+      <h2 id="features">More than a screenshot.</h2>
+      <p class="sub">On anything on screen.</p>
+    </header>
     <ul class="list">
       <li><b>Into the chat you're in</b><span>The session you typed into last: Claude Code, Codex, OpenCode and more.</span></li>
-      <li><b>Nothing to install in it</b><span>Typed in as you would, in Terminal, Ghostty or Diri.</span></li>
-      <li><b>Point, don't describe</b><span>Click an element: its name, page and place go with your words.</span></li>
+      <li><b>Nothing to install in it</b><span>Typed in as you would, in Terminal, Ghostty or Diri; on Windows and Linux, any terminal.</span></li>
+      <li><b>Or a new session</b><span>Pick an agent and a folder: it starts there, with the aside as its first message.</span></li>
+      <li><b>Point, don't describe</b><span>Click an element or drag over an area: its name, page and place go with your words.</span></li>
+      <li><b>Show where it should go</b><span>Drag a pin's number: a copy lands where you drop it, with an arrow, and the pin says where to.</span></li>
       <li><b>Measure anything</b><span>Distances, sizes and guides, in any app, not just the browser.</span></li>
-      <li><b>Local and free</b><span>Whisper on your Mac's GPU. No account, no audio sent.</span></li>
-      <li><b>Verbatim</b><span>What you said, in any language. No rewriting.</span></li>
-      <li><b>Freeze, use, freeze again</b><span>One aside holds every freeze, in the order you went.</span></li>
-      <li><b>A history, not files</b><span>Every aside kept on your Mac for 30 days, to send again.</span></li>
+      <li><b>Draw and crop</b><span>Circle, underline or point with an arrow, or take just part of the screen.</span></li>
+      <li><b>Talk, or type</b><span>Each pin lands at the word you said as you placed it. Muted, each opens a card to type in.</span></li>
+      <li><b>Freeze, use, freeze again</b><span>Opens in about 110 ms on a Mac. One aside holds every freeze, in the order you went.</span></li>
+      <li><b>Local, verbatim and free</b><span>Whisper on your own computer, word for word, in any language. No account, no audio sent.</span></li>
+      <li><b>A history, not files</b><span>Every aside kept on your computer for 30 days, to read or send again.</span></li>
+      <li><b>From the keyboard</b><span>Tab through pins and sessions, or press a pin's number. <kbd>?</kbd> shows every key.</span></li>
     </ul>
   </section>
 
-  <div class="wide" role="group" aria-label="Example: one aside">
-      <figure class="device" id="demo">
-        <div class="display">
-          <!-- The markup is the demo's last frame, so it reads fine without JavaScript. -->
-          <div class="desk" aria-hidden="true">
-            <div class="menubar">
-              <div class="menus">
-                <svg viewBox="0 0 170 200"><path d="M150.4 155.9c-2.8 6.4-6.1 12.3-9.9 17.7-5.2 7.4-9.5 12.5-12.8 15.4-5.1 4.7-10.6 7.1-16.5 7.2-4.2 0-9.3-1.2-15.2-3.6-5.9-2.4-11.4-3.6-16.4-3.6-5.2 0-10.8 1.2-16.8 3.6-6 2.4-10.9 3.7-14.6 3.8-5.6.2-11.2-2.2-16.8-7.4-3.6-3.1-8-8.4-13.4-16-5.7-8-10.4-17.3-14.1-28C-.2 133.4-2 122.4-2 111.8c0-12.2 2.6-22.7 7.9-31.5 4.2-7.1 9.7-12.8 16.7-16.9 7-4.1 14.6-6.3 22.7-6.4 4.5 0 10.3 1.4 17.6 4.1 7.3 2.7 11.9 4.1 14 4.1 1.5 0 6.8-1.6 15.6-4.8 8.4-3 15.5-4.3 21.3-3.8 15.8 1.3 27.6 7.5 35.5 18.7-14.1 8.6-21.1 20.6-21 36 .1 12 4.5 22 13.1 29.9 3.9 3.7 8.3 6.6 13.1 8.6-1 3-2.2 5.9-3.4 8.7zM114.4 4c0 9.4-3.4 18.2-10.3 26.3-8.3 9.6-18.3 15.2-29.2 14.3-.1-1.1-.2-2.3-.2-3.6 0-9 3.9-18.7 10.9-26.6 3.5-4 7.9-7.3 13.2-10 5.3-2.6 10.4-4.1 15.1-4.3.1 1.3.2 2.6.2 3.9z"/></svg>
-                <b>Safari</b>
-                <span>File</span>
-                <span>Edit</span>
-                <span>View</span>
-                <span>History</span>
-                <span>Bookmarks</span>
-                <span>Window</span>
-                <span>Help</span>
+  <section class="section split" id="install" aria-labelledby="install-label">
+    <header>
+      <h2 id="install-label">Install</h2>
+      <p class="sub">Free, with no account.</p>
+    </header>
+    <ol class="steps">
+      <li>
+        <h3>Get asides</h3>
+        <div class="panel">
+          <div class="systems" role="tablist" aria-label="System" hidden><button type="button" role="tab" data-pick="mac" aria-selected="true">Mac</button><button type="button" role="tab" data-pick="windows" aria-selected="false" tabindex="-1">Windows</button><button type="button" role="tab" data-pick="linux" aria-selected="false" tabindex="-1">Linux</button></div>
+
+          <div class="system" data-system="mac" role="tabpanel" aria-label="Mac">
+            <h4 class="system-name">Mac</h4>
+            <div class="files">
+              <div class="file">
+                <div class="what"><b>Disk image</b><span class="how">Drag asides to Applications. macOS&nbsp;14 or later, Apple silicon.</span></div>
+                <div class="get"><a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>.dmg</a></div>
               </div>
-              <span class="notch"></span>
-              <div class="extras">
-                <span class="status" data-state="idle">
-                  <svg class="i-idle" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11.5" r="2.9"/><path d="M13.9 8.6v5.8"/></svg>
-                  <svg class="i-rec" viewBox="0 0 22 22" fill="none" stroke="#ff3b30" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><circle cx="11" cy="11" r="3" fill="#ff3b30" stroke="none"/></svg>
-                  <svg class="i-busy" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><g fill="currentColor" stroke="none"><circle cx="8.4" cy="11" r="1.1"/><circle cx="11" cy="11" r="1.1"/><circle cx="13.6" cy="11" r="1.1"/></g></svg>
-                  <svg class="i-done" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.4 3.8H2.8v14.4h2.6M16.6 3.8h2.6v14.4h-2.6"/><path d="M13.2 7.2H9.3l-.2 3.6M8.95 11.46A2.3 2.3 0 1 1 8.95 13.54"/></svg>
-                  <span class="status-title"></span>
-                </span>
-                <svg class="battery" viewBox="0 0 28 14" fill="none" stroke="currentColor"><rect x="0.75" y="0.75" width="23" height="12.5" rx="3.5" stroke-opacity="0.5" stroke-width="1.2"/><rect x="2.6" y="2.6" width="16" height="8.8" rx="1.8" fill="currentColor" stroke="none"/><path d="M26 5v4" stroke-opacity="0.5" stroke-width="1.6" stroke-linecap="round"/></svg>
-                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 19.2 9.4 16.6a3.7 3.7 0 0 1 5.2 0zM6.6 13.8l-1.5-1.5a9.8 9.8 0 0 1 13.8 0l-1.5 1.5a7.7 7.7 0 0 0-10.8 0zM3.8 11 2.3 9.5a13.8 13.8 0 0 1 19.4 0L20.2 11a11.7 11.7 0 0 0-16.4 0z"/></svg>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="6" rx="3"/><rect x="3" y="13" width="18" height="6" rx="3"/><circle cx="15" cy="8" r="1.6" fill="currentColor"/><circle cx="9" cy="16" r="1.6" fill="currentColor"/></svg>
-                <span class="clock">Thu 15 Oct&nbsp;&nbsp;14:38</span>
-              </div>
-            </div>
-
-            <div class="win safari">
-              <div class="bar">
-                <span class="lights"><i></i><i></i><i></i></span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M9.5 5v14"/></svg>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 6-6 6 6 6"/></svg>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"><path d="m9.5 6 6 6-6 6"/></svg>
-                <span class="url">localhost:5173/checkout</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11M8.5 7 12 3.5 15.5 7M8 10H6.5v10h11V10H16"/></svg>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-              </div>
-              <div class="site">
-                <div class="site-head">
-                  <span class="logo"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4C11 4 5 8.5 5 15c0 1.7.5 3.2 1.3 4.4C8 14 11.5 10.5 16 8.5c-4 2.6-7 6.4-8.4 11.2C8.9 20.5 10.4 21 12 21c6.5 0 9-7 8-17z"/></svg>meadow</span>
-                  <span>Shop</span>
-                  <span>Journal</span>
-                  <span>About</span>
-                  <span class="cart">Cart (2)</span>
-                </div>
-                <div class="site-body">
-                  <div class="form">
-                    <h4>Checkout</h4>
-                    <div class="label">Contact</div>
-                    <div class="field">sam@example.com</div>
-                    <div class="label">Delivery</div>
-                    <div class="field">Sam Rivera</div>
-                    <div class="field">12 Orchard Lane</div>
-                    <div class="pair"><div class="field">Bristol</div><div class="field">BS1 4DJ</div></div>
-                    <div class="label">Payment</div>
-                    <div class="field">•••• •••• •••• 4242</div>
-                    <div class="pair"><div class="field dim">MM / YY</div><div class="field dim">CVC</div></div>
-                  </div>
-                  <div class="card">
-                    <h5>Order summary</h5>
-                    <div class="line"><i class="thumb tote"></i><span>Linen tote</span><span>$48.00</span></div>
-                    <div class="line"><i class="thumb book"></i><span>Field notebook × 2</span><span>$24.00</span></div>
-                    <div class="rule"></div>
-                    <div class="line"><span>Subtotal</span><span>$72.00</span></div>
-                    <div class="line"><span>Shipping</span><span>Free</span></div>
-                    <div class="line total"><span>Total</span><span>$72.00</span></div>
-                    <div class="pay">Pay now · $72.00</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="win term inactive">
-              <div class="bar">
-                <span class="lights"><i></i><i></i><i></i></span>
-                <span class="term-title">shop — claude — 66×28</span>
-              </div>
-              <div class="screen">
-                <p><span class="star">✻</span> Welcome to Claude Code</p>
-                <p class="you">&gt; Run the checkout tests</p>
-                <p>⏺ All 14 checkout tests pass.</p>
-                <p class="you aside">&gt; [Image #1]
-
-**In:** Safari ("Checkout · meadow", localhost:5173/checkout)
-
-The summary card is jammed under the header.
-
-**Measured** in pt (screen: Built-in Retina Display, 1512 × 945 pt, @2x)
-- Distance from (610, 173): 6 down (y 170 to y 176)
-
-And this button [1] wraps.
-
-### 1. button "Pay now · $72.00"
-**Location:** aside.summary &gt; button.pay</p>
-                <p class="thinking" hidden><span class="star">✻</span> Thinking…</p>
-                <p class="reply">⏺ I'll give the summary card room below the sticky header, and keep the Pay button's label on one line.</p>
-                <div class="input"><span class="dim">&gt;</span><span class="typed"></span><i class="caret"></i></div>
-                <p class="dim">? for shortcuts</p>
-              </div>
-            </div>
-
-            <!-- asides on the frozen screen, drawn after the overlay (asides-overlay's ui.rs): the pill
-                 under the menu bar, a measurement, a pin. -->
-            <div class="apill">
-              <span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
-              <span class="ap-mic"><i class="level"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
-              <span class="ap-to">Claude Code (shop)</span>
-              <span class="ap-tool"><svg viewBox="0 0 24 24"><path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/></svg>Measure</span>
-              <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span>
-              <span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
-              <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span>
-            </div>
-            <div class="ruler"><i></i></div>
-            <div class="outline"></div>
-            <div class="marker">1</div>
-            <div class="pointer">
-              <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
-              <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
-            </div>
-          </div>
-          <div class="hud" aria-hidden="true"></div>
-          <p class="say" aria-live="polite"></p>
-        </div>
-      </figure>
-  </div>
-
-  <section class="section" id="install" aria-labelledby="install-label">
-    <h2 class="label" id="install-label">Install</h2>
-    <div class="steps">
-      <div class="code"><pre><code>brew tap mihaicristianfarcas/asides \
+              <div class="file wrap">
+                <div class="what"><b>Homebrew</b></div>
+                <div class="code"><pre><code>brew tap mihaicristianfarcas/asides \
   https://github.com/mihaicristianfarcas/asides
 brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
-      <p>Or <a href="https://download.asides.mihaicristian.dev/asides.dmg">download the disk image</a>. Signed and notarized by Apple, for Apple silicon and macOS&nbsp;14 or later. Setup shows how it works, then walks you through the permissions, the voice model and where new sessions open.</p>
-      <p>Start your coding agent as usual, in Terminal, Ghostty or Diri. There's nothing to set up in it:</p>
-      <div class="code"><pre><code>cd ~/code/shop &amp;&amp; claude</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
-      <p>Then press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span> over the app you're testing. Optionally, let your agent look up past asides and measure screenshots:</p>
-      <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
+              </div>
+            </div>
+            <div class="keep">
+              <p><b>Signed</b> and notarized by Apple.</p>
+              <p><b>Updates itself</b> as it quits.</p>
+              <p><b>To remove it,</b> <code>brew uninstall --cask asides</code>, or delete <code>asides.app</code> and <code>/usr/local/bin/asides</code>.</p>
+            </div>
+          </div>
+
+          <div class="system" data-system="windows" role="tabpanel" aria-label="Windows">
+            <h4 class="system-name">Windows</h4>
+            <div class="files">
+              <div class="file">
+                <div class="what"><b>Installer</b><span class="how">Windows&nbsp;10 (2004) or 11. No administrator needed.</span></div>
+                <div class="get"><a class="pill" href="https://download.asides.mihaicristian.dev/asides-windows-x64-setup.exe"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>x64</a><a class="pill" href="https://download.asides.mihaicristian.dev/asides-windows-arm64-setup.exe"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Arm64</a></div>
+              </div>
+            </div>
+            <div class="keep">
+              <p><b>Signed.</b> SmartScreen may still ask about a new release: <b>More info</b>, then <b>Run anyway</b>.</p>
+              <p><b>Updates itself</b> as it quits.</p>
+              <p><b>To remove it,</b> Settings → Apps.</p>
+            </div>
+          </div>
+
+          <div class="system" data-system="linux" role="tabpanel" aria-label="Linux">
+            <h4 class="system-name">Linux</h4>
+            <div class="files">
+              <div class="file">
+                <div class="what"><b>Debian, Ubuntu, Mint <small>.deb</small></b><span class="how"><code>sudo apt install ./asides-linux-*.deb</code></span></div>
+                <div class="get"><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-x86_64.deb"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>x86_64</a><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-aarch64.deb"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Arm64</a></div>
+              </div>
+              <div class="file">
+                <div class="what"><b>Fedora, openSUSE <small>.rpm</small></b><span class="how"><code>sudo dnf install ./asides-linux-*.rpm</code> (<code>zypper install</code>)</span></div>
+                <div class="get"><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-x86_64.rpm"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>x86_64</a><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-aarch64.rpm"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Arm64</a></div>
+              </div>
+              <div class="file">
+                <div class="what"><b>Any other <small>.tar.gz</small></b><span class="how">Run its <code>./install.sh</code>, for you alone.</span></div>
+                <div class="get"><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-x86_64.tar.gz"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>x86_64</a><a class="pill" href="https://download.asides.mihaicristian.dev/asides-linux-aarch64.tar.gz"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8.5M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>Arm64</a></div>
+              </div>
+              <div class="file">
+                <div class="what"><b>Arch</b><span class="how"><code>makepkg -si</code> beside the <a href="https://github.com/mihaicristianfarcas/asides/blob/main/packaging/linux/PKGBUILD">PKGBUILD</a>.</span></div>
+              </div>
+            </div>
+            <div class="keep">
+              <p><b>Needs</b> GNOME or KDE on Wayland, or any X11 desktop, with Vulkan.</p>
+              <p><b>Signed</b> with <a href="https://github.com/mihaicristianfarcas/asides/blob/main/guide/using.md#updates">minisign</a>: each file has its signature beside it.</p>
+              <p><b>Updates:</b> asides says when a new version is out. Install it over this one, the same way.</p>
+              <p><b>To remove it,</b> <code>apt remove asides</code>, <code>dnf remove asides</code>, <code>pacman -R asides-bin</code>, or <code>install.sh --uninstall</code>.</p>
+            </div>
+          </div>
+        </div>
+      </li>
+      <li>
+        <h3>Open it</h3>
+        <p>Setup shows how it works, then walks you through the permissions, the voice model (190&nbsp;MB) and where new sessions open. Skip it, and asides asks as each is first needed.</p>
+      </li>
+      <li>
+        <h3>Start your coding agent, as usual</h3>
+        <p>In Terminal, Ghostty or Diri; on Windows and Linux, in any terminal. There's nothing to set up in it.</p>
+        <div class="code"><pre><code>cd ~/code/shop &amp;&amp; claude</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
+      </li>
+      <li>
+        <h3>Press <span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span> over the app you're testing</h3>
+        <p>Click what's wrong, say why, and press it again.</p>
+      </li>
+      <li class="extra">
+        <h3>Let your agent look back, if you like</h3>
+        <p>Through <code>asides mcp</code>, it can read past asides and measure screenshots.</p>
+        <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
 codex mcp add asides -- asides mcp
 opencode mcp add --global asides -- asides mcp
 gemini mcp add --scope user --trust asides asides mcp
 copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="button" aria-label="Copy" hidden><svg class="clip" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.8"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg><svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></button></div>
-    </div>
+      </li>
+    </ol>
   </section>
 
-  <section class="section" id="usage" aria-labelledby="usage-label">
-    <h2 class="label" id="usage-label">Shortcuts</h2>
-    <dl class="keys">
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span></dt><dd>Freeze the screen, click what's wrong and say why. Press it again, or <kbd>⏎</kbd>, to send it.</dd>
-      <dt><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>P</kbd></span></dt><dd>Back to the live screen to use your app, still talking. Again: freeze it.</dd>
-      <dt><span class="combo"><kbd>Tab</kbd></span></dt><dd>The next agent session. Point at the pill's session (or press <kbd>W</kbd>) for all of them, or a new one in any folder.</dd>
-      <dt><span class="combo"><kbd>M</kbd><kbd>D</kbd></span></dt><dd>Measure, or draw. <kbd>?</kbd> shows every key.</dd>
-      <dt><span class="combo"><kbd>Esc</kbd></span></dt><dd>Close without sending.</dd>
-    </dl>
-  </section>
-
-  <section class="section" id="questions" aria-labelledby="questions-label">
-    <h2 class="label" id="questions-label">Questions</h2>
+  <section class="section split" id="questions" aria-labelledby="questions-label">
+    <header>
+      <h2 id="questions-label">Questions</h2>
+      <p class="sub">More in <a href="https://github.com/mihaicristianfarcas/asides/blob/main/guide/using.md">the guide</a>.</p>
+    </header>
     <div class="qs">
       <details>
+        <summary>What does it run on?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>macOS 14 or later on Apple silicon. Windows 10 (2004) or 11, x64 or Arm64. On Linux, GNOME or KDE on Wayland, or any X11 desktop, x86_64 or Arm64, with Vulkan.</p></div>
+      </details>
+      <details>
+        <summary>How is it different from a screenshot and dictation?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>A screenshot shows what's there, and dictation says what's wrong, but your agent still has to work out which is which and find it in the code. An aside keeps them together, in the order you went: your words, each pin at the word you said it, the element's name and place, and what you measured.</p></div>
+      </details>
+      <details>
         <summary>Where do my asides go?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>Into the agent session you typed into last, typed in as your own message. Tab picks another; the pill's list also starts a new session in any folder, or keeps the aside in History only. Every aside stays in History on your Mac for 30 days, to send again.</p></div>
+        <div class="a"><p>Into the agent session you typed into last, typed in as your own message. Tab picks another; the pill's list also starts a new session in any folder, or keeps the aside in History only. Every aside stays in History on your computer for 30 days, to send again.</p></div>
       </details>
       <details>
         <summary>Which agents work with it?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code, in Terminal, Ghostty or Diri. asides types each aside in the way you would, so there's nothing to install in the agent. Any agent with MCP can also read past asides through <code>asides mcp</code>.</p></div>
+        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code, in Terminal, Ghostty or Diri, and on Windows and Linux in any terminal. asides types each aside in the way you would, so there's nothing to install in the agent. Any agent with MCP can also read past asides through <code>asides mcp</code>.</p></div>
       </details>
       <details>
-        <summary>Does my voice leave my Mac?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>No. Whisper transcribes it on your Mac, word for word, then the audio is discarded (or kept beside the aside, if you turn that on). The only download is the voice model. Your agent gets the text and screenshots, and may pass them to its model provider.</p></div>
+        <summary>Does it only work on web pages?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>No, on anything on screen. A pin names the element under it (<code>button "Save"</code>), and in browsers the page and a CSS-like location too. Where an app doesn't say, a pin is still a numbered point on the screenshot.</p></div>
+      </details>
+      <details>
+        <summary>Do I have to talk?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>No. Mute the microphone, and each new pin opens a card to type in; hold Space when you do want to talk. Pins, measuring and screenshots work without a voice model.</p></div>
+      </details>
+      <details>
+        <summary>Which languages does it understand?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>Any that Whisper knows. Voice models are for English or for any language, from 190 MB; larger ones are more accurate. Settings picks one. What you said stays as you said it: nothing translated, nothing rewritten.</p></div>
+      </details>
+      <details>
+        <summary>Does my voice leave my computer?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>No. Whisper transcribes it on your computer, word for word, then the audio is discarded (or kept beside the aside, if you turn that on). The only download is the voice model. Your agent gets the text and screenshots, and may pass them to its model provider.</p></div>
       </details>
       <details>
         <summary>What permissions does it need?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>The microphone, and Screen Recording to freeze the screen. Automation the first time it types into Terminal or Ghostty (Diri needs none). Accessibility names what's under each pin; pins work without it.</p></div>
+        <div class="a"><p>On a Mac, the microphone, and Screen Recording to freeze the screen. Automation the first time it types into Terminal or Ghostty (Diri needs none). Accessibility names what's under each pin; pins work without it. On Windows, only the microphone. On Linux, GNOME on Wayland asks once before the first screenshot, and where the system restricts typing into terminals, setup asks you to allow a small helper.</p></div>
+      </details>
+      <details>
+        <summary>Is it signed?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>Yes. On a Mac, signed and notarized by Apple. On Windows, signed with a Certum code-signing certificate. Every file also has a minisign signature beside it. Releases are built and signed by GitHub Actions, from the public source.</p></div>
+      </details>
+      <details>
+        <summary>How do I update, reinstall or remove it?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>On a Mac and on Windows, asides updates itself as it quits (Settings → General → Update automatically). On Linux, it says when a new version is out. To reinstall, install a download over what you have: your history, settings and voice models stay. Install, above, says how to remove it on each system.</p></div>
+      </details>
+      <details>
+        <summary>Can I find an old aside?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>Yes. History, in the asides window, keeps them for 30 days (or forever: it's a setting), to read or send again. <code>asides history</code> and <code>asides show</code> read them in a terminal, and your agent can through <code>asides mcp</code>.</p></div>
+      </details>
+      <details>
+        <summary>Does it work with Wispr Flow?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p>On a Mac, yes. Turn on Settings → Wispr Flow dictations: what you dictate while the screen is frozen joins the aside, where you said it.</p></div>
+      </details>
+      <details>
+        <summary>What if something goes wrong?<span class="x" aria-hidden="true"></span></summary>
+        <div class="a"><p><code>asides log</code> shows problems, crash reports and the log's last lines, and <code>asides status</code> says when there are any. <a href="https://github.com/mihaicristianfarcas/asides/blob/main/guide/troubleshooting.md">Troubleshooting</a> has the usual ones; if it's none of those, <a href="https://github.com/mihaicristianfarcas/asides/issues">open an issue</a>.</p></div>
       </details>
       <details>
         <summary>Is it free?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>Yes, and open source under MIT or Apache-2.0.</p></div>
+        <div class="a"><p>Yes, and open source under MIT or Apache-2.0. No account, no API key.</p></div>
       </details>
+    </div>
+  </section>
+
+  <section class="last" aria-labelledby="last">
+    <h2 id="last">Report your next bug out loud.</h2>
+    <p class="sub">Free and open source, for Mac, Windows and Linux.</p>
+    <div class="buttons">
+      <a class="pill" href="https://download.asides.mihaicristian.dev/asides.dmg" data-download><svg aria-hidden="true"><use href="#for-mac"></use></svg><span data-download-label>Download for Mac</span></a>
+      <a class="pill quiet" href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a>
     </div>
   </section>
 
   <footer class="foot">
     <span>By <a href="https://mihaicristian.dev">Mihai-Cristian Farcaș</a></span>
-    <a href="https://github.com/mihaicristianfarcas/asides">Source on GitHub</a>
+    <nav aria-label="More"><a href="https://github.com/mihaicristianfarcas/asides/blob/main/guide/using.md">Guide</a><a href="https://github.com/mihaicristianfarcas/asides">Source on GitHub</a></nav>
   </footer>
 </main>
 
 <script>
 (() => {
-  // The recording clock above the headline counts, like the menu bar's.
-  const clocks = document.querySelectorAll('.rec .clock');
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    const start = Date.now() - 7000;
-    setInterval(() => {
-      const s = Math.floor((Date.now() - start) / 1000) % 600;
-      const text = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-      clocks.forEach((c) => { c.textContent = text; });
-    }, 250);
-  }
-
-  // Scrolled under the header, the indicator moves up into it.
+  // The header gets its line once the page has moved under it.
   const bar = document.querySelector('.top-bar');
-  const heroRec = document.querySelector('.page > .rec');
-  const follow = () => bar.classList.toggle('recording', heroRec.getBoundingClientRect().bottom < bar.offsetHeight);
+  const follow = () => bar.classList.toggle('scrolled', scrollY > 8);
   addEventListener('scroll', follow, { passive: true });
   follow();
 
@@ -898,15 +833,117 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       anim.onfinish = () => { anim = null; if (!opening) d.open = false; };
     });
   }
+})();
+</script>
+<script>
+(() => {
+  // Which system this is, from what the browser says. A phone or a Chromebook runs none of them: its
+  // buttons lead to the list. An iPad says it's a Mac, but a Mac has no touch screen.
+  const ua = navigator.userAgent;
+  const data = navigator.userAgentData;
+  const detect = () => {
+    if (data?.mobile || /iPhone|iPad|iPod|Android|CrOS/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return null;
+    const said = data?.platform || ua;
+    if (/mac/i.test(said)) return 'mac';
+    if (/win/i.test(said)) return 'windows';
+    if (/linux|x11/i.test(said)) return 'linux';
+    return null;
+  };
+  const system = detect();
+  const NAMES = { mac: 'Mac', windows: 'Windows', linux: 'Linux' };
 
-  // The demo rises in the first time it's on screen.
-  const wide = document.querySelector('.wide');
-  if ('IntersectionObserver' in window) {
-    const io = new IntersectionObserver(([e]) => { if (e.isIntersecting) { wide.classList.add('seen'); io.disconnect(); } }, { threshold: 0.15 });
-    io.observe(wide);
-  } else {
-    wide.classList.add('seen');
+  // And for which processor. Linux's Firefox says in its user agent. Chromium's user agent reads x64
+  // even on Arm, so its answer comes later, by asking; with no answer (Firefox and Safari on Windows)
+  // x64, which also runs on Windows on Arm.
+  let arch = /aarch64|arm64/i.test(ua) ? 'arm' : 'x86';
+  // Linux's package depends on the distribution, which some browsers say (Firefox on Ubuntu or Fedora).
+  // When none does, it's for the visitor to pick from the list.
+  const format = system === 'linux' ? (/ubuntu|debian|mint/i.test(ua) ? 'deb' : /fedora|red hat|suse/i.test(ua) ? 'rpm' : null) : null;
+  // asides runs on Apple silicon only, and every Mac's user agent says Intel: an Intel Mac is told so
+  // rather than given a download that won't open, where the browser can tell. Chromium says when asked,
+  // Firefox names the graphics chip, and Safari says neither: unsure, it's taken for Apple silicon.
+  let intelMac = false;
+  const dress = () => {
+    const file = {
+      mac: intelMac ? null : 'asides.dmg',
+      windows: `asides-windows-${arch === 'arm' ? 'arm64' : 'x64'}-setup.exe`,
+      linux: format && `asides-linux-${arch === 'arm' ? 'aarch64' : 'x86_64'}.${format}`,
+    }[system];
+    for (const a of document.querySelectorAll('[data-download]')) {
+      a.href = file ? `https://download.asides.mihaicristian.dev/${file}` : '#install';
+    }
+    const name = !system ? 'Download'
+      : intelMac ? 'asides needs Apple silicon'
+      : format ? `Download .${format} for Linux`
+      : system === 'windows' && arch === 'arm' ? 'Download for Windows (Arm64)'
+      : `Download for ${NAMES[system]}`;
+    for (const label of document.querySelectorAll('[data-download-label]')) label.textContent = name;
+    for (const use of document.querySelectorAll('[data-download] use')) use.setAttribute('href', `#for-${system || 'any'}`);
+  };
+  dress();
+  data?.getHighEntropyValues?.(['architecture']).then(({ architecture }) => {
+    if (!architecture) return;
+    arch = architecture === 'arm' ? 'arm' : 'x86';
+    if (system === 'mac') intelMac = arch === 'x86';
+    dress();
+  }).catch(() => {});
+  // A graphics context is slow to make: not until the page is up.
+  if (system === 'mac' && /Firefox/.test(ua)) {
+    addEventListener('load', () => {
+      const gl = document.createElement('canvas').getContext('webgl');
+      const info = gl?.getExtension('WEBGL_debug_renderer_info');
+      intelMac = !!info && /intel|amd|radeon|nvidia/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      if (intelMac) dress();
+    }, { once: true });
   }
+
+  const also = document.querySelector('[data-also]');
+  if (system) {
+    const [one, other] = Object.keys(NAMES).filter((name) => name !== system);
+    also.replaceChildren('Also for ', link(one), ' and ', link(other), '.');
+  } else {
+    also.hidden = true;
+  }
+  function link(name) {
+    const a = document.createElement('a');
+    a.href = '#install';
+    a.dataset.pick = name;
+    a.textContent = NAMES[name];
+    return a;
+  }
+
+  // One system at a time, and its names for the keys.
+  const CAPS = { '⌃': 'Ctrl', '⌥': 'Alt', '⌘': 'Ctrl', '⌫': 'Backspace', '⏎': 'Enter' };
+  const caps = [...document.querySelectorAll('kbd')].filter((k) => CAPS[k.textContent]);
+  const tabs = [...document.querySelectorAll('.systems [role="tab"]')];
+  const panels = [...document.querySelectorAll('.system')];
+  const pick = (name) => {
+    for (const t of tabs) {
+      const on = t.dataset.pick === name;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+    }
+    for (const p of panels) p.hidden = p.dataset.system !== name;
+    for (const k of caps) {
+      k.dataset.mac ??= k.textContent;
+      k.textContent = name === 'mac' ? k.dataset.mac : CAPS[k.dataset.mac];
+    }
+  };
+  document.addEventListener('click', (e) => {
+    const chosen = e.target.closest('[data-pick]');
+    if (chosen) pick(chosen.dataset.pick);
+  });
+  document.querySelector('.systems').addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const next = tabs[(tabs.indexOf(document.activeElement) + step + tabs.length) % tabs.length];
+    next.focus();
+    pick(next.dataset.pick);
+  });
+  pick(system || 'mac');
+  document.querySelector('.systems').hidden = false;
 })();
 </script>
 <script>
@@ -963,219 +1000,254 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     picker.hidden = false;
   }
 
-  // The demo. Positions are in points of the desktop's 1512 × 945.
-  const device = document.getElementById('demo');
-  const desk = device.querySelector('.desk');
-  const $ = (selector) => desk.querySelector(selector);
-  const status = $('.status');
-  const title = $('.status-title');
-  const aside = $('.aside');
-  const thinking = $('.thinking');
-  const reply = $('.reply');
-  const typed = $('.typed');
-  const pill = $('.apill');
-  const mic = $('.ap-mic');
-  const level = $('.ap-mic .level');
-  const ruler = $('.ruler');
-  const outline = $('.outline');
-  const marker = $('.marker');
-  const hud = device.querySelector('.hud');
+})();
+</script>
+<script>
+(() => {
+  // The opening plays out on the page itself: what's said below, word by word, and as each word is
+  // said what asides shows for it. Every step is an animation on one clock (`at`), each lasting to the
+  // end of the scene, so together they pause, go on and start over. Its first frame hides what `.plays`
+  // hides; its pauses are only while it's off screen. Without `.plays` the page shows the last frame.
+  if (!document.documentElement.classList.contains('plays')) return;
+  const hero = document.querySelector('.hero');
+  const $ = (selector) => hero.querySelector(selector);
   const pointer = $('.pointer');
-  const say = device.querySelector('.say');
-  // The subtitles are only ever what the tester says.
-  const sentences = [
-    'The summary card is jammed under the header.',
-    'And this button wraps.',
-  ];
+  const arrow = $('.pointer .arrow');
+  const cross = $('.pointer .cross');
+  const pill = $('.asides-pill');
+  const area = $('.area');
+  const box = $('.area-box');
+  const pins = [$('.area .spot'), $('.pill.big .spot')];
+  const guides = [...hero.querySelectorAll('.guide')];
+  const ruler = $('.ruler');
+  const tag = $('.tag');
+  const button = $('.pill.big');
+  const drawn = $('.drawn');
+  const stroke = drawn.querySelector('path');
+  const note = $('.note');
+  const caret = $('.caret');
+  const say = $('.say');
+  const keys = [...hero.querySelectorAll('.lede kbd')];
+  const rec = document.querySelector('.top .rec');
+  const clock = rec.querySelector('.clock');
+  const typed = $('.typed');
+  const letters = [...typed.textContent].map((c) => {
+    const letter = document.createElement('span');
+    letter.textContent = c;
+    return letter;
+  });
+  typed.replaceChildren(...letters);
 
-  let run = 0;
-  // It plays in a loop while it's on screen; a run that ends off screen starts over when it's
-  // back. With reduced motion it plays once and stays on the agent's chat.
-  const loop = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
+  const MOVE = 'cubic-bezier(0.4, 0, 0.3, 1)';
+  // One thing at a time: the keys go down and come up; then the pill comes in and the clock starts; then
+  // the pointer; then the first word.
+  const PRESS = 450;
+  const OPEN = 910;
+  const POINTER = 1330;
+  const FIRST_WORD = 1800;
+  const LETTER = 38;
+  const BLINK = 530;
+  // On the finished picture, for reading, before it's sent and it all goes.
+  const HOLD = 6000;
+  const REST = 1400;
+
+  let scene = [];
+  let master;
+  let talked = 0;
   let onScreen = false;
-  let due = true;
 
-  const wait = (ms, id) => new Promise((resolve, reject) =>
-    setTimeout(() => (id === run ? resolve() : reject()), ms));
+  function build() {
+    for (const a of scene) a.cancel();
+    master?.cancel();
+    scene = [];
 
-  // Where a point of an element is, on the grid; fx and fy are fractions of its width and height.
-  function spot(el, fx = 0.5, fy = 0.5, dx = 0, dy = 0) {
-    const d = desk.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    const k = 1512 / d.width;
-    return [(r.left - d.left + r.width * fx) * k + dx, (r.top - d.top + r.height * fy) * k + dy];
-  }
+    // Where everything is, before any of it is animated: each animation holds its first frame from the
+    // moment it's made, which for the card is 0.98 of its size and for the ruler no height at all.
+    const bounds = hero.getBoundingClientRect();
+    const spot = (el, fx = 0.5, fy = 0.5) => {
+      const r = el.getBoundingClientRect();
+      return [r.left - bounds.left + r.width * fx, r.top - bounds.top + r.height * fy];
+    };
+    const resting = spot(area, 1.05, 1.5);
+    const onArea = spot(area, 0.62, 0.55);
+    const onRuler = spot(ruler);
+    const onNote = spot($('.note-field'), 0.9, 1.25);
+    const ring = drawn.getBoundingClientRect();
+    const field = typed.getBoundingClientRect();
+    const places = [field.left, ...letters.map((letter) => letter.getBoundingClientRect().right)];
 
-  function moveTo([x, y], ms) {
-    pointer.style.setProperty('--move', `${ms}ms`);
-    pointer.style.setProperty('--x', x.toFixed(1));
-    pointer.style.setProperty('--y', y.toFixed(1));
-  }
-
-  async function click(id) {
-    pointer.classList.add('down');
-    await wait(110, id);
-    pointer.classList.remove('down');
-  }
-
-  function show(state, text) {
-    status.dataset.state = state;
-    title.textContent = text;
-  }
-
-  async function caption(html, id) {
-    say.classList.add('swap');
-    await wait(180, id);
-    say.innerHTML = html;
-    say.classList.remove('swap');
-  }
-
-  // Shows the keys being pressed on screen; onDown runs as they go down.
-  async function press(keys, id, onDown) {
-    hud.textContent = keys;
-    hud.classList.add('on');
-    onDown?.();
-    await wait(380, id);
-    setTimeout(() => { if (hud.textContent === keys) hud.classList.remove('on'); }, 700);
-  }
-
-  // Places a mark on the grid: its left, top, width and height.
-  function place(el, x, y, w = 0, h = 0) {
-    el.style.setProperty('--bx', x.toFixed(1));
-    el.style.setProperty('--by', y.toFixed(1));
-    el.style.setProperty('--bw', w.toFixed(1));
-    el.style.setProperty('--bh', h.toFixed(1));
-  }
-
-  // Each word as it's said, the pill's microphone filling with the voice.
-  async function speak(sentence, id) {
-    const words = sentence.split(' ');
-    await caption(words.map((w) => `<span class="w off">${w}</span>`).join(' '), id);
-    for (const [i, word] of [...say.querySelectorAll('.w')].entries()) {
-      level.style.height = `${[55, 80, 40, 70, 60][i % 5]}%`;
-      await wait(150, id);
-      word.classList.remove('off');
+    // When each word is said: a moment each, longer for a longer word and after punctuation.
+    const words = [...say.querySelectorAll('span, i')];
+    const times = new Map();
+    const cue = {};
+    let t = FIRST_WORD;
+    const spoken = [];
+    for (const word of words) {
+      times.set(word, t);
+      if (word.dataset.cue) cue[word.dataset.cue] = t;
+      const length = word.matches('i') ? 120 : 200 + word.textContent.length * 22;
+      const pause = /[.,]$/.test(word.textContent) ? 380 : 0;
+      spoken.push([t, t + length, pause]);
+      t += length + pause;
     }
-    level.style.height = '0';
-    await wait(1000, id);
-    await caption('', id);
+    const NOTE = cue.click + 700;
+    talked = NOTE + 260 + letters.length * LETTER + 300;
+    const SEND = talked + HOLD;
+    const END = SEND + 180 + 260 + REST;
+
+    const at = (el, ms, keyframes, options) => {
+      const timing = { delay: ms, duration: 200, fill: 'both', easing: EASE, ...options };
+      timing.endDelay = END - timing.delay - timing.duration;
+      const a = el.animate(keyframes, timing);
+      a.pause();
+      scene.push(a);
+      return a;
+    };
+    const show = (el, ms, options) => at(el, ms, { opacity: [0, 1] }, options);
+    // Going: only from its moment on, or it would show what's hidden before it (fill: forwards).
+    const hide = (el, ms, options) => at(el, ms, { opacity: [1, 0] }, { fill: 'forwards', ...options });
+    const pop = (el, ms) => at(el, ms, { opacity: [0, 1, 1], transform: ['scale(0.4)', 'scale(1.08)', 'none'] }, { duration: 280 });
+    const press = (el, ms, keyframes) => at(el, ms, keyframes, { duration: 460, fill: 'none', easing: 'ease-out' });
+
+    const down = { transform: ['none', 'translateY(1px)', 'translateY(1px)', 'none'], offset: [0, 0.2, 0.75, 1], backgroundColor: ['#fff', '#c2d6f6', '#c2d6f6', '#fff'], boxShadow: ['0 1px 0 #cfcfd6', 'none', 'none', '0 1px 0 #cfcfd6'] };
+    for (const key of keys) press(key, PRESS, down);
+
+    // The pill and the menu-bar item, as asides opens.
+    at(pill, OPEN, { opacity: [0, 1], transform: ['translateY(-14px) scale(0.98)', 'none'] }, { duration: 420 });
+    at(rec, OPEN, { opacity: [0, 1], transform: ['translateY(-8px)', 'none'], filter: ['blur(3px)', 'none'] }, { duration: 320 });
+    show($('.ap-lit'), OPEN, { duration: 200 });
+
+    // The words, and the microphone filling with them.
+    show(say, FIRST_WORD - 80, { duration: 180 });
+    for (const word of words) show(word, times.get(word), { duration: 140 });
+    const heard = [{ offset: 0, transform: 'scaleY(0)' }];
+    const share = (ms) => ms / talked;
+    spoken.forEach(([from, to, pause], i) => {
+      heard.push({ offset: share(from), transform: `scaleY(${[0.55, 0.8, 0.4, 0.7, 0.6][i % 5]})` });
+      if (pause) heard.push({ offset: share(to), transform: 'scaleY(0)' });
+    });
+    heard.push({ offset: 1, transform: 'scaleY(0)' });
+    at($('.ap-level'), 0, heard, { duration: talked, easing: 'ease-out' });
+
+    // What's marked, each at its word.
+    at(box, cue.pin1 - 60, { opacity: [0, 1], transform: ['scale(0.97)', 'none'] }, { duration: 180 });
+    pop(pins[0], cue.pin1);
+    for (const guide of guides) at(guide, cue.gap, { opacity: [0, 1], transform: ['scaleX(0.3)', 'none'] }, { duration: 420 });
+    at(ruler, cue.gap, { opacity: [1, 1], transform: ['scaleY(0)', 'none'] }, { duration: 260 });
+    pop(tag, cue.size);
+
+    // The circle around the button, drawn from its measured size, which depends on the label.
+    const [w, h] = [ring.width, ring.height];
+    drawn.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    stroke.setAttribute('d', `M${0.52 * w} ${0.05 * h}C${0.76 * w} ${0.02 * h} ${0.98 * w} ${0.19 * h} ${0.98 * w} ${0.5 * h}C${0.98 * w} ${0.82 * h} ${0.75 * w} ${0.96 * h} ${0.49 * w} ${0.95 * h}C${0.23 * w} ${0.94 * h} ${0.02 * w} ${0.8 * h} ${0.02 * w} ${0.5 * h}C${0.02 * w} ${0.2 * h} ${0.26 * w} ${0.09 * h} ${0.58 * w} ${0.05 * h}`);
+    const draw = [cue.and, cue.pin2 - cue.and];
+    at(stroke, draw[0], { strokeDashoffset: [1, 0] }, { duration: draw[1], easing: 'linear' });
+    pop(pins[1], cue.pin2);
+
+    // The card opens, and what's typed in it.
+    at(note, NOTE, { opacity: [0, 1], transform: ['translateY(6px) scale(0.98)', 'none'] }, { duration: 240 });
+    const start = NOTE + 260;
+    letters.forEach((letter, i) => show(letter, start + i * LETTER, { duration: 1, easing: 'linear' }));
+    // The caret goes after each letter as it comes, each place held until the next, and blinks once
+    // they're all in.
+    at(caret, start - LETTER, places.map((x) => ({ transform: `translateX(${x - field.right}px)`, easing: 'steps(1, end)' })), { duration: letters.length * LETTER, easing: 'linear' });
+    const TYPED = start + letters.length * LETTER;
+    const blinks = Math.ceil((SEND + 180 - TYPED) / BLINK);
+    at(caret, TYPED, { opacity: Array.from({ length: blinks + 1 }, (_, i) => (i % 2 ? 0 : 1)), easing: 'steps(1, end)' }, { duration: blinks * BLINK, easing: 'linear' });
+
+    // The pointer, doing each of those.
+    const path = [];
+    const go = (ms, [x, y], easing = MOVE) => path.push({ ms, x, y, easing });
+    const length = stroke.getTotalLength();
+    const onRing = (i, of) => {
+      const p = stroke.getPointAtLength(length * i / of);
+      return [ring.left - bounds.left + p.x, ring.top - bounds.top + p.y];
+    };
+    go(0, resting);
+    go(FIRST_WORD - 150, resting);
+    go(cue.pin1 - 90, onArea);
+    go(cue.out, onArea);
+    go(cue.gap - 50, onRuler);
+    go(cue.points + 80, onRuler);
+    go(draw[0], onRing(0, 1));
+    const STEPS = 28;
+    for (let i = 1; i <= STEPS; i += 1) go(draw[0] + draw[1] * i / STEPS, onRing(i, STEPS), 'linear');
+    go(cue.click, onRing(1, 1));
+    go(NOTE + 120, onNote);
+    const whole = path.at(-1).ms;
+    at(pointer, 0, path.map(({ ms, x, y, easing }) => ({ offset: ms / whole, easing, transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)` })), { duration: whole, easing: 'linear' });
+    show(pointer, POINTER, { duration: 240 });
+    hide(pointer, talked - 200, { duration: 240 });
+    // Pressed on each thing it marks, and a crosshair while measuring.
+    const click = (ms) => press(arrow, ms, { transform: ['none', 'scale(0.86)', 'none'] });
+    click(cue.pin1 - 60);
+    click(draw[0] - 60);
+    at(arrow, cue.gap - 170, { opacity: [1, 0] }, { duration: 1, easing: 'linear' });
+    at(cross, cue.gap - 170, { opacity: [0, 1] }, { duration: 1, easing: 'linear' });
+    at(arrow, cue.points + 120, { opacity: [0, 1] }, { duration: 1, easing: 'linear', fill: 'forwards' });
+    at(cross, cue.points + 120, { opacity: [1, 0] }, { duration: 1, easing: 'linear', fill: 'forwards' });
+    // Done talking: the microphone and the clock rest over the finished picture.
+    hide($('.ap-lit'), talked, { duration: 300 });
+    hide(rec, talked, { duration: 300 });
+
+    // Pressed again: sent. asides closes at once.
+    for (const key of keys) press(key, SEND, down);
+    press($('.ap-send'), SEND + 60, { transform: ['none', 'scale(0.9)', 'none'] });
+    for (const el of [box, ...pins, ...guides, ruler, tag, stroke, note, say]) hide(el, SEND + 180, { duration: 220 });
+    at(pill, SEND + 180, { opacity: [1, 0], transform: ['none', 'translateY(-10px)'] }, { duration: 260, fill: 'forwards' });
+
+    // The clock of the whole, and from the top once it's over: all of it new, because Safari rewinding
+    // these left the caption's box hidden from the second time on, while its words went on appearing.
+    master = new Animation(new KeyframeEffect(null, null, { duration: END }));
+    master.onfinish = () => {
+      build();
+      sync();
+    };
   }
 
-  // Back to the first frame, without animating there.
-  function reset() {
-    desk.classList.add('instant');
-    for (const el of [pill, ruler, outline, marker]) el.classList.remove('on');
-    pill.classList.remove('measuring');
-    mic.classList.remove('listening');
-    level.style.height = '0';
-    aside.hidden = true;
-    thinking.hidden = true;
-    reply.hidden = true;
-    typed.innerHTML = '';
-    hud.classList.remove('on');
-    say.innerHTML = '';
-    show('idle', '');
-    pointer.className = 'pointer on';
-    moveTo([840, 660], 0);
-    desk.getBoundingClientRect();
-    desk.classList.remove('instant');
+  // The clock in the header, at each second of the scene.
+  let ticking;
+  function tick() {
+    clearTimeout(ticking);
+    const now = master.currentTime ?? 0;
+    const since = Math.max(0, now - OPEN);
+    const seconds = Math.floor(since / 1000);
+    clock.textContent = `0:${String(seconds).padStart(2, '0')}`;
+    if (master.playState === 'running' && now < talked) ticking = setTimeout(tick, now < OPEN ? OPEN - now : 1000 - since % 1000);
   }
 
-  async function play() {
-    const id = ++run;
-    due = false;
-    reset();
-    const card = $('.card');
-    const pay = $('.pay');
-    try {
-      await wait(700, id);
-      moveTo(spot(card, 0.5, 0, 0, 40), 900);
-      await wait(1200, id);
-
-      // The screen freezes under the pill, which listens at once. The menu bar is part of the
-      // frozen picture: only the pill is new.
-      await press('⌃⌥Space', id, () => {
-        pill.classList.add('on');
-        mic.classList.add('listening');
-      });
-      await wait(500, id);
-
-      // Measure: the gap between the sticky header and the card's heading.
-      await press('M', id, () => {
-        pill.classList.add('measuring');
-        pointer.classList.add('crosshair');
-      });
-      const top = spot($('.site-head'), 0, 1)[1];
-      const x = spot(card, 0, 0, 14)[0];
-      const bottom = spot(card.querySelector('h5'), 0, 0)[1];
-      moveTo([x, (top + bottom) / 2], 800);
-      const said = speak(sentences[0], id);
-      await wait(900, id);
-      place(ruler, x, top, 0, bottom - top);
-      ruler.querySelector('i').textContent = Math.round(bottom - top);
-      ruler.classList.add('on');
-      await wait(500, id);
-      await click(id);
-      await said;
-
-      // Back to pins: a click pins the Pay button, numbered where it was clicked.
-      await press('A', id, () => {
-        pill.classList.remove('measuring');
-        pointer.classList.remove('crosshair');
-      });
-      const at = spot(pay, 0.72, 0.32);
-      moveTo(at, 900);
-      await wait(950, id);
-      const [px, py] = spot(pay, 0, 0);
-      const [qx, qy] = spot(pay, 1, 1);
-      place(outline, px - 3, py - 3, qx - px + 6, qy - py + 6);
-      outline.classList.add('on');
-      await wait(350, id);
-      await click(id);
-      place(marker, ...at);
-      marker.classList.add('on');
-      await wait(200, id);
-      await speak(sentences[1], id);
-
-      // Pressed again, it's sent: asides closes at once and transcribes, and you stay in Safari.
-      await press('⌃⌥Space', id, () => {
-        for (const el of [pill, ruler, outline, marker]) el.classList.remove('on');
-        mic.classList.remove('listening');
-        show('busy', '');
-      });
-      await wait(1300, id);
-
-      // asides types it into the session the pill named, in Terminal, with Safari still in front.
-      // As you would: the screenshot, then the text, then Return.
-      typed.innerHTML = '<b>[Image #1]</b> ';
-      await wait(500, id);
-      typed.innerHTML = '<b>[Image #1]</b> <b>[Pasted text #1 +12 lines]</b>';
-      await wait(700, id);
-      typed.innerHTML = '';
-      aside.hidden = false;
-      thinking.hidden = false;
-      show('done', '');
-      await wait(1600, id);
-      thinking.hidden = true;
-      reply.hidden = false;
-      await wait(800, id);
-      show('idle', '');
-      if (!loop) return;
-      // A moment to read it, then from the top.
-      await wait(5000, id);
-      if (onScreen) play(); else due = true;
-    } catch {
-      // A newer run took over.
+  // It runs while it's seen.
+  function sync() {
+    const run = onScreen && !document.hidden;
+    for (const a of [...scene, master]) {
+      if (run) a.play(); else a.pause();
     }
+    tick();
   }
 
-  // Start when the demo is mostly on screen; until then, show its first frame.
+  build();
   if ('IntersectionObserver' in window) {
-    reset();
-    new IntersectionObserver(([e]) => {
-      onScreen = e.isIntersecting;
-      if (onScreen && due) play();
-    }, { threshold: 0.5 }).observe(device);
+    new IntersectionObserver(([e]) => { onScreen = e.isIntersecting; sync(); }, { threshold: 0.25 }).observe(hero);
+  } else {
+    onScreen = true;
+    sync();
+  }
+  document.addEventListener('visibilitychange', sync);
+  // A new size moves what the pointer goes to: the same moment, drawn again.
+  if ('ResizeObserver' in window) {
+    const measured = () => `${hero.offsetWidth}x${hero.offsetHeight}x${button.offsetWidth}`;
+    let size = measured();
+    const moved = new ResizeObserver(() => {
+      if (measured() === size) return;
+      size = measured();
+      const time = master.currentTime;
+      build();
+      for (const a of [...scene, master]) a.currentTime = time;
+      sync();
+    });
+    moved.observe(hero);
+    moved.observe(button);
   }
 })();
 </script>

@@ -38,7 +38,7 @@ A Rust workspace:
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image | `python3 scripts/make-og.py` (renders `docs/og.png` from the demo; needs Firefox) |
-| README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png`; shows a window for a few seconds) |
+| README picture | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png` and the website's `docs/overlay-*.webp`; shows a window for a few seconds) |
 | Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
 | Windows package | `scripts\package-windows.ps1`, on Windows (zip and installer in `dist\`) |
@@ -95,7 +95,7 @@ changes.
   there); Diri needs none. Input Monitoring is not used.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
-  CONTRIBUTING.md. The website (`docs/index.html`) repeats the shortcuts, requirements and install
+  CONTRIBUTING.md. The website (`docs/index.html`) repeats the main shortcut, requirements and install
   steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips (Windows'
   too, made on Windows).
   What asides protects, the updater's checks included, goes in SECURITY.md.
@@ -125,6 +125,9 @@ changes.
   `~/Library/Logs/asides/asides.log` itself; `asides status` says when there are any
 - drive `asides mcp` with JSON-RPC on stdin (see CONTRIBUTING.md)
 - render the website with headless Firefox (`--screenshot`) to check layouts at phone width
+- play the website in the real WebKit: a `WKWebView` in a borderless window off every screen, with
+  `_setWindowOcclusionDetectionEnabled:` off, read with `evaluateJavaScript` and captured with
+  `CGWindowListCreateImage` (through `dlsym`). One window at a time: they overlap off screen
 
 **You can't:**
 - press global shortcuts
@@ -173,6 +176,9 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   --help`) before trying commands.
 - The agent CLIs write into your home on first run (Copilot unpacks 170 MB): install them with
   `npm install --prefix` and run them with a scratch `HOME`.
+- Safari rewinding Web Animations (`currentTime = 0`) left the opening's caption at opacity 0 from the
+  second loop on, which Firefox never showed: each loop makes them anew. `steps()` in an animation's
+  options holds its first keyframe throughout: put it on each keyframe.
 - Headless Firefox screenshots mid-transition: turn transitions off. On the website, a `padding`
   shorthand on `.wrap` in a media query reset the sections' top padding: set `padding-inline`.
 

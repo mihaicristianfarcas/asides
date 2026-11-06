@@ -1,7 +1,7 @@
 """Renders docs/og.png, the 1200 × 630 image shown when the website's link is shared.
 
-The picture is the website's own demo, frozen mid-recording: this script takes the demo's markup
-and styles from docs/index.html, so the image keeps up with the page. It needs Firefox.
+The picture is the demo's desktop, frozen mid-recording: this script takes its markup
+and styles from scripts/demo-desktop/index.html. It needs Firefox.
 
 Usage: python3 scripts/make-og.py
 """
@@ -15,10 +15,11 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+DEMO = ROOT / "scripts" / "demo-desktop"
 FIREFOX = os.environ.get("FIREFOX", "/Applications/Firefox.app/Contents/MacOS/firefox")
 WIDTH, HEIGHT, SCALE = 1200, 630, 2
 
-page = (DOCS / "index.html").read_text()
+page = (DEMO / "index.html").read_text()
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
 device = re.search(r'<figure class="device" id="demo">.*?</figure>', page, re.S).group(0)
 mark = re.search(r'<a class="mark" href="./">\s*(<svg.*?</svg>)', page, re.S).group(1)
@@ -60,7 +61,7 @@ html = f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<base href="{DOCS.as_uri()}/">
+<base href="{DEMO.as_uri()}/">
 <style>
 {style}
 html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
@@ -80,7 +81,7 @@ html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
 <div class="og-copy">
   <span class="mark">{mark} asides</span>
   <h1>Report bugs out loud while you test.</h1>
-  <p>Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your Mac.</p>
+  <p>Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your computer.</p>
 </div>
 <div class="og-device">{device}</div>
 {place}
@@ -91,9 +92,7 @@ html, body {{ width: {WIDTH}px; height: {HEIGHT}px; overflow: hidden; }}
 with tempfile.TemporaryDirectory() as tmp:
     tmp = pathlib.Path(tmp)
     (tmp / "profile").mkdir()
-    # The page in dark mode, whatever this Mac's appearance.
-    (tmp / "profile" / "user.js").write_text(f'user_pref("layout.css.devPixelsPerPx", "{SCALE}");\n'
-                                             'user_pref("ui.systemUsesDarkTheme", 1);\n')
+    (tmp / "profile" / "user.js").write_text(f'user_pref("layout.css.devPixelsPerPx", "{SCALE}");\n')
     source = tmp / "og.html"
     source.write_text(html)
     shot = tmp / "og.png"

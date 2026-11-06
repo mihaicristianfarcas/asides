@@ -2,7 +2,7 @@
 (crates/asides-overlay/help/): the real overlay on the website demo's desktop, pinning, talking,
 switching sessions, measuring, and the aside arriving in Claude Code.
 
-The screen is the demo's desktop from docs/index.html (rendered with Firefox); the overlay is
+The screen is the demo's desktop, scripts/demo-desktop/index.html (rendered with Firefox); the overlay is
 target/debug/asides-overlay, run on it in a window at the top left of your screen for a few seconds
 per clip, with a replay of the clicks and keys and a capture after each (your terminal needs Screen
 Recording). A clip is the frames captured, cropped to the part that matters, and in clips.json what
@@ -29,7 +29,7 @@ import tempfile
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-DOCS = ROOT / "docs"
+DEMO = ROOT / "scripts" / "demo-desktop"
 WINDOWS = sys.platform == "win32"
 OUT = ROOT / "crates" / "asides-overlay" / ("help-windows" if WINDOWS else "help")
 FIREFOX = os.environ.get("FIREFOX", r"C:\Program Files\Mozilla Firefox\firefox.exe" if WINDOWS
@@ -39,7 +39,7 @@ OVERLAY = ROOT / "target" / "debug" / ("asides-overlay.exe" if WINDOWS else "asi
 WIDTH, HEIGHT = 1512, 945
 MENU_BAR = 37
 
-page = (DOCS / "index.html").read_text(encoding="utf-8")
+page = (DEMO / "index.html").read_text(encoding="utf-8")
 style = re.search(r"<style>(.*?)</style>", page, re.S).group(1)
 desk = re.search(r'<div class="desk".*?(?=<div class="hud")', page, re.S).group(0)
 
@@ -50,7 +50,7 @@ def replace(text, old, new):
 
 
 def html(markup):
-    return f"""<!doctype html><html><head><meta charset="utf-8"><base href="{DOCS.as_uri()}/">
+    return f"""<!doctype html><html><head><meta charset="utf-8"><base href="{DEMO.as_uri()}/">
 <style>{style}
 html, body {{ margin: 0; overflow: hidden; }}
 *, *::before, *::after {{ transition: none !important; animation: none !important; }}
