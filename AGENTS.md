@@ -164,6 +164,8 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - The updater refuses a release zip holding symlinks (`check_zip`): a framework in the bundle
   (`Versions/Current`) would need that changed first.
 - macOS has no `timeout` (wait with a loop and `kill`), and its `grep` has no `\|` (`grep -E`).
+- Under `pipefail`, `cmd | grep -q` fails when `cmd` writes after the match (SIGPIPE, 141): grep a
+  here-string of its output. `codesign -dv` lists no `Authority=` lines: `-dvv` does.
 - `pgrep -f "<text>"` also matches the shell whose wait loop contains the text.
 - `launchctl setenv` reaches every app launched afterwards: `launchctl unsetenv` when done.
 - `dirijor new` ignores `--help` and creates a session: read its source (or `dirijor session run
