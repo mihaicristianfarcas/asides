@@ -402,6 +402,11 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   windows answer `WM_NCCALCSIZE` themselves (`win/native.rs`). DWM's blur covers a whole window, not
   a region over GPUI's DirectComposition: the pill's window is transparent, its tint nearly solid
   (`pill_tint`: at the Mac's 60%, a page read through the session list).
+- Windows raises the window it activates, over its other topmost windows: a click on the pill made its
+  window the active one (`WS_EX_NOACTIVATE` or not), and the next click on a frozen screen put the
+  screen over the pill. In `WM_WINDOWPOSCHANGING`, `hwndInsertAfter` is already a window, never
+  `HWND_TOPMOST`: the screens go just below the pill there (`native::below_pill`). `Stop-Process` over
+  SSH can't end what runs in the desktop's session: `taskkill` from a scheduled task there.
 - GPUI 0.2.2 has no Mica: the asides window asks for no accent and sets the system's acrylic
   (`DWMSBT_TRANSIENTWINDOW`, `native::dress`), as helio does. A VM without a GPU draws its flat
   fallback color.

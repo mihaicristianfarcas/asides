@@ -207,7 +207,8 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Windows**: the installer installs and opens asides, and `asides` works in a new terminal;
   `[a]` in the notification area, its menu; `Ctrl+Alt+Space` freezes every monitor at its own
   scale and takes the keyboard without a click; the Windows key and `Alt+Tab` held back while
-  frozen; the pill out of a freeze taken live; talking (Settings' microphone switch off asks there);
+  frozen; the pill out of a freeze taken live, and still there after a click on it and then on a
+  screen; talking (Settings' microphone switch off asks there);
   sending to Claude Code and Codex in Windows Terminal, VS Code's terminal and a console, and a new
   session in each terminal setting; the asides window's acrylic, light and dark; uninstalling
   removes the PATH entry and the `asides://` links.
