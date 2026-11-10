@@ -251,6 +251,8 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
     "$CLI" send "$(aside_id Butonul)" --to "$SESSION" > "$WORK/sent.txt"
     check "send says it got there" grep -q "Sent to Claude Code (shop)" "$WORK/sent.txt"
     check "the text typed in" grep -q 'Butonul de salvare' "$AGENT_LOG"
+    # Typed bare, a long aside reached Claude Code in reads of a kilobyte, and it kept only the last.
+    check "as a bracketed paste" grep -q '<ESC>\[200~' "$AGENT_LOG"
     check "then Return, on its own, which sends it" grep -Eq '^<CR>$|<ESC>\[201~<CR>' "$AGENT_LOG"
     check "the history says where it went" grep -q "→ Claude Code (shop)" <<<"$("$CLI" history)"
     : > "$AGENT_LOG"

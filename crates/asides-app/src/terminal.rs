@@ -248,22 +248,18 @@ mod tests {
         assert_eq!(run_steps(&[fail]).unwrap_err().to_string(), "nope");
     }
 
-    /// Types an aside into a Diri session of your own, as the app does: `ASIDES_DELIVER=<aside folder>
-    /// ASIDES_DELIVER_TO=<Diri session id> cargo test -p asides-app types_into_diri -- --ignored`.
+    /// Types an aside into a Diri session of your own (its agent found as the app finds it), as the
+    /// app does: `ASIDES_DELIVER=<aside folder> ASIDES_DELIVER_TO=<Diri session id> cargo test -p
+    /// asides-app types_into_diri -- --ignored`.
     #[test]
     #[ignore]
     fn types_into_diri() {
         let aside = asides_core::history::read(Path::new(&std::env::var("ASIDES_DELIVER").unwrap())).unwrap();
-        let session = asides_core::sessions::AgentSession {
-            pid: 0,
-            agent: AgentKind::Claude,
-            dir: "/".into(),
-            tty: String::new(),
-            host: Host::Diri { session: std::env::var("ASIDES_DELIVER_TO").unwrap() },
-            last_input: None,
-            name: None,
-            launch: None,
-        };
+        let to = std::env::var("ASIDES_DELIVER_TO").unwrap();
+        let session = asides_core::sessions::discover()
+            .into_iter()
+            .find(|s| matches!(&s.host, Host::Diri { session } if *session == to))
+            .expect("no agent in that Diri session");
         run_steps(&deliver::plan(&session, &aside.parts(), &dirijor()).unwrap()).unwrap();
     }
 

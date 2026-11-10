@@ -248,8 +248,8 @@ the pill names the session typed into last from its first frame.
 ### Delivering
 
 `App::deliver` sends to:
-- **A session**: `deliver::plan` for its app and agent (Diri's `dirijor`, Ghostty's `input text`,
-  Terminal's `do script` with bracketed paste), screenshots by Ctrl+V or by path as each agent
+- **A session**: `deliver::plan` for its app and agent (Diri's `dirijor` and Terminal's `do script`
+  with bracketed paste, Ghostty's `input text`), screenshots by Ctrl+V or by path as each agent
   takes them, Return to send (Tab for Codex). `terminal::run_steps` runs it and restores the
   pasteboard.
 - **A new session**: `terminal::start_session` writes a launch script (login shell's `PATH`, `cd`,
