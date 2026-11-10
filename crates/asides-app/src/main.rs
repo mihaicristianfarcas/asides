@@ -1039,7 +1039,7 @@ impl App {
             (None, true) => "while the talk key is down".into(),
             (None, false) => "until it's muted".into(),
         };
-        asides_core::log::write(format_args!("recording {about}"));
+        asides_core::log::write(format_args!("recording {about} ({})", recorder.description));
         self.recording = Some(Recording {
             recorder,
             started_at: Instant::now(),
@@ -1098,9 +1098,15 @@ impl App {
     /// Ends the recording under way, without a sound (the caller says): what it captured.
     fn end_recording(&mut self) -> Option<Take> {
         let recording = self.recording.take()?;
-        asides_core::log::write(format_args!("recorded {:.1} s", recording.started_at.elapsed().as_secs_f32()));
         self.tell_overlay_recording();
         let (samples, sample_rate) = recording.recorder.finish();
+        let seconds = recording.started_at.elapsed().as_secs_f32();
+        match audio::loudness_range(&samples, sample_rate) {
+            Some((low, high)) => {
+                asides_core::log::write(format_args!("recorded {seconds:.1} s, {low:.0} to {high:.0} dB"))
+            }
+            None => asides_core::log::write(format_args!("recorded {seconds:.1} s")),
+        }
         let mut texts = recording.texts;
         if let Some((place, _)) = recording.place.lock().unwrap().take() {
             texts.insert(0, (0.0, place));
