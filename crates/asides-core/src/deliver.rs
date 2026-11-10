@@ -4,9 +4,11 @@
 //! message.
 //!
 //! Measured on 2026-10-18 with Claude Code, Codex and OpenCode in each app:
-//! - **Diri**: `dirijor session send --no-submit` pastes the text (a bracketed paste), and
-//!   `session key` presses keys. A screenshot goes in with the clipboard and Ctrl+V, which all three
-//!   agents attach (a pasted path stays text in Claude Code and OpenCode there).
+//! - **Diri**: `dirijor session send --no-submit` types the text as it is, so it goes between
+//!   bracketed-paste markers (typed bare, text longer than a pty's input queue, 1,022 bytes, lost
+//!   all but its last part in Claude Code), and `session key` presses keys. A screenshot goes in with the clipboard
+//!   and Ctrl+V, which all three agents attach (a pasted path stays text in Claude Code and OpenCode
+//!   there).
 //! - **Ghostty**: AppleScript's `input text` pastes, `send key` presses keys. Ghostty 1.3 drops Ctrl
 //!   keys sent that way when the agent uses the kitty keyboard protocol (all three do), so a
 //!   screenshot goes in as its path, pasted on its own: all three agents attach it.
@@ -195,11 +197,14 @@ fn diri(id: &str, parts: &[&Part], submit: SubmitKey, dirijor: &Path) -> Vec<Ste
     for (i, part) in parts.iter().enumerate() {
         match part {
             // Apart from the screenshots around it by a blank line, in the paste itself (Diri
-            // doesn't send text that's only whitespace).
+            // doesn't send text that's only whitespace). A bracketed paste: Diri types `--no-submit`
+            // text as it is, which reaches the agent in reads of a pty's input queue (1,022 bytes
+            // on macOS), and unbracketed, Claude Code kept only the last.
             Part::Text(text) => {
                 let before = if i > 0 { "\n\n" } else { "" };
                 let after = if i + 1 < parts.len() { "\n\n" } else { "" };
-                steps.push(run(&["session", "send", id, "--no-submit"], Some(format!("{before}{text}{after}"))));
+                let paste = pasted(&format!("{before}{text}{after}"));
+                steps.push(run(&["session", "send", id, "--no-submit"], Some(paste)));
             }
             Part::Image(path) => {
                 clipboard = true;
@@ -687,11 +692,11 @@ mod tests {
         assert_eq!(
             steps,
             [
-                send("The \"Pay\" button is too low.\n\n"),
+                send("\x1b[200~The \"Pay\" button is too low.\r\r\x1b[201~"),
                 Step::ClipboardImage("/h/1.png".into()),
                 key(&["v", "--ctrl"]),
                 Step::Wait(ATTACH),
-                send("\n\n### 1. button"),
+                send("\x1b[200~\r\r### 1. button\x1b[201~"),
                 Step::RestoreClipboard,
                 Step::Wait(BEFORE_SUBMIT),
                 key(&["tab"]),

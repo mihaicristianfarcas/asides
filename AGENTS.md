@@ -356,6 +356,9 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   bracketed-paste markers); Ghostty drops AppleScript Ctrl keys under the kitty keyboard protocol
   (send image paths); Diri keeps pasted paths as text for Claude Code and OpenCode (send Ctrl+V);
   Claude Code attaches a pasted path a moment later; Return while Codex works steers (send Tab).
+- Diri's `session send --no-submit` types the text bare, not as a paste. It reaches the agent in reads
+  of the pty's input queue (1,022 bytes on macOS), and Claude Code kept only the last: a long aside
+  lost all but its end. asides wraps it in bracketed-paste markers itself.
 - Diri's `session send` refuses whitespace-only text, and `session spawn --prompt` typed into
   OpenCode before it was ready: wait for "Ask anything" in `session read`.
 - The terminal device's access time (`/dev/ttys003`) moves when the agent reads input: the session
