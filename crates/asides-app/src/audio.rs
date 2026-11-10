@@ -10,6 +10,8 @@ pub struct Recorder {
     stream: cpal::Stream,
     samples: Arc<Mutex<Vec<f32>>>,
     pub sample_rate: u32,
+    /// The microphone and what it gives, for the log ("USB Mic: F32, 2 channels, 48000 Hz").
+    pub description: String,
 }
 
 impl Recorder {
@@ -26,6 +28,8 @@ impl Recorder {
         let sample_rate = supported.sample_rate();
         let samples = Arc::new(Mutex::new(Vec::with_capacity(sample_rate as usize * 120)));
         let config = supported.config();
+        let name = name_of(&device).unwrap_or_else(|| "the microphone".into());
+        let description = format!("{name}: {:?}, {channels} channels, {sample_rate} Hz", supported.sample_format());
         let heard: Heard = Arc::new(heard);
         let stream = match supported.sample_format() {
             SampleFormat::F32 => build::<f32>(&device, config, channels, samples.clone(), heard),
@@ -35,7 +39,7 @@ impl Recorder {
             other => bail!("unsupported microphone sample format {other:?}"),
         }?;
         stream.play().context("could not start the microphone")?;
-        Ok(Recorder { stream, samples, sample_rate })
+        Ok(Recorder { stream, samples, sample_rate, description })
     }
 
     /// How loud the last 50 ms were, from 0 (−50 dB or quieter) to 1 (−10 dB or louder): the pill's
@@ -46,8 +50,7 @@ impl Recorder {
         if recent.is_empty() {
             return 0.0;
         }
-        let rms = (recent.iter().map(|s| s * s).sum::<f32>() / recent.len() as f32).sqrt();
-        ((20.0 * rms.max(1e-6).log10() + 50.0) / 40.0).clamp(0.0, 1.0)
+        ((loudness(recent) + 50.0) / 40.0).clamp(0.0, 1.0)
     }
 
     /// Stops capturing and returns the mono samples and their rate.
@@ -56,6 +59,28 @@ impl Recorder {
         let samples = std::mem::take(&mut *self.samples.lock().unwrap_or_else(|e| e.into_inner()));
         (samples, self.sample_rate)
     }
+}
+
+/// How loud `samples` are, in dB of full scale (−120 for silence): around their mean, as an offset
+/// some microphones add can't be heard and filled the pill's microphone whatever was said.
+pub fn loudness(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return -120.0;
+    }
+    let n = samples.len() as f64;
+    let mean = samples.iter().map(|&s| f64::from(s)).sum::<f64>() / n;
+    let rms = (samples.iter().map(|&s| (f64::from(s) - mean).powi(2)).sum::<f64>() / n).sqrt();
+    (20.0 * rms.max(1e-6).log10()) as f32
+}
+
+/// The quietest and loudest 50 ms of a recording, in dB (`loudness`), for the log: a quietest near
+/// the loudest says the microphone hears a lot besides the voice.
+pub fn loudness_range(samples: &[f32], sample_rate: u32) -> Option<(f32, f32)> {
+    let window = (sample_rate as usize / 20).max(1);
+    samples.chunks_exact(window).map(loudness).fold(None, |range, db| match range {
+        None => Some((db, db)),
+        Some((low, high)) => Some((low.min(db), high.max(db))),
+    })
 }
 
 pub fn input_device_names() -> Vec<String> {
@@ -99,4 +124,32 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_offset_is_not_loud() {
+        // A tone at a tenth of full scale: −23 dB, offset or not.
+        let tone: Vec<f32> = (0..4800).map(|i| 0.1 * (i as f32 * 0.05).sin()).collect();
+        let offset: Vec<f32> = tone.iter().map(|s| s + 0.4).collect();
+        assert!((loudness(&tone) + 23.0).abs() < 0.5, "{}", loudness(&tone));
+        assert!((loudness(&offset) - loudness(&tone)).abs() < 0.1);
+        // Silence on an offset is still silence.
+        assert!(loudness(&[0.4; 4800]) < -100.0);
+        assert_eq!(loudness(&[]), -120.0);
+    }
+
+    #[test]
+    fn finds_the_quietest_and_loudest_moments() {
+        let rate = 16_000;
+        let quiet = (0..800).map(|i| 0.001 * (i as f32).sin());
+        let loud = (0..800).map(|i| 0.5 * (i as f32).sin());
+        let samples: Vec<f32> = quiet.chain(loud).collect();
+        let (low, high) = loudness_range(&samples, rate).unwrap();
+        assert!(low < -60.0 && high > -10.0, "{low} {high}");
+        assert_eq!(loudness_range(&samples[..10], rate), None);
+    }
 }

@@ -216,7 +216,7 @@ Run what your change touches, and say in the pull request what you tried.
   installs and the launcher opens asides; `[a]` where the panel shows status icons; `Ctrl+Alt+Space`
   freezes every monitor at its scale and takes the keyboard without a click (GNOME's first screenshot
   prompt once); `M` and `D` work at once, and typing in a card; typing returns to the app after; the
-  pill out of a freeze taken live; talking;
+  pill out of a freeze taken live; talking, the pill's microphone rising and falling with the voice;
   Allow… in setup asks for the password where `ptrace_scope` needs it; sending to Claude Code and
   Codex in the desktop's terminal, tmux and Konsole, and a new session; opening at login.
 
