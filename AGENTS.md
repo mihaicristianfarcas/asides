@@ -473,6 +473,10 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
   through `org.gnome.Shell.Eval`.
 - A minimal VM has no `desktop-file-utils`, so no `mimeinfo.cache`: `gio open asides://…` says
   "Operation not supported" there, as it wouldn't on a desktop.
+- X11's input method (XIM: `ibus-x11` on Ubuntu, `XMODIFIERS=@im=ibus`) gets a window's keys first and
+  sends back what it doesn't take: with it restarted or silent, they were lost and nothing said so.
+  Only a focused text input's go there (`wants_input_method`). A test needs IBus installed and
+  `XMODIFIERS` set; GNOME restarts `ibus-daemon` with `--xim` as Xwayland starts.
 - Override-redirect windows take no focus from a click: the overlay gives its window the keyboard
   (`native::click_takes_keyboard`), or what's typed into a card on another screen is lost.
 - `pkill -f` in a command matches the shell running it; run test scripts from a file. Test processes

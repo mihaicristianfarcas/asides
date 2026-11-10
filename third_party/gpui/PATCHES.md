@@ -14,6 +14,9 @@ take (asides' macOS and Windows code depends on 0.2.2's internals).
   window stays unmapped until it's ready to show, and a window manager never sees it.
 - `process_x11_events` (`x11/client.rs`) returns the error when the connection is lost, which ends
   the event loop (it logged it and polled on, at 100% of a core, for as long as the process lived).
+- Keys go to the input method (XIM, IBus's on Ubuntu) only while a text input is focused
+  (`wants_input_method`): every key went there and came back only if it wasn't taken, so where
+  nothing takes text (a frozen screen's tools), a slow, restarted or silent IBus lost them.
 
 ## Wayland (`src/platform/linux/wayland/window.rs`)
 
