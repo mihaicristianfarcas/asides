@@ -49,9 +49,9 @@ in `asides-app`, `win/` in `asides-overlay`).
   (`WriteConsoleInputW`): any terminal, nothing to allow. New sessions open in Windows Terminal
   (`wt.exe … asides launch <file>`), which starts the agent without a shell and ends.
 - **Freezing**: GDI captures each monitor; UI Automation names what's under a pin; the overlay's
-  windows are topmost tool windows, the pill left out of captures, and a keyboard hook holds back
-  the Windows key and Alt+Tab while frozen (`win/native.rs`). Frames stay in AppKit's coordinates
-  (points, y up), converted per monitor (`display.rs`).
+  windows are topmost tool windows, the pill above the screens and left out of captures, and a
+  keyboard hook holds back the Windows key and Alt+Tab while frozen (`win/native.rs`). Frames stay
+  in AppKit's coordinates (points, y up), converted per monitor (`display.rs`).
 - **The asides window** is laid out as helio's: the system's acrylic, its own caption buttons over
   each page's strip along the top (32 pt, which moves the window), the sidebar's first row as near
   the top as its foot is to the bottom, Segoe UI Variable and Cascadia Mono (`controls::init_fonts`).

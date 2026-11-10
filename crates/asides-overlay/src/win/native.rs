@@ -8,7 +8,8 @@
 //! - **The keyboard.** Windows lets a process bring its window to the front only when it was given
 //!   the right: the app hands it on as its shortcut is pressed (`AllowSetForegroundWindow`).
 //! - **The pill** never takes the keyboard (`WS_EX_NOACTIVATE`), and is left out of captures
-//!   (`WDA_EXCLUDEFROMCAPTURE`), so freezing again over the live screen doesn't take it with it.
+//!   (`WDA_EXCLUDEFROMCAPTURE`), so freezing again over the live screen doesn't take it with it. A
+//!   frozen screen brought forward goes just below it (`below_pill`).
 //! - **Frozen**, the screens' windows are above the taskbar; what Windows lets an app hold back
 //!   stays back while they're up (`kiosk`): the Windows key, Alt+Tab, Alt+Esc and Ctrl+Esc, through
 //!   a keyboard hook (Windows asks no permission for it). Ctrl+Alt+Del stays, a way out.
@@ -143,8 +144,26 @@ unsafe extern "system" fn whole_client(
     if message == WM_NCCALCSIZE && wparam.0 != 0 {
         return LRESULT(0);
     }
+    if message == WM_WINDOWPOSCHANGING {
+        below_pill(window, lparam);
+    }
     // SAFETY: the rest goes on to GPUI's own handling.
     unsafe { windows::Win32::UI::Shell::DefSubclassProc(window, message, wparam, lparam) }
+}
+
+/// A frozen screen brought forward goes just below the pill. Windows raises the window it activates
+/// (a click on a screen, after one on the pill made the pill's window the active one) to the top,
+/// over the pill, which then stayed hidden behind the screen until the next freeze. Windows says
+/// where a window goes as the window it goes behind, `HWND_TOPMOST` already worked out.
+fn below_pill(window: HWND, lparam: LPARAM) {
+    let Some(pill) = hwnd(PILL.load(Ordering::Relaxed) as usize).filter(|&p| p != window) else { return };
+    // SAFETY: WM_WINDOWPOSCHANGING's `lparam` is the change about to be made, ours to adjust.
+    let change = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
+    let lowered = change.hwndInsertAfter == HWND_BOTTOM || change.hwndInsertAfter == HWND_NOTOPMOST;
+    // SAFETY: a plain query.
+    if !change.flags.contains(SWP_NOZORDER) && !lowered && unsafe { IsWindowVisible(pill) }.as_bool() {
+        change.hwndInsertAfter = pill;
+    }
 }
 
 fn style(window: HWND, extended: WINDOW_EX_STYLE) {
@@ -230,7 +249,7 @@ pub fn show(pointer: usize, key: bool) {
             take_keyboard(window);
         }
     }
-    // The pill stays above the frozen screens.
+    // The pill stays above the frozen screens (`below_pill` keeps it there after).
     if let Some(pill) = hwnd(PILL.load(Ordering::Relaxed) as usize).filter(|p| *p != window) {
         // SAFETY: as above.
         let _ = unsafe { SetWindowPos(pill, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
