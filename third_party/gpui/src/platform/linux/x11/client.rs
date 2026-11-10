@@ -647,7 +647,7 @@ impl X11Client {
                         if handled {
                             continue;
                         }
-                        if xim_connected {
+                        if xim_connected && self.wants_input_method(&event) {
                             self.xim_handle_event(event);
                         } else {
                             self.handle_event(event);
@@ -1278,6 +1278,18 @@ impl X11Client {
                 self.xim_handle_preedit(window, text);
             }
         };
+    }
+
+    /// A key goes to the input method only for a text input: the input method sends back only what it
+    /// doesn't take, so with it slow, restarting or not answering, every key was late or lost, even
+    /// where nothing takes text.
+    fn wants_input_method(&self, event: &Event) -> bool {
+        match event {
+            Event::KeyPress(key) | Event::KeyRelease(key) => {
+                self.get_window(key.event).is_some_and(|window| window.takes_text())
+            }
+            _ => true,
+        }
     }
 
     fn xim_handle_event(&self, event: Event) -> Option<()> {

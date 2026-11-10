@@ -1028,6 +1028,12 @@ impl X11WindowStatePtr {
         }
     }
 
+    /// Whether a text input has the window's keyboard (the window draws one focused): only its keys
+    /// go through the input method.
+    pub fn takes_text(&self) -> bool {
+        self.state.borrow().input_handler.is_some()
+    }
+
     pub fn handle_ime_commit(&self, text: String) {
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
