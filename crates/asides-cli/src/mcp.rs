@@ -13,6 +13,7 @@ use anyhow::Result;
 use asides_core::history::{self, Aside};
 use asides_core::markdown::Part;
 use asides_core::measure::{Rect, Tolerance};
+use asides_core::search::{self, Query};
 use serde_json::{Value, json};
 
 /// Revisions answered with themselves; any other gets the newest.
@@ -24,7 +25,7 @@ const MAX_INLINE_IMAGES: usize = 6;
 const INSTRUCTIONS: &str = "asides lets the user freeze their screen, click what's wrong (numbered pins on elements and \
     areas), measure, draw and say why; asides then types it into this chat as their message, with a screenshot of \
     what they marked. Each aside is also kept in their history (~/.asides/history). get_aside reads one again (the newest by \
-    default) with its screenshots; list_asides lists recent ones. Transcripts are verbatim speech-to-text: expect \
+    default) with its screenshots; list_asides lists recent ones, or finds those that say some words. Transcripts are verbatim speech-to-text: expect \
     misheard words, especially names of projects and libraries. measure_image measures a screenshot (distances \
     between edges, an object's bounds and padding).";
 
@@ -98,7 +99,8 @@ fn call_tool(params: &Value) -> Value {
     match name {
         "list_asides" => {
             let count = args.get("count").and_then(Value::as_u64).unwrap_or(10).clamp(1, 100) as usize;
-            tool_text(list_text(&history::list(&history).into_iter().take(count).collect::<Vec<_>>()), false)
+            let words = args.get("query").and_then(Value::as_str).unwrap_or_default();
+            tool_text(list_text(&history, words, count), false)
         }
         "get_aside" => {
             let id = args.get("id").and_then(Value::as_str).unwrap_or("last");
@@ -115,13 +117,31 @@ fn call_tool(params: &Value) -> Value {
     }
 }
 
-fn list_text(asides: &[Aside]) -> String {
+/// The newest `count` asides in `history`, a line each; with `words`, those that say them, each
+/// with the line it says them in (when its first words don't).
+fn list_text(history: &Path, words: &str, count: usize) -> String {
+    let query = Query::new(words);
+    let asides: Vec<(Aside, Option<String>)> = match query.is_empty() {
+        true => history::list(history).into_iter().take(count).map(|a| (a, None)).collect(),
+        false => search::search(history, &query)
+            .into_iter()
+            .take(count)
+            .map(|(aside, text)| {
+                let excerpt = query.excerpt(&text, &aside.record.title).map(|e| e.text);
+                (aside, excerpt)
+            })
+            .collect(),
+    };
     if asides.is_empty() {
-        return "No asides yet.".into();
+        return match query.is_empty() {
+            true => "No asides yet.".into(),
+            false if words.contains('"') => format!("No aside says {}.", words.trim()),
+            false => format!("No aside says \"{}\".", words.trim()),
+        };
     }
     asides
         .iter()
-        .map(|a| {
+        .map(|(a, excerpt)| {
             let sent = match a.last_delivery() {
                 Some(d) if d.error.is_none() => format!(" → {}", d.to),
                 Some(d) => format!(" (not sent to {})", d.to),
@@ -132,7 +152,8 @@ fn list_text(asides: &[Aside]) -> String {
                 1 => ", 1 screenshot".into(),
                 n => format!(", {n} screenshots"),
             };
-            format!("- {} · {}{sent}{shots}: {}", a.id, a.created().format("%Y-%m-%d %H:%M"), a.record.title)
+            let found = excerpt.as_ref().map(|e| format!("\n  {e}")).unwrap_or_default();
+            format!("- {} · {}{sent}{shots}: {}{found}", a.id, a.created().format("%Y-%m-%d %H:%M"), a.record.title)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -220,10 +241,16 @@ fn tools() -> Value {
         {
             "name": "list_asides",
             "title": "List asides",
-            "description": "List the user's recent asides, newest first: id, when, where it was sent, its first words.",
+            "description": "List the user's recent asides, newest first: id, when, where it was sent, its first words. \
+                With a query, only those that say all its words (in any order, ignoring case and accents; \"in \
+                quotes\" together), in what was said, the pins, where it was and where it was sent, each with the \
+                line it says them in.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "count": { "type": "integer", "minimum": 1, "maximum": 100, "description": "How many (10)." } }
+                "properties": {
+                    "count": { "type": "integer", "minimum": 1, "maximum": 100, "description": "How many (10)." },
+                    "query": { "type": "string", "description": "Words to look for." }
+                }
             },
             "annotations": read_only("List asides")
         },
@@ -325,8 +352,13 @@ mod tests {
         let kinds: Vec<&str> =
             content["content"].as_array().unwrap().iter().map(|c| c["type"].as_str().unwrap()).collect();
         assert_eq!(kinds, ["text", "text", "text", "image", "text"]);
-        assert!(
-            list_text(&[aside]).contains("2026-10-18-221530 · 2026-10-18 22:15, 1 screenshot: The button is too low.")
-        );
+        let row = "- 2026-10-18-221530 · 2026-10-18 22:15, 1 screenshot: The button is too low.";
+        assert_eq!(list_text(tmp.path(), "", 10), row);
+        // Found by what it says, with the line it says it in.
+        assert_eq!(list_text(tmp.path(), "BUTTON low", 10), row);
+        assert_eq!(list_text(tmp.path(), "low button", 10), row);
+        history::create(tmp.path(), at, "Something else.\n\n### 1. link \"Șterge\"", &[], Vec::new(), None).unwrap();
+        assert!(list_text(tmp.path(), "sterge", 10).ends_with(": Something else.\n  link \"Șterge\""));
+        assert_eq!(list_text(tmp.path(), "green", 10), "No aside says \"green\".");
     }
 }

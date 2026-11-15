@@ -119,6 +119,8 @@ echo "A Romanian recording"
 wait_aside 2 "$WORK/2.md"
 check "Romanian transcript with diacritics" contains "$WORK/2.md" "Butonul de salvare nu face nimic după ce schimb parola."
 check "the history lists it first" grep -q "Butonul de salvare" <<<"$("$CLI" history -n 1)"
+check "the history finds it by words, without accents" grep -q "Butonul de salvare" <<<"$("$CLI" history dupa PAROLA)"
+check "and finds nothing for words it doesn't say" grep -q "No aside says" <<<"$("$CLI" history parola zebra)"
 
 echo "asides on the screen (a scripted session on a drawn screen)"
 # A 400 × 240 pt screen at 2×: a light card with a title, a line of text and a blue button.
@@ -307,11 +309,13 @@ MCP=$(printf '%s\n' \
     '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
     '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_asides","arguments":{"count":20}}}' \
     '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_aside","arguments":{"id":"last"}}}' \
+    '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"list_asides","arguments":{"query":"după parola"}}}' \
     "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"measure_image\",\"arguments\":{\"path\":\"$SHOT\",\"area\":{\"x\":100,\"y\":320,\"width\":240,\"height\":100}}}}" \
     | "$CLI" mcp)
 check "it introduces itself" grep -q '"serverInfo":{"name":"asides"' <<<"$MCP"
 check "three read-only tools" test "$(grep -o '"readOnlyHint":true' <<<"$MCP" | wc -l | tr -d ' ')" = 3
 check "list_asides lists the history" grep -q 'Butonul de salvare' <<<"$MCP"
+check "list_asides finds an aside by its words" grep -q 'Butonul de salvare' <<<"$(grep '"id":6' <<<"$MCP")"
 check "get_aside sends the screenshots inline" grep -q '"type":"image"' <<<"$MCP"
 check "measure_image measures" grep -q '200 px wide × 48 px high' <<<"$MCP"
 

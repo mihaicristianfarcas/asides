@@ -84,6 +84,7 @@ const ICONS: &[(&str, &str)] = &[
     ("plus", icon(r#"<path d="M12 5.5v13M5.5 12h13"/>"#)),
     ("chevron-up-down", icon(r#"<path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"/>"#)),
     ("clock", icon(r#"<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>"#)),
+    ("search", icon(r#"<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l4.5 4.5"/>"#)),
     (
         "terminal",
         icon(r#"<rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7.5 10l2.5 2-2.5 2M12.5 14.5h4"/>"#),

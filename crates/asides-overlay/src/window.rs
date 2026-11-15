@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::io::BufRead;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
@@ -25,6 +26,7 @@ use asides_core::link::Link;
 use asides_core::markdown::Part;
 use asides_core::models::{MODELS, ModelSpec};
 use asides_core::paths::{self, tilde};
+use asides_core::search::{Query, Text as Searched};
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::{AppState, LoginItem, Permission};
 use asides_core::update::{self, Block, Notes, Phase, Span, Step};
@@ -55,7 +57,8 @@ actions!(
         HideAsides,
         Minimize,
         CloseWindow,
-        SaveAside
+        SaveAside,
+        FindAsides
     ]
 );
 
@@ -382,6 +385,11 @@ pub struct AsidesWindow {
     /// is open: going back to View, or to another aside, loses nothing.
     editing: Option<String>,
     drafts: HashMap<String, Entity<TextInput>>,
+    /// History's search: its field (made when first shown), what it looks for, and each aside's
+    /// text as searched, by id, with what it was made from (when it was edited, how often sent).
+    search: Option<Entity<TextInput>>,
+    query: Query,
+    searched: HashMap<String, ((Option<u64>, usize), Searched)>,
     /// Development (`ASIDES_WINDOW_FOCUS=edit`): the aside shown opens in Edit.
     edit_at_first: bool,
     /// Setup's step shown, and the permissions asked for meanwhile (asked once, macOS shows them
@@ -433,6 +441,7 @@ pub fn run() {
             KeyBinding::new("secondary-m", Minimize, None),
             KeyBinding::new("secondary-w", CloseWindow, None),
             KeyBinding::new("secondary-s", SaveAside, None),
+            KeyBinding::new("secondary-f", FindAsides, None),
         ]);
         cx.on_action(|_: &QuitAsides, cx| {
             let _ = send_link(&Link::Quit);
@@ -704,6 +713,9 @@ impl AsidesWindow {
             told_seen: None,
             editing: None,
             drafts: HashMap::new(),
+            search: None,
+            query: Query::default(),
+            searched: HashMap::new(),
             edit_at_first: std::env::var("ASIDES_WINDOW_FOCUS").is_ok_and(|f| f == "edit"),
             setup: SetupStep::Welcome,
             asked: Vec::new(),
@@ -749,6 +761,82 @@ impl AsidesWindow {
         if self.selected.as_ref().is_some_and(|id| !self.asides.iter().any(|a| &a.id == id)) {
             self.selected = self.asides.first().map(|a| a.id.clone());
         }
+        self.searched.retain(|id, _| self.asides.iter().any(|a| &a.id == id));
+        self.fit_selection();
+    }
+
+    /// The asides History lists, by their place in `asides`: all of them, or those found.
+    fn listed(&mut self) -> Vec<usize> {
+        if self.query.is_empty() {
+            return (0..self.asides.len()).collect();
+        }
+        let (searched, query) = (&mut self.searched, &self.query);
+        self.asides
+            .iter()
+            .enumerate()
+            .filter(|(_, aside)| {
+                let made = (aside.record.edited_ms, aside.record.deliveries.len());
+                let kept = searched.entry(aside.id.clone()).or_insert_with(|| (made, Searched::of(aside)));
+                if kept.0 != made {
+                    *kept = (made, Searched::of(aside));
+                }
+                query.matches(&kept.1)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// While searching, the aside shown is one found: the first, unless it already is (with none
+    /// found, it stays, for when the search is cleared).
+    fn fit_selection(&mut self) {
+        let listed = self.listed();
+        let shown = self.selected.as_ref().and_then(|id| self.asides.iter().position(|a| &a.id == id));
+        if let Some(&first) = listed.first()
+            && !shown.is_some_and(|i| listed.contains(&i))
+        {
+            self.selected = Some(self.asides[first].id.clone());
+            self.aside_scroll.set_offset(point(px(0.), px(0.)));
+        }
+    }
+
+    /// History's search field, made the first time it's needed; what's typed is looked for as
+    /// it's typed.
+    fn search_input(&mut self, cx: &mut Context<Self>) -> Entity<TextInput> {
+        if let Some(input) = &self.search {
+            return input.clone();
+        }
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("", "Search", cx);
+            input.bare = true;
+            input
+        });
+        // Tab reaches it.
+        let _ = input.read(cx).focus_handle(cx).tab_stop(true);
+        cx.observe(&input, |this, input, cx| {
+            let query = Query::new(&input.read(cx).text());
+            if query != this.query {
+                this.query = query;
+                this.list_scroll.set_offset(point(px(0.), px(0.)));
+                this.fit_selection();
+                cx.notify();
+            }
+        })
+        .detach();
+        self.search = Some(input.clone());
+        input
+    }
+
+    /// ⌘F: History, its search field taking the keyboard, what's in it selected (unless keys are
+    /// being recorded: then it's the key).
+    fn find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let (Some(_), Some(c)) = (self.recording, keys::parse("cmd+f").first()) {
+            return self.record(&c.key, Mods { cmd: c.cmd, shift: c.shift, alt: c.alt, ctrl: c.ctrl }, cx);
+        }
+        self.go(Page::History, cx);
+        let input = self.search_input(cx);
+        input.update(cx, |input, cx| input.select_whole(cx));
+        window.focus(&input.read(cx).focus_handle(cx));
+        controls::keyboard_moved();
     }
 
     /// A command from the app: `show`, or `show general`, brings the window forward (at that page).
@@ -1414,6 +1502,7 @@ impl Render for AsidesWindow {
             .on_action(cx.listener(|this, _: &ShowHelp, _, cx| this.page_or_keys(Page::Help, "cmd+shift+/", cx)))
             .on_action(cx.listener(|this, _: &FocusNext, window, cx| this.tab(false, window, cx)))
             .on_action(cx.listener(|this, _: &FocusPrevious, window, cx| this.tab(true, window, cx)))
+            .on_action(cx.listener(|this, _: &FindAsides, window, cx| this.find(window, cx)))
             .on_action(cx.listener(|this, _: &SaveAside, _, cx| {
                 if let Some(id) = this.editing.clone() {
                     this.save_draft(&id, cx);
@@ -1733,25 +1822,48 @@ impl AsidesWindow {
                 how.into_any_element(),
             );
         }
+        let field = self.search_field(cx);
+        let searching = !self.query.is_empty();
+        // While searching, those found, their words marked, each with the line it says the others
+        // in.
+        let listed = self.listed();
         let today = Local::now().date_naive();
         let mut list: Vec<AnyElement> = Vec::new();
         let mut day = None;
         // One stop for Tab, the aside shown (or the first); the arrows (Home, End) go through them,
-        // each shown as they come to it.
-        let ids: Vec<String> = self.asides.iter().map(|a| a.id.clone()).collect();
+        // each shown as they come to it. Up from the first goes to the search field.
+        let ids: Vec<String> = listed.iter().map(|&i| self.asides[i].id.clone()).collect();
         let stop = ids.iter().position(|id| self.selected.as_ref() == Some(id)).unwrap_or(0);
         let focus: Vec<(gpui::FocusHandle, bool)> =
             ids.iter().map(|id| self.focusable(format!("aside-{id}"), cx)).collect();
         let handles: Vec<gpui::FocusHandle> = focus.iter().map(|(h, _)| h.clone()).collect();
+        let search = self.search.clone();
         let arrows = cx.listener(move |this, e: &KeyDownEvent, window, cx| {
             let at = handles.iter().position(|h| h.is_focused(window));
+            if at == Some(0)
+                && e.keystroke.key == "up"
+                && !e.keystroke.modifiers.modified()
+                && let Some(search) = &search
+            {
+                cx.stop_propagation();
+                controls::keyboard_moved();
+                window.focus(&search.read(cx).focus_handle(cx));
+                return cx.notify();
+            }
             let Some(to) = controls::arrow_step(e, at, handles.len(), false) else { return };
             cx.stop_propagation();
             controls::keyboard_moved();
             window.focus(&handles[to]);
             this.show_aside(&ids[to], cx);
         });
-        for (index, aside) in self.asides.iter().enumerate() {
+        // Marked as the main action is (Send): its ink on its soft blue, in either appearance.
+        let mark =
+            gpui::HighlightStyle { color: Some(t.on_accent), background_color: Some(t.accent), ..Default::default() };
+        let marked = |text: String, found: Vec<Range<usize>>| {
+            gpui::StyledText::new(text).with_highlights(found.into_iter().map(|r| (r, mark)))
+        };
+        for (index, &at) in listed.iter().enumerate() {
+            let aside = &self.asides[at];
             let created = aside.created();
             if day != Some(created.date_naive()) {
                 day = Some(created.date_naive());
@@ -1776,6 +1888,15 @@ impl AsidesWindow {
             let id = aside.id.clone();
             let (glyph, where_, failed) = delivered(aside);
             let (handle, ring) = focus[index].clone();
+            let title = aside.record.title.clone();
+            let (in_title, in_where, excerpt) = match self.searched.get(&aside.id).filter(|_| searching) {
+                Some((_, text)) => (
+                    self.query.found(&Searched::new(title.as_str())),
+                    self.query.found(&Searched::new(where_.as_str())),
+                    self.query.excerpt(text, &format!("{title}\n{where_}")),
+                ),
+                None => (Vec::new(), Vec::new(), None),
+            };
             list.push(
                 div()
                     .id(SharedString::from(format!("aside-{id}")))
@@ -1789,13 +1910,13 @@ impl AsidesWindow {
                     .border_1()
                     .border_color(hex(0, 0.0))
                     .relative()
-                    .child(self.list_glide.item(index))
+                    .child(self.list_glide.item(at))
                     // Hovered, it stays so once picked, as the selection slides to it.
                     .hover(|s| s.bg(t.hover))
                     .when(!on, |d| d.cursor_pointer())
                     .on_click(cx.listener(move |this, _, _, cx| this.show_aside(&id, cx)))
                     .when(ring, |d| d.child(controls::focus_ring(t, Radius::ROW, 0.)))
-                    .child(div().truncate().font_weight(FontWeight::MEDIUM).child(aside.record.title.clone()))
+                    .child(div().truncate().font_weight(FontWeight::MEDIUM).child(marked(title, in_title)))
                     .child(
                         div()
                             .flex()
@@ -1805,13 +1926,42 @@ impl AsidesWindow {
                             .text_color(if failed { t.danger } else { t.tertiary })
                             .child(div().flex_none().child(created.format("%H:%M").to_string()))
                             .child(icon(glyph, 11., if failed { t.danger } else { t.tertiary }))
-                            .child(div().truncate().child(where_)),
+                            .child(div().truncate().child(marked(where_, in_where))),
                     )
+                    .children(excerpt.map(|e| {
+                        div()
+                            .truncate()
+                            .text_size(px(Type::META))
+                            .text_color(t.secondary)
+                            .child(marked(e.text, e.found))
+                    }))
                     .into_any_element(),
             );
         }
-        let detail = self.selected().cloned().map(|aside| self.aside_detail(&aside, cx));
-        let chosen = self.selected.as_ref().and_then(|id| self.asides.iter().position(|a| &a.id == id));
+        // The aside shown, if it's listed; else, while searching, that none was found.
+        let chosen = self
+            .selected
+            .as_ref()
+            .and_then(|id| self.asides.iter().position(|a| &a.id == id))
+            .filter(|i| listed.contains(i));
+        let detail = match chosen.map(|i| self.asides[i].clone()) {
+            Some(aside) => Some(self.aside_detail(&aside, cx)),
+            None if searching => {
+                let typed = self.search.as_ref().map(|s| s.read(cx).text()).unwrap_or_default();
+                // A phrase is in quotes already.
+                let none = match typed.contains('"') {
+                    true => format!("No aside says {}.", typed.trim()),
+                    false => format!("No aside says “{}”.", typed.trim()),
+                };
+                Some(empty_div(t, tile(t, "search").into_any_element(), "No results", &none).into_any_element())
+            }
+            None => None,
+        };
+        let kept = match (searching, self.config.history_days) {
+            (true, _) => format!("{} found", listed.len()),
+            (false, 0) => "kept always".to_string(),
+            (false, days) => format!("kept {days} days"),
+        };
         div()
             .size_full()
             .flex()
@@ -1836,17 +1986,12 @@ impl AsidesWindow {
                                 .child(
                                     div().text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child("History"),
                                 )
-                                .child(div().text_size(px(Type::META)).text_color(t.tertiary).child(format!(
-                                    "kept {}",
-                                    match self.config.history_days {
-                                        0 => "always".to_string(),
-                                        days => format!("{days} days"),
-                                    }
-                                )))
+                                .child(div().text_size(px(Type::META)).text_color(t.tertiary).child(kept))
                                 .into_any_element(),
                         ),
                         Vec::new(),
                     ))
+                    .child(div().flex_none().px(px(8.)).pb(px(8.)).child(field))
                     .child(scrolled(
                         div()
                             .id("history-list")
@@ -1877,6 +2022,88 @@ impl AsidesWindow {
                     .when(cfg!(not(target_os = "macos")), |d| d.child(page_strip()))
                     .children(detail),
             )
+            .into_any_element()
+    }
+
+    /// History's search field: a magnifier, what's typed, and a button clearing it. ⏎ or ↓ go on
+    /// to the asides found; Escape clears it, then leaves it.
+    fn search_field(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let input = self.search_input(cx);
+        input.update(cx, |input, _| {
+            input.look = Look {
+                text: t.primary,
+                placeholder: t.quaternary,
+                border: hex(0, 0.0),
+                background: hex(0, 0.0),
+                caret: t.accent,
+                selection: t.accent.opacity(0.35),
+            }
+        });
+        let focus = input.read(cx).focus_handle(cx);
+        let ring = controls::keyboard_focus() && self.focused.as_ref() == Some(&focus);
+        let typed = !input.read(cx).content.is_empty();
+        let (field, root) = (input.clone(), self.focus.clone());
+        let cleared = input.clone();
+        let clear = div()
+            .id("search-clear")
+            .flex_none()
+            .size(px(18.))
+            .rounded(px(Radius::CHIP))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(|s| s.bg(t.hover))
+            .on_click(move |_, _, cx| cleared.update(cx, |input, cx| input.set_text("", cx)))
+            .child(icon("close", 11., t.tertiary));
+        div()
+            .id("search")
+            .relative()
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(Radius::CONTROL))
+            .bg(t.control)
+            .border_1()
+            .border_color(t.control_stroke)
+            .cursor(CursorStyle::IBeam)
+            .on_mouse_down(MouseButton::Left, move |_, window, _| window.focus(&focus))
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                if e.keystroke.modifiers.modified() {
+                    return;
+                }
+                match e.keystroke.key.as_str() {
+                    "enter" | "down" => {
+                        // On to the aside shown, among those found.
+                        let listed = this.listed();
+                        let Some(id) = this.selected.clone() else { return };
+                        if !listed.iter().any(|&i| this.asides[i].id == id) {
+                            return;
+                        }
+                        let (handle, _) = this.focusable(format!("aside-{id}"), cx);
+                        controls::keyboard_moved();
+                        window.focus(&handle);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    "escape" => {
+                        match field.read(cx).content.is_empty() {
+                            true => window.focus(&root),
+                            false => field.update(cx, |field, cx| field.set_text("", cx)),
+                        }
+                        cx.stop_propagation();
+                    }
+                    _ => {}
+                }
+            }))
+            .child(icon("search", 13., t.tertiary))
+            .child(div().flex_1().min_w_0().child(input))
+            .when(typed, |d| d.child(clear))
+            .when(ring, |d| d.child(controls::focus_ring(t, Radius::CONTROL, 2.)))
             .into_any_element()
     }
 
@@ -2416,7 +2643,7 @@ impl AsidesWindow {
             [
                 setting(
                     "History",
-                    Some(&format!("{kept}: send it again, to another session, copy it, or edit it.")),
+                    Some(&format!("{kept}: search it, send it again, to another session, copy it, or edit it.")),
                     button("help-history", "Open History", t)
                         .on_click(cx.listener(|this, _, _, cx| this.go(Page::History, cx))),
                     t,
@@ -2503,7 +2730,8 @@ impl AsidesWindow {
                     "This window, by keyboard",
                     format!(
                         "Tab and {s}Tab go through what can be clicked, Space or {r} presses it, and the arrows move \
-                         in lists and choices. {c}1 to {c}6 open History, Sessions and each setting, {c}? this page.",
+                         in lists and choices. {c}1 to {c}6 open History, Sessions and each setting, {c}F searches \
+                         History, {c}? this page.",
                         s = keys::SHIFT,
                         r = keys::RETURN,
                         c = keys::COMMAND,

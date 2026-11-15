@@ -21,6 +21,7 @@ pub mod paths;
 pub mod portal;
 pub mod resample;
 pub mod rich;
+pub mod search;
 pub mod sessions;
 pub mod state;
 pub mod takes;

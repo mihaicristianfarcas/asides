@@ -144,6 +144,8 @@ pub struct TextInput {
     /// that).
     multiline: bool,
     pub max_lines: usize,
+    /// Drawn without its own box (padding, border, background): what holds it draws one.
+    pub bare: bool,
     font: Option<SharedString>,
     /// What it was before each change (text and selection), to undo, and what was undone, to redo;
     /// and when it last changed (typing goes back in one step).
@@ -216,6 +218,7 @@ impl TextInput {
             is_selecting: false,
             multiline: false,
             max_lines: MAX_LINES,
+            bare: false,
             font: None,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -246,6 +249,12 @@ impl TextInput {
         self.marked_range = None;
         (self.undo, self.redo, self.changed_at) = (Vec::new(), Vec::new(), None);
         cx.notify();
+    }
+
+    /// Selects all of it.
+    pub fn select_whole(&mut self, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+        self.select_to(self.content.len(), cx)
     }
 
     /// Types `text` where the caret is (over the selection).
@@ -944,6 +953,7 @@ impl Render for TextInput {
             .text_size(px(13.))
             .line_height(px(if area { 20. } else { 18. }))
             .when(area, |d| d.flex_1().min_h_0().px(px(12.)).py(px(10.)).rounded(px(8.)))
+            .when(self.bare, |d| d.px_0().py_0().border_0().rounded_none())
             .when_some(self.font.clone(), |d, font| d.font_family(font))
             .text_color(self.look.text)
             .child(TextElement { input: cx.entity() })

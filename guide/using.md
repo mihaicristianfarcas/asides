@@ -107,14 +107,17 @@ accessibility role).
 Open it from the menu bar or with `asides`. While it's open it's in the Dock and `⌘Tab`; `⌘W`
 closes it, `⌘Q` quits asides. It all works from the keyboard: `Tab` and `⇧Tab` go through what can
 be clicked (`Space` or `⏎` presses it), the arrow keys move in the sidebar, lists, menus and
-choices, `⌘1`–`⌘6` open History, Sessions, General, Keys, Voice and Pins, and `⌘⌫` in History
-deletes the aside shown.
+choices, `⌘1`–`⌘6` open History, Sessions, General, Keys, Voice and Pins, `⌘F` searches History,
+and `⌘⌫` in History deletes the aside shown.
 
 - **History**: every aside, and whether it was sent (to which session) or only saved. What was
   said with its pins' numbers, the screenshots and each pin. Send it again, copy it (with its
   screenshots where they were taken, for one paste in a mail, a note or a chat; a terminal gets the
   Markdown with their paths), show it in Finder, delete it, or **Edit** its Markdown (`⌘S` saves it once nothing in it is wrong: each
   problem is listed by line). asides are kept in `~/.asides/history` for 30 days by default.
+  **Search** (`⌘F`) lists those that say every word you type, in any order, ignoring case and
+  accents (`sterge` finds `Șterge`; `"in quotes"` together), in what was said, the pins, the app
+  and page, and where it was sent. `↓` goes to the list, `Esc` clears it.
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
 - **General**, **Keys** (the shortcuts, and the frozen screen's keys), **Voice**, **Pins**: every
   [setting](settings.md). Click a shortcut or a key, then press the new one.
@@ -144,7 +147,7 @@ release-signing.pub`.
 | `asides` | Open the asides window. |
 | `asides open` | Open asides on the screen, like `⌃⌥Space`. |
 | `asides sessions` | The sessions asides can send to (`--json`). |
-| `asides history` | Past asides, newest first (`-n 50`, `--json`). |
+| `asides history [WORDS]` | Past asides, newest first (`-n 50`, `--json`); with words, those that say them, as History's search (`"save button"` together). |
 | `asides show [ID]` | An aside as Markdown (the newest by default). |
 | `asides send [ID] [--to SESSION]` | Send an aside again, to a session from `asides sessions` or `--to history`. |
 | `asides download [MODEL]` | Download a voice model. |
@@ -165,7 +168,8 @@ and gives your screens back; what you said is kept in History. Add `asides log` 
 ## For your agents (optional)
 
 asides needs nothing from your agents. If you want them to read past asides or measure
-screenshots, add its MCP server (`get_aside`, `list_asides`, `measure_image`, all read-only):
+screenshots, add its MCP server (`get_aside`, `list_asides` with an optional `query`,
+`measure_image`, all read-only):
 
 ```bash
 claude mcp add --scope user asides -- asides mcp
