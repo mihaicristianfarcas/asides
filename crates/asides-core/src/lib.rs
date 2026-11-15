@@ -20,6 +20,7 @@ pub mod paths;
 #[cfg(target_os = "linux")]
 pub mod portal;
 pub mod resample;
+pub mod rich;
 pub mod sessions;
 pub mod state;
 pub mod takes;

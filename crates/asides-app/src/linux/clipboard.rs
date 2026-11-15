@@ -1,10 +1,12 @@
 //! The clipboard on Linux, through X11 (Xwayland on a Wayland desktop, which shares it with
-//! everything): text, and a screenshot as other apps paste it. What's on the X11 clipboard is served
-//! by whoever put it there, so the handle lives as long as the app. What the user had there is kept
-//! as text while an aside's screenshot is put on it, to put back.
+//! everything): text, a screenshot as other apps paste it, and an aside copied. What's on the X11
+//! clipboard is served by whoever put it there, so the handle lives as long as the app. What the user
+//! had there is kept as text while an aside's screenshot is put on it, to put back.
 
 use std::borrow::Cow;
 use std::sync::{Mutex, OnceLock};
+
+use asides_core::rich::Rich;
 
 /// The clipboard, for as long as the app runs (`None` without X11).
 fn clipboard() -> Option<&'static Mutex<arboard::Clipboard>> {
@@ -42,6 +44,14 @@ pub fn put_png(bytes: &[u8]) {
     if let Some(Ok(mut clipboard)) = clipboard().map(Mutex::lock) {
         let image = arboard::ImageData { width, height, bytes: Cow::Owned(rgba) };
         let _ = clipboard.set_image(image);
+    }
+}
+
+/// Puts an aside on the clipboard: HTML with its screenshots in it (what a page, a mail or a
+/// document pastes), and its Markdown with their paths (what a terminal pastes, for an agent).
+pub fn put_aside(rich: &Rich) {
+    if let Some(Ok(mut clipboard)) = clipboard().map(Mutex::lock) {
+        let _ = clipboard.set_html(rich.html(), Some(rich.text.clone()));
     }
 }
 

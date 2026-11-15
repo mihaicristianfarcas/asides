@@ -1,8 +1,10 @@
-//! The clipboard on Windows: text, and a screenshot as other apps paste it (a bitmap, and PNG
-//! for those that take it). What the user had there is kept as text while an aside's screenshot
-//! is put on it, to put back.
+//! The clipboard on Windows: text, a screenshot as other apps paste it (a bitmap, and PNG for
+//! those that take it), and an aside copied. What the user had there is kept as text while an
+//! aside's screenshot is put on it, to put back.
 
 use std::borrow::Cow;
+
+use asides_core::rich::Rich;
 
 /// What the clipboard held: its text, if it had any.
 pub struct Snapshot(Option<String>);
@@ -34,6 +36,14 @@ pub fn put_png(bytes: &[u8]) {
     if let Ok(mut clipboard) = arboard::Clipboard::new() {
         let image = arboard::ImageData { width, height, bytes: Cow::Owned(rgba) };
         let _ = clipboard.set_image(image);
+    }
+}
+
+/// Puts an aside on the clipboard: HTML with its screenshots in it (what a page, a mail or a
+/// document pastes), and its Markdown with their paths (what a terminal pastes, for an agent).
+pub fn put_aside(rich: &Rich) {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_html(rich.html(), Some(rich.text.clone()));
     }
 }
 

@@ -111,16 +111,18 @@ choices, `⌘1`–`⌘6` open History, Sessions, General, Keys, Voice and Pins, 
 deletes the aside shown.
 
 - **History**: every aside, and whether it was sent (to which session) or only saved. What was
-  said with its pins' numbers, the screenshots and each pin. Send it again, copy it, show it in
-  Finder, delete it, or **Edit** its Markdown (`⌘S` saves it once nothing in it is wrong: each
+  said with its pins' numbers, the screenshots and each pin. Send it again, copy it (with its
+  screenshots where they were taken, for one paste in a mail, a note or a chat; a terminal gets the
+  Markdown with their paths), show it in Finder, delete it, or **Edit** its Markdown (`⌘S` saves it once nothing in it is wrong: each
   problem is listed by line). asides are kept in `~/.asides/history` for 30 days by default.
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
 - **General**, **Keys** (the shortcuts, and the frozen screen's keys), **Voice**, **Pins**: every
   [setting](settings.md). Click a shortcut or a key, then press the new one.
 - **Help** (`⌘?`): how to use asides, step by step, with clips of it.
 
-The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds and
-naming pins on or off, and opens History or Settings.
+The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds,
+naming pins and copying each aside (once it's sent or saved) on or off, and opens History or
+Settings.
 
 ## Updates
 
@@ -188,6 +190,7 @@ asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with t
 | Permissions | Only the microphone: Settings → Privacy & security → Microphone → **Let desktop apps access your microphone**. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `%USERPROFILE%\.asides\history`; settings, voice models and the log in `%LOCALAPPDATA%\asides`. |
+| Copying | An aside copied is HTML with its screenshots in it, and the Markdown: no screenshot is a file of its own. |
 | Updates | As on a Mac, for a copy from the installer: the new installer runs silently as asides quits, then asides reopens. It must carry asides' signatures. A copy from the zip doesn't update itself. |
 
 ## On Linux
@@ -205,4 +208,5 @@ differences:
 | Scaled screens | On Wayland the overlay runs under Xwayland, which may draw it slightly soft at fractional scales. Screenshots keep the screen's full resolution. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `~/.asides/history`; settings in `~/.config/asides`; voice models in `~/.local/share/asides`; the log in `~/.local/state/asides`. |
+| Copying | As on Windows: HTML with the screenshots in it, and the Markdown. |
 | Updates | asides says when a new version is out (**asides … is out: download it**, in the window's sidebar and the menu), and opens the download page. Install it over the old one, as you installed that. |

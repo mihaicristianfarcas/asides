@@ -115,14 +115,7 @@ impl Aside {
 
     /// The message as Markdown with its screenshots' absolute paths, for the clipboard.
     pub fn markdown(&self) -> String {
-        self.parts()
-            .into_iter()
-            .map(|part| match part {
-                Part::Text(text) => text,
-                Part::Image(path) => format!("![Screenshot]({path})"),
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
+        markdown_of(&self.parts())
     }
 
     /// Where it was last sent, and whether that worked.
@@ -163,6 +156,18 @@ impl Aside {
         self.record.edited_ms = Some(now_ms());
         write_record(&self.dir, &self.record)
     }
+}
+
+/// A message's parts as Markdown, each screenshot by the path its part names.
+pub fn markdown_of(parts: &[Part]) -> String {
+    parts
+        .iter()
+        .map(|part| match part {
+            Part::Text(text) => text.clone(),
+            Part::Image(path) => format!("![Screenshot]({path})"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// An image to keep with an aside.

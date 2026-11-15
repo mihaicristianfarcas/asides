@@ -205,6 +205,9 @@ paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'
 - tray-icon caps icons at 22 pt (`icons.rs` draws on 22 pt at 2×), and without a `TrayIconEvent`
   handler it queues an event per mouse move, forever.
 - tao activates the app at launch unless `set_activate_ignoring_other_apps(false)`.
+- A file URL anywhere on the pasteboard makes WebKit hide the text from a page's paste (it could
+  name files), and WebKit's own paste reads only the first item: an aside copied is text, HTML and
+  RTFD in one item, then each screenshot as a PNG item, no URL (`clipboard::put_aside`).
 - Changing the status item or a menu item's text doesn't close an open menu; if it closes, look at
   focus, activation or system prompts. Standard items always close it; view-based switch rows
   don't, but didn't line up (reverted).

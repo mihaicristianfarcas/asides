@@ -121,7 +121,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 |---|---|---|
 | Unit | `make test` | history, sessions, delivery plans, messages, links, config, measuring, the overlay session, its rendering, the MCP server, updates (the feed, `Flow`, the swap script) |
 | Speech | `make test-speech` | transcribing the fixtures, a real model download |
-| End-to-end | `make e2e` | a dev-hooks build driven through the CLI with a history of its own: recordings, scripted sessions, Wispr Flow, sending to a stand-in agent (Diri, else Terminal), `asides mcp`. Restores your config and clipboard. |
+| End-to-end | `make e2e` | a dev-hooks build driven through the CLI with a history of its own: recordings, scripted sessions, Wispr Flow, sending to a stand-in agent (Diri, else Terminal), copying, `asides mcp`. Restores your config and clipboard. |
 | Overlay | replays (below) | the real windows, driven by AppKit events, captured to PNGs |
 | Manual | checklist (below) | what a script can't do |
 
@@ -166,7 +166,7 @@ Run what your change touches, and say in the pull request what you tried.
   you come back; turned off there, the row offers **Open System Settings…**; after logging out and
   in, asides is in the menu bar.
 - [ ] **Menu bar**: the mark alone (dot recording, dots busy, `[n]` sent, `!` error); the menu has
-  the status, Open asides, Open Live, Copy the Last Aside, three switches, History…, Settings…, Quit.
+  the status, Open asides, Open Live, Copy the Last Aside, four switches, History…, Settings…, Quit.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,
   naming the session; the mic red with a model, crossed out (click downloads) without.
 - [ ] **Pins**: click pins, drag pins an area, a pin's number opens its card, `⏎` closes it then
@@ -186,6 +186,10 @@ Run what your change touches, and say in the pull request what you tried.
   nothing marked); queued while the agent works; the clipboard restored; a gone session reported,
   the aside in History. The pill names each session as its agent titled it.
 - [ ] **New session in…** in Terminal, Ghostty and Diri, in bash, zsh and fish.
+- [ ] **Copying**: History's Copy, Copy the Last Aside, and Copy Each Aside (sent, saved, a send
+  that failed) put the aside on the clipboard once it's typed in: Notes, Mail and TextEdit paste
+  what was said with each screenshot where it was taken; Slack, Discord and WhatsApp (in a draft)
+  take the screenshots and the text; Terminal pastes the Markdown with their paths.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.
 - [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,

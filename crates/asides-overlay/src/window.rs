@@ -1995,12 +1995,15 @@ impl AsidesWindow {
                 .into_any_element(),
         );
         actions.push(div().w(px(6.)).into_any_element());
-        let copied = aside.clone();
+        let copied = aside.id.clone();
         actions.push(
-            icon_button("copy", "copy", "Copy, with the screenshots' paths", t)
+            icon_button("copy", "copy", "Copy, with its screenshots", t)
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.markdown()));
-                    this.toast("Copied, with the screenshots' paths");
+                    // The app copies it, as its menu and `copy_asides` do.
+                    match send_link(&Link::Copy { id: copied.clone(), request: None }) {
+                        Ok(()) => this.toast("Copied, with its screenshots"),
+                        Err(err) => this.toast(format!("Could not reach asides: {err}")),
+                    }
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -3447,6 +3450,7 @@ impl AsidesWindow {
         let keep_labels = ["7 days", "30 days", "90 days", "Always"];
         let pick_keep = self.setter(cx, move |c, i: usize| c.history_days = keep[i]);
         let audio = self.setter(cx, |c, on| c.keep_audio = on);
+        let copy = self.setter(cx, |c, on| c.copy_asides = on);
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
         let auto_update = self.setter(cx, |c, on| c.auto_update = on);
@@ -3503,6 +3507,12 @@ impl AsidesWindow {
                                 "Keep what was said as audio",
                                 Some(if cfg!(target_os = "macos") { "An .m4a with each aside." } else { "A .wav with each aside." }),
                                 switch("keep-audio", c.keep_audio, t).on_toggle(audio),
+                                t,
+                            ),
+                            setting(
+                                "Copy each aside",
+                                Some("Once it's sent or saved, it's on the clipboard with its screenshots, to paste anywhere."),
+                                switch("copy-asides", c.copy_asides, t).on_toggle(copy),
                                 t,
                             ),
                         ],

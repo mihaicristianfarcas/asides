@@ -154,6 +154,7 @@ cat > "$WORK/session.json" <<'JSON'
 JSON
 "$CLI" simulate-measure "$SHOT" "$WORK/session.json" >/dev/null
 wait_aside 3 "$WORK/3.md"
+MEASURED=$("$CLI" history -n 1 --json | /usr/bin/python3 -I -c 'import json, sys; print(json.load(sys.stdin)[0]["id"])')
 check "measurements, in points, with the screen" contains "$WORK/3.md" "**Measured** in pt (screen: Simulated screen, 400 × 240 pt, @2x)"
 check "a held distance between edges" contains "$WORK/3.md" "- Distance from (100, 140): 320 across (x 40 to x 360), 82 down (y 88 to y 170)"
 check "an area snapped to the button" contains "$WORK/3.md" "- Area 100 × 24 (25:6) at (60, 170), snapped to the object inside"
@@ -278,6 +279,27 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
         AGENT_TTY=""
     fi
 fi
+
+echo "Copying an aside"
+# Each item on the clipboard, by its types.
+pasteboard() { osascript -l JavaScript -e 'ObjC.import("AppKit"); const items = $.NSPasteboard.generalPasteboard.pasteboardItems
+const out = []; for (let i = 0; i < items.count; i++) out.push(ObjC.deepUnwrap(items.objectAtIndex(i).types).join(" ")); out.join("\n")'; }
+# History's Copy asks the app with this link.
+open -g -a "$ASIDES_APP" "asides://copy?id=$MEASURED"
+for _ in $(seq 1 40); do grep -q "Align it with the text above" <<<"$(pbpaste)" && break; sleep 0.25; done
+check "its Markdown, for a terminal" grep -q "Align it with the text above" <<<"$(pbpaste)"
+check "with its screenshots' paths" test "$(grep -c "^!\[Screenshot\]($ASIDES_HOME/history/" <<<"$(pbpaste)")" = 2
+check "HTML and RTFD with the screenshots in them, then each screenshot as an image" \
+    test "$(pasteboard)" = "$(printf 'public.utf8-plain-text public.html com.apple.flat-rtfd\npublic.png\npublic.png')"
+set_config copy_asides 'true'
+sleep 3
+BEFORE=$(asides_count)
+"$CLI" simulate "$FIX/en_bug.wav" --image "$FIX/screenshot.png" --at 6.5 >/dev/null
+wait_aside $((BEFORE + 1)) "$WORK/copied.md"
+for _ in $(seq 1 40); do grep -q "padding on the summary card" <<<"$(pbpaste)" && break; sleep 0.25; done
+check "Copy each aside: an aside kept is on the clipboard" grep -q "padding on the summary card" <<<"$(pbpaste)"
+check "with its screenshot" test "$(pasteboard)" = "$(printf 'public.utf8-plain-text public.html com.apple.flat-rtfd\npublic.png')"
+set_config copy_asides 'false'
 
 echo "The MCP server (asides mcp)"
 MCP=$(printf '%s\n' \
