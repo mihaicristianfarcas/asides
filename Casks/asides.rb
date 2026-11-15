@@ -1,8 +1,8 @@
 # This repository is also a Homebrew tap. Once a release is published on GitHub, the release workflow
 # opens a pull request with its version and checksum.
 cask "asides" do
-  version "1.1.1"
-  sha256 "1d397c6a7e959d78b59b6a08d95e44c3357722ce66853fa79f9f5f163c43c92c"
+  version "1.2.0"
+  sha256 "49f22f052caaefaef981d9fabc43b3ceb4f1027d06f832648f6bf6a5de4b61c3"
 
   url "https://github.com/mihaicristianfarcas/asides/releases/download/v#{version}/asides-#{version}.zip"
   name "asides"
