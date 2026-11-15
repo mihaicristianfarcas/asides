@@ -732,7 +732,10 @@ pub struct Theme {
     /// The glass pill behind a selected row or segment.
     pub selected: Hsla,
     pub selected_stroke: Hsla,
-    /// A quiet button.
+    /// A field or a quiet button (search, text, choices, steppers, keys): the cards' own fill and
+    /// outline, so a control on a card and one beside it look alike. `control_hover` is one step
+    /// on: hovered, and what's set in a surface (a segmented control's track, a switch turned off,
+    /// an icon's square), solid, so it's one shade on the window and on a card.
     pub control: Hsla,
     pub control_hover: Hsla,
     pub control_stroke: Hsla,
@@ -766,9 +769,9 @@ impl Theme {
             selected: white(0.10),
             selected_stroke: white(0.09),
             // Controls are near solid: on glass, translucent ones disappear over a light desktop.
-            control: hex(0x3a3836, 0.92),
-            control_hover: hex(0x45423f, 0.95),
-            control_stroke: white(0.12),
+            control: hex(0x2a2826, 0.94),
+            control_hover: hex(0x33312f, 0.96),
+            control_stroke: white(0.10),
             accent: hex(style::UI, 1.0),
             on_accent: hex(style::UI_INK, 1.0),
             fresh: hex(0x34c759, 1.0),
@@ -797,8 +800,8 @@ impl Theme {
             selected: hex(0xffffff, 0.92),
             selected_stroke: black(0.09),
             control: hex(0xffffff, 0.94),
-            control_hover: hex(0xffffff, 1.0),
-            control_stroke: black(0.12),
+            control_hover: hex(0xf1f0ee, 0.97),
+            control_stroke: black(0.10),
             accent: hex(style::UI, 1.0),
             on_accent: hex(style::UI_INK, 1.0),
             fresh: hex(0x248a3d, 1.0),
@@ -1121,7 +1124,7 @@ impl RenderOnce for Switch {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = self.theme;
         let on = self.on;
-        // Off, a control's surface: on glass, a faint track disappears.
+        // Off, a control's step: on glass, a faint track disappears.
         let track = if on { t.fresh.opacity(if t.dark { 0.72 } else { 0.85 }) } else { t.control_hover };
         let knob = if t.dark { t.primary } else { hex(0xffffff, 1.0) };
         let toggle = self.on_toggle.clone();
@@ -1209,7 +1212,7 @@ impl RenderOnce for Segmented {
             .p(px(2.))
             .gap(px(2.))
             .rounded(px(Radius::ROW))
-            .bg(t.primary.opacity(0.06))
+            .bg(t.control_hover)
             .child(glide.layer(self.selected, t.selected, t.selected_stroke, Radius::CONTROL - 1.))
             .children(self.items.into_iter().enumerate().map(|(i, label)| {
                 let on = self.selected == Some(i);
