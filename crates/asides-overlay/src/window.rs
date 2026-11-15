@@ -2025,8 +2025,9 @@ impl AsidesWindow {
             .into_any_element()
     }
 
-    /// History's search field: a magnifier, what's typed, and a button clearing it. ⏎ or ↓ go on
-    /// to the asides found; Escape clears it, then leaves it.
+    /// History's search field: a magnifier, what's typed, and a button clearing it (a Tab stop,
+    /// after the field; pressed, it gives the keyboard back to the field). ⏎ or ↓ go on to the asides
+    /// found; Escape clears it, then leaves it.
     fn search_field(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let input = self.search_input(cx);
@@ -2043,10 +2044,13 @@ impl AsidesWindow {
         let focus = input.read(cx).focus_handle(cx);
         let ring = controls::keyboard_focus() && self.focused.as_ref() == Some(&focus);
         let typed = !input.read(cx).content.is_empty();
-        let (field, root) = (input.clone(), self.focus.clone());
-        let cleared = input.clone();
+        let (clear_focus, clear_ring) = self.focusable("search-clear", cx);
+        let (field, root, field_focus) = (input.clone(), self.focus.clone(), focus.clone());
+        let (cleared, back) = (input.clone(), focus.clone());
         let clear = div()
             .id("search-clear")
+            .track_focus(&clear_focus)
+            .relative()
             .flex_none()
             .size(px(18.))
             .rounded(px(Radius::CHIP))
@@ -2055,8 +2059,13 @@ impl AsidesWindow {
             .justify_center()
             .cursor_pointer()
             .hover(|s| s.bg(t.hover))
-            .on_click(move |_, _, cx| cleared.update(cx, |input, cx| input.set_text("", cx)))
-            .child(icon("close", 11., t.tertiary));
+            .on_click(move |_, window, cx| {
+                cleared.update(cx, |input, cx| input.set_text("", cx));
+                // The button goes with the text: the keyboard goes back to the field.
+                window.focus(&back);
+            })
+            .child(icon("close", 11., t.tertiary))
+            .when(clear_ring, |d| d.child(controls::focus_ring(t, Radius::CHIP, 0.)));
         div()
             .id("search")
             .relative()
@@ -2077,6 +2086,8 @@ impl AsidesWindow {
                     return;
                 }
                 match e.keystroke.key.as_str() {
+                    // On the clear button, Return presses it.
+                    "enter" if !field_focus.is_focused(window) => {}
                     "enter" | "down" => {
                         // On to the aside shown, among those found.
                         let listed = this.listed();
@@ -2093,7 +2104,10 @@ impl AsidesWindow {
                     "escape" => {
                         match field.read(cx).content.is_empty() {
                             true => window.focus(&root),
-                            false => field.update(cx, |field, cx| field.set_text("", cx)),
+                            false => {
+                                field.update(cx, |field, cx| field.set_text("", cx));
+                                window.focus(&field_focus);
+                            }
                         }
                         cx.stop_propagation();
                     }
