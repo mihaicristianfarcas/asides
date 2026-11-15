@@ -103,6 +103,7 @@ crates/
     deliver.rs        per-app plans for typing an aside in; new-session launch scripts
     history.rs        ~/.asides/history: records, messages, images; listing, pruning, edits
     markdown.rs       what was said and made → the message, placed by time (pins by the word); checks
+    rich.rs           an aside for the clipboard: its Markdown, styled paragraphs and screenshots, HTML
     link.rs           asides:// links (CLI and window → app)
     state.rs          state.json (app → CLI and window)
     measure.rs        PixelSnap-style measuring: edges, distances, snapping, guides, colors
@@ -159,7 +160,8 @@ crates/
     worker.rs         transcription, keeping asides
     watch.rs          Wispr Flow (as its database changes), sessions (when asked, and as one ends)
     terminal.rs       running plans (dirijor, osascript, clipboard), starting sessions
-    clipboard.rs      pasting screenshots, restoring the pasteboard
+    clipboard.rs      pasting screenshots, restoring the pasteboard; an aside copied (text, HTML,
+                      RTFD, and each screenshot as an item of its own)
     capture.rs        ScreenCaptureKit screenshots in sRGB; Screen Recording
     overlay.rs        driving asides-overlay; the standby process
     elements.rs       what's under a pin: window list and accessibility tree

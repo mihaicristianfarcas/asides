@@ -70,6 +70,7 @@ use asides_core::link::Link;
 use asides_core::models::ModelSpec;
 use asides_core::overlay::Saved;
 use asides_core::paths;
+use asides_core::rich::Rich;
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::{self as app_state, AppState, LoginItem, Permission, Permissions};
 use asides_core::takes;
@@ -246,6 +247,9 @@ struct App {
     /// Where the open session's aside goes.
     target: Option<Target>,
     last_aside: Option<String>,
+    /// The aside to put on the clipboard (`copy_asides`) once nothing is being typed in: a send
+    /// pastes screenshots through the clipboard, then puts back what was there.
+    to_copy: Option<String>,
     /// The user declined to put the `asides` command on the PATH (published, so it's asked once).
     command_link_declined: bool,
     /// Set to stop watching Wispr Flow's history.
@@ -426,6 +430,7 @@ impl App {
             folders: None,
             target: None,
             last_aside: previous.last_aside,
+            to_copy: None,
             command_link_declined: previous.command_link_declined,
             wispr: None,
             config_watch: None,
@@ -662,6 +667,7 @@ impl App {
             Link::Live { .. } => self.freeze(),
             Link::Window { .. } => self.open_window(),
             Link::Send { id, to, .. } => self.send_again(&id, to),
+            Link::Copy { id, .. } => self.copy_aside(&id),
             Link::NewSession { id, agent, dir, .. } => self.send_again_to(&id, Target::New { agent, dir }),
             Link::Download { model, .. } => {
                 if ModelSpec::find(&model).id != self.config.model {
@@ -750,6 +756,7 @@ impl App {
             MenuAction::Listen => self.update_config(|c| c.mic_on_open = !c.mic_on_open),
             MenuAction::Sounds => self.update_config(|c| c.sounds = !c.sounds),
             MenuAction::Identify => self.update_config(|c| c.measure.identify_elements = !c.measure.identify_elements),
+            MenuAction::CopyEach => self.update_config(|c| c.copy_asides = !c.copy_asides),
             MenuAction::History => self.open_window_at(Some("history")),
             MenuAction::Settings => self.open_window_at(Some("general")),
             MenuAction::Update => self.update_step(Step::Install),
@@ -763,7 +770,11 @@ impl App {
             Outcome::Kept { aside, target } => {
                 self.error = None;
                 self.last_aside = Some(aside.id.clone());
+                if self.config.copy_asides {
+                    self.to_copy = Some(aside.id.clone());
+                }
                 self.deliver(*aside, target);
+                self.copy_once_sent();
             }
             Outcome::NothingHeard => {
                 self.flash(FLASH, Mark::Dash, "Nothing heard; nothing was sent");
@@ -888,6 +899,7 @@ impl App {
         }
         // It got input: it's the session typed into last now.
         self.ask_for_sessions();
+        self.copy_once_sent();
         if self.quit_when_idle && self.in_flight == 0 && self.sending == 0 {
             self.quit = true;
         }
@@ -2113,16 +2125,34 @@ impl App {
         }
     }
 
-    /// The last aside, as Markdown with its screenshots' paths, on the clipboard.
+    /// The last aside on the clipboard (`clipboard::put_aside`).
     fn copy_last(&mut self) {
         match self.last_aside.as_ref().and_then(|id| history::find(&history::dir(), id)) {
             Some(aside) => {
-                clipboard::put_text(&aside.markdown());
+                clipboard::put_aside(&Rich::of(&aside));
                 self.flash(FLASH, Mark::Check, "Copied the last aside");
             }
             None => self.fail("The last aside isn't in History any more.".into()),
         }
         self.refresh();
+    }
+
+    /// Aside `id` from the history on the clipboard (History's Copy).
+    fn copy_aside(&mut self, id: &str) {
+        match history::find(&history::dir(), id) {
+            Some(aside) => clipboard::put_aside(&Rich::of(&aside)),
+            None => self.fail(format!("There's no aside {id} in the history.")),
+        }
+    }
+
+    /// The aside kept last on the clipboard (`copy_asides`), once no send is pasting through it.
+    fn copy_once_sent(&mut self) {
+        if self.sending > 0 {
+            return;
+        }
+        if let Some(aside) = self.to_copy.take().and_then(|id| history::find(&history::dir(), &id)) {
+            clipboard::put_aside(&Rich::of(&aside));
+        }
     }
 
     fn update_config(&mut self, change: impl FnOnce(&mut Config)) {

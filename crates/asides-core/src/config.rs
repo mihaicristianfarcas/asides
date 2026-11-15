@@ -17,6 +17,7 @@ const HEADER: &str = r#"# asides settings (the asides window changes every one o
 # multilingual models use them).
 # history_days: how long asides stay in ~/.asides/history; 0 keeps them.
 # auto_update: look for a new asides every 6 hours, download it, and install it when asides quits.
+# copy_asides: put each aside on the clipboard once it's sent or saved (what was said, its screenshots).
 # annotation_detail: how much each annotation says in an aside: "compact", "standard", "detailed"
 # or "forensic".
 # [measure] color: lines and labels (#RRGGBB); units: "pt" or "px"; tolerance: 0-100 (%);
@@ -51,6 +52,8 @@ pub struct Config {
     pub auto_update: bool,
     /// Wispr Flow dictations made while the screen is frozen join the aside.
     pub wispr_flow: bool,
+    /// Puts each aside on the clipboard once it's sent or saved: what was said with its screenshots.
+    pub copy_asides: bool,
     /// How much asides puts in an aside about each annotation.
     pub annotation_detail: Detail,
     pub measure: Measure,
@@ -347,6 +350,7 @@ impl Default for Config {
             history_days: 30,
             auto_update: true,
             wispr_flow: false,
+            copy_asides: false,
             annotation_detail: Detail::default(),
             measure: Measure::default(),
             agents: Agents::default(),

@@ -30,6 +30,11 @@ pub enum Link {
         to: Option<String>,
         request: Option<String>,
     },
+    /// Puts aside `id` from the history on the clipboard: what was said with its screenshots.
+    Copy {
+        id: String,
+        request: Option<String>,
+    },
     /// Starts a new `agent` session in `dir` with aside `id` as its first message.
     NewSession {
         id: String,
@@ -102,6 +107,9 @@ impl Link {
                         q.append_pair("to", to);
                     }
                 }
+                Link::Copy { id, .. } => {
+                    q.append_pair("id", id);
+                }
                 Link::NewSession { id, agent, dir, .. } => {
                     q.append_pair("id", id);
                     q.append_pair("agent", agent.program());
@@ -162,6 +170,7 @@ impl Link {
             "live" => Some(Link::Live { request }),
             "window" => Some(Link::Window { request }),
             "send" => Some(Link::Send { id: nonempty("id")?, to: nonempty("to"), request }),
+            "copy" => Some(Link::Copy { id: nonempty("id")?, request }),
             "new-session" => Some(Link::NewSession {
                 id: nonempty("id")?,
                 agent: AgentKind::parse(&get("agent")?)?,
@@ -199,6 +208,7 @@ impl Link {
             Link::Live { .. } => "live",
             Link::Window { .. } => "window",
             Link::Send { .. } => "send",
+            Link::Copy { .. } => "copy",
             Link::NewSession { .. } => "new-session",
             Link::Download { .. } => "download",
             Link::Update { .. } => "update",
@@ -219,6 +229,7 @@ impl Link {
             | Link::Live { request }
             | Link::Window { request }
             | Link::Send { request, .. }
+            | Link::Copy { request, .. }
             | Link::NewSession { request, .. }
             | Link::Download { request, .. }
             | Link::Update { request, .. }
@@ -249,6 +260,7 @@ mod tests {
         round_trip(Link::Window { request: None });
         round_trip(Link::Send { id: "2026-10-18-221530".into(), to: Some("95393".into()), request: Some("r2".into()) });
         round_trip(Link::Send { id: "last".into(), to: None, request: None });
+        round_trip(Link::Copy { id: "2026-11-15-011500".into(), request: Some("r7".into()) });
         round_trip(Link::NewSession {
             id: "a".into(),
             agent: AgentKind::Codex,
@@ -289,6 +301,7 @@ mod tests {
         assert_eq!(Link::parse(&Url::parse("asides://nope").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://send").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://send?id=").unwrap()), None);
+        assert_eq!(Link::parse(&Url::parse("asides://copy").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://update?step=reboot").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://login").unwrap()), None);
         assert_eq!(Link::parse(&Url::parse("asides://login?open=yes").unwrap()), None);

@@ -19,12 +19,13 @@ pub enum MenuAction {
     Open,
     /// Opens asides live, or, open, switches between frozen and live.
     Live,
-    /// The last aside, as Markdown, on the clipboard.
+    /// The last aside on the clipboard: what was said with its screenshots.
     CopyLast,
     /// Turns a setting on or off.
     Listen,
     Sounds,
     Identify,
+    CopyEach,
     /// The asides window, at History or the settings.
     History,
     Settings,
@@ -48,6 +49,7 @@ pub struct Tray {
     listen: CheckMenuItem,
     sounds: CheckMenuItem,
     identify: CheckMenuItem,
+    copy_each: CheckMenuItem,
     history: MenuItem,
     settings: MenuItem,
     quit: MenuItem,
@@ -78,6 +80,7 @@ impl Tray {
         let listen = CheckMenuItem::new("Listen When asides Opens", true, config.mic_on_open, None);
         let sounds = CheckMenuItem::new("Sounds", true, config.sounds, None);
         let identify = CheckMenuItem::new("Name What's Pinned", true, config.measure.identify_elements, None);
+        let copy_each = CheckMenuItem::new("Copy Each Aside", true, config.copy_asides, None);
         let history = MenuItem::new("History…", true, None);
         // A Mac app's ⌘, and ⌘Q; Windows' tray menus show no shortcuts.
         let mac = |text: &str| Accelerator::from_str(text).ok().filter(|_| cfg!(target_os = "macos"));
@@ -94,6 +97,7 @@ impl Tray {
             &listen,
             &sounds,
             &identify,
+            &copy_each,
             &PredefinedMenuItem::separator(),
             &history,
             &settings,
@@ -127,6 +131,7 @@ impl Tray {
             listen,
             sounds,
             identify,
+            copy_each,
             history,
             settings,
             quit,
@@ -141,6 +146,7 @@ impl Tray {
             (self.listen.id(), MenuAction::Listen),
             (self.sounds.id(), MenuAction::Sounds),
             (self.identify.id(), MenuAction::Identify),
+            (self.copy_each.id(), MenuAction::CopyEach),
             (self.history.id(), MenuAction::History),
             (self.settings.id(), MenuAction::Settings),
             (self.update.id(), MenuAction::Update),
@@ -186,6 +192,7 @@ impl Tray {
         self.listen.set_checked(config.mic_on_open);
         self.sounds.set_checked(config.sounds);
         self.identify.set_checked(config.measure.identify_elements);
+        self.copy_each.set_checked(config.copy_asides);
     }
 }
 
