@@ -145,7 +145,8 @@ manual QA checklist in CONTRIBUTING.md has the full list.
 ## Working from asides
 
 The user's asides arrive in your chat as their messages. To read one again (with its screenshots'
-paths), run `asides show` (the newest) or `asides history`, or use `asides mcp`'s `get_aside`.
+paths), run `asides show` (the newest) or `asides history` (`asides history <words>` finds one), or
+use `asides mcp`'s `get_aside`.
 
 - What was said is raw Whisper output, in English or Romanian. Expect misheard words, especially
   project names (for example "Local Tatus" for "local-tts").

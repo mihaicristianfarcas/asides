@@ -16,6 +16,7 @@ use asides_core::markdown::Part;
 #[cfg(target_os = "macos")]
 use asides_core::paths::BUNDLE_ID;
 use asides_core::paths::{self, tilde};
+use asides_core::search::{self, Excerpt, Query};
 use asides_core::sessions::{self, AgentSession};
 use asides_core::state::AppState;
 use clap::{Parser, Subcommand};
@@ -78,8 +79,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List the asides in the history, newest first.
+    /// List the asides in the history, newest first; with words, those that say them all (in any
+    /// order, ignoring case and accents; "in quotes" together).
     History {
+        /// Words to look for, in what was said, the pins, where it was and where it was sent.
+        words: Vec<String>,
         /// How many.
         #[arg(short = 'n', default_value_t = 20)]
         count: usize,
@@ -190,7 +194,7 @@ fn run(cli: Cli) -> Result<()> {
         Some(Command::Open) => send(&Link::Open { request: None }),
         Some(Command::Live) => send(&Link::Live { request: None }),
         Some(Command::Sessions { json }) => list_sessions(json),
-        Some(Command::History { count, json }) => list_history(count, json),
+        Some(Command::History { words, count, json }) => list_history(&searched(&words), count, json),
         Some(Command::Show { id }) => {
             let aside = find(&id)?;
             print!("{}", absolute_message(&aside));
@@ -293,37 +297,72 @@ fn ago(at: SystemTime) -> String {
     }
 }
 
-fn list_history(count: usize, json: bool) -> Result<()> {
-    let asides: Vec<Aside> = history::list(&history::dir()).into_iter().take(count).collect();
+fn list_history(words: &str, count: usize, json: bool) -> Result<()> {
+    let query = Query::new(words);
+    // Searching, each with the line it says them in (what its row doesn't show).
+    let asides: Vec<(Aside, Option<Excerpt>)> = match query.is_empty() {
+        true => history::list(&history::dir()).into_iter().map(|a| (a, None)).collect(),
+        false => search::search(&history::dir(), &query)
+            .into_iter()
+            .map(|(aside, text)| {
+                let excerpt = query.excerpt(&text, &format!("{}\n{}", aside.record.title, sent(&aside)));
+                (aside, excerpt)
+            })
+            .collect(),
+    };
+    let asides = asides.into_iter().take(count);
     if json {
         let rows: Vec<serde_json::Value> = asides
-            .iter()
-            .map(|a| {
-                serde_json::json!({
+            .map(|(a, excerpt)| {
+                let mut row = serde_json::json!({
                     "id": a.id,
                     "created": a.created().to_rfc3339(),
                     "title": a.record.title,
                     "images": a.record.images.len(),
                     "deliveries": a.record.deliveries,
                     "dir": a.dir,
-                })
+                });
+                if !query.is_empty() {
+                    row["excerpt"] = excerpt.map(|e| e.text).into();
+                }
+                row
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
-    if asides.is_empty() {
-        println!("No asides yet. ⌃⌥Space opens asides.");
+    let mut none = true;
+    for (aside, excerpt) in asides {
+        none = false;
+        println!("{}  {}  {}  {}", aside.id, aside.created().format("%H:%M"), sent(&aside), aside.record.title);
+        if let Some(excerpt) = excerpt {
+            println!("    {}", excerpt.text);
+        }
     }
-    for aside in asides {
-        let sent = match aside.last_delivery() {
-            Some(d) if d.error.is_none() => format!("→ {}", d.to),
-            Some(d) => format!("✗ {}", d.to),
-            None => "· kept".into(),
-        };
-        println!("{}  {}  {sent}  {}", aside.id, aside.created().format("%H:%M"), aside.record.title);
+    match (none, query.is_empty()) {
+        (true, true) => println!("No asides yet. ⌃⌥Space opens asides."),
+        // A phrase is in quotes already.
+        (true, false) if words.contains('"') => println!("No aside says {}.", words.trim()),
+        (true, false) => println!("No aside says “{}”.", words.trim()),
+        _ => {}
     }
     Ok(())
+}
+
+/// What's looked for, from the command line: a word quoted with spaces in it (`"save button"`) is
+/// a phrase.
+fn searched(words: &[String]) -> String {
+    let phrase = |w: &String| w.contains(char::is_whitespace) && !w.contains('"');
+    words.iter().map(|w| if phrase(w) { format!("\"{w}\"") } else { w.clone() }).collect::<Vec<_>>().join(" ")
+}
+
+/// Where an aside last went, for a row.
+fn sent(aside: &Aside) -> String {
+    match aside.last_delivery() {
+        Some(d) if d.error.is_none() => format!("→ {}", d.to),
+        Some(d) => format!("✗ {}", d.to),
+        None => "· kept".into(),
+    }
 }
 
 fn find(id: &str) -> Result<Aside> {
@@ -617,5 +656,13 @@ mod tests {
         assert!(matches!(parse(&["open"]).unwrap().command, Some(Command::Open)));
         let Some(Command::Send { id, to }) = parse(&["send", "--to", "4242"]).unwrap().command else { panic!() };
         assert_eq!((id.as_str(), to.as_deref()), ("last", Some("4242")));
+        let Some(Command::History { words, count, .. }) =
+            parse(&["history", "save", "button", "-n", "5"]).unwrap().command
+        else {
+            panic!()
+        };
+        assert_eq!((words.clone(), count), (vec!["save".to_string(), "button".to_string()], 5));
+        assert_eq!(searched(&words), "save button");
+        assert_eq!(searched(&["save button".into(), "blue".into()]), "\"save button\" blue");
     }
 }

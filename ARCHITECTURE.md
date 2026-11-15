@@ -102,6 +102,7 @@ crates/
     sessions.rs       running sessions from ps/lsof: host app, last input, labels, folders
     deliver.rs        per-app plans for typing an aside in; new-session launch scripts
     history.rs        ~/.asides/history: records, messages, images; listing, pruning, edits
+    search.rs         searching the history: every word, any order, ignoring case and accents
     markdown.rs       what was said and made → the message, placed by time (pins by the word); checks
     rich.rs           an aside for the clipboard: its Markdown, styled paragraphs and screenshots, HTML
     link.rs           asides:// links (CLI and window → app)
@@ -129,7 +130,7 @@ crates/
     launch.rs         Windows: finding and starting an agent without a shell (npm's shims)
   asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
-    mcp.rs            asides mcp: get_aside, list_asides, measure_image
+    mcp.rs            asides mcp: get_aside, list_asides (and searching), measure_image
     measure.rs        asides measure and measure_image
     windows.rs        Windows: links to the app, type-into (a console's input), launch
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)

@@ -192,10 +192,10 @@ Run what your change touches, and say in the pull request what you tried.
   take the screenshots and the text; Terminal pastes the Markdown with their paths.
 - [ ] **Closing**: `Esc` (twice with something done) or × sends nothing; the previous app gets the
   keyboard back with no gray frame.
-- [ ] **asides window**: History actions; Edit (lines, arrows, `⌘Z`, problems by line, `⌘S`,
-  Discard); Sessions matches `asides sessions`; every setting writes `config.toml` and takes effect
-  (a key already in use names its other action); Help's clips play smoothly and loop, keys shown as
-  set; light and dark.
+- [ ] **asides window**: History actions; search (`⌘F`, `↓` to the list, `Esc` clears); Edit
+  (lines, arrows, `⌘Z`, problems by line, `⌘S`, Discard); Sessions matches `asides sessions`;
+  every setting writes `config.toml` and takes effect (a key already in use names its other
+  action); Help's clips play smoothly and loop, keys shown as set; light and dark.
 - [ ] **Keyboard**: in the window, `Tab` and `⇧Tab` reach every control, the ring only after a key
   (a click hides it), the arrows in the sidebar, lists, selects and segments, `⌘1`–`⌘6`, `⌘⌫` in
   History; frozen, a pin's number opens its card and `Tab` the next, the right-click menu and `W`'s
