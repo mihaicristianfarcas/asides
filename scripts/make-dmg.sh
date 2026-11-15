@@ -1,7 +1,7 @@
 #!/bin/bash
 # Packs a notarized, stapled asides.app into a disk image with a link to Applications, for the
 # website's download button. The app carries its own notarization ticket, so Gatekeeper accepts it
-# from the image, offline too; the image itself is a plain, unsigned container.
+# from the image, offline too; scripts/notarize-macos.sh then signs, notarizes and staples the image.
 # Usage: scripts/make-dmg.sh <asides.app> <output.dmg>
 set -euo pipefail
 
