@@ -667,6 +667,9 @@ fn check_zip(path: &Path) -> Result<(), String> {
     if archive.len() > MAX_FILES {
         return Err(format!("it holds {} files", archive.len()));
     }
+    // Each entry's name is in the zip twice, and ditto unpacks by the one this check doesn't
+    // read: both must agree, and nothing may be in the zip but not in its directory.
+    archive.validate_header_consistency().map_err(|err| format!("its headers disagree ({err})"))?;
     let mut unpacked = 0u64;
     for i in 0..archive.len() {
         let entry = archive.by_index_raw(i).map_err(|err| err.to_string())?;
@@ -1303,6 +1306,22 @@ mod tests {
             assert!(unpack(&zip, &dir.path().join("staged")).is_err(), "{entries:?}");
         }
         assert!(!dir.path().parent().unwrap().join("evil.app").exists());
+    }
+
+    #[test]
+    fn refuses_zips_whose_two_names_disagree() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "asides.app/Contents/MacOS/asides-app";
+        let zip = zip_of(dir.path(), &[(name, None)]);
+        assert!(check_zip(&zip).is_ok());
+        // The directory keeps the name; the entry's own header, which ditto reads, says another.
+        let mut bytes = fs::read(&zip).unwrap();
+        assert!(bytes.starts_with(b"PK\x03\x04"));
+        let at = 30; // the first entry's name, after its header's fixed fields
+        assert_eq!(&bytes[at..at + name.len()], name.as_bytes());
+        bytes[at..at + name.len()].copy_from_slice(b"asides.app/Contents/MacOS/evil-thing");
+        fs::write(&zip, &bytes).unwrap();
+        assert!(check_zip(&zip).unwrap_err().contains("disagree"));
     }
 
     #[test]
