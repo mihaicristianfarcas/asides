@@ -294,7 +294,7 @@ changes how a release is made builds everything too, with no secrets.
 
 | Signs | With | Secrets |
 |---|---|---|
-| macOS | Developer ID, notarized and stapled (`scripts/notarize-macos.sh`) | `MACOS_CERTIFICATE_P12` (base64), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` |
+| macOS: the app and the disk image | Developer ID, notarized and stapled (`scripts/notarize-macos.sh`) | `MACOS_CERTIFICATE_P12` (base64), `MACOS_CERTIFICATE_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` |
 | Windows: the programs, the installer and its uninstaller | Certum's open-source certificate, in its cloud, through [ssign](https://crates.io/crates/ssign) | `CERTUM_EMAIL`, `CERTUM_OTP` (the account's TOTP seed) |
 | Every file, a `.minisig` beside it | The release key (minisign), whose public half is `packaging/release-signing.pub` | `MINISIGN_SECRET_KEY` (the key file), `MINISIGN_PASSWORD` |
 

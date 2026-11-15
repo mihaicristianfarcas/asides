@@ -117,8 +117,8 @@ jobs:
           retention-days: 1
 
   # Signs the app with the Developer ID, the CLI and the overlay inside it first, has Apple notarize
-  # it, staples the ticket, and makes the zip and the disk image (scripts/notarize-macos.sh). No
-  # cargo and no build script runs here.
+  # it, staples the ticket, and makes the zip and the disk image, signed, notarized and stapled too
+  # (scripts/notarize-macos.sh). No cargo and no build script runs here.
   macos-package:
     name: macOS (sign and package)
     needs: [version, macos]
