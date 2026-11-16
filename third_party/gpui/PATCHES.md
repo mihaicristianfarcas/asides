@@ -1,9 +1,9 @@
 # GPUI 0.2.2, patched
 
 The crate as published on crates.io (its examples left out), with what asides needs of its Linux
-backends. Everything here is under `src/platform/linux/` or only reached from there: macOS and
-Windows build the same code as the published crate. Upstream's later versions moved on too far to
-take (asides' macOS and Windows code depends on 0.2.2's internals).
+backends (under `src/platform/linux/` or only reached from there), and a few changes for every
+system (All). Upstream's later versions moved on too far to take (asides' macOS and Windows code
+depends on 0.2.2's internals).
 
 ## X11 (`src/platform/linux/x11/window.rs`)
 
@@ -28,3 +28,9 @@ take (asides' macOS and Windows code depends on 0.2.2's internals).
 
 - `Window::draw_now`: draws and presents a frame at once, as the platform's frame callback would.
 - `DispatchEventResult` is public: `Window::dispatch_event` returns it (0.2.2's private type).
+- Truncated text (`truncate()`) is cut, with its ellipsis (`elements/text.rs`): a layout measured
+  without a width (a size it would like) was kept and answered every later measure, so the text ran
+  on under its clip, cut off mid-letter. Only an untruncated layout answers an untruncated measure
+  (upstream's fix, zed `b05f40c`); text that fits as shaped isn't truncated (adding each character's
+  width, without kerning, made it wider); and the ellipsis follows no space or punctuation
+  (`text_system/line_wrapper.rs`), as upstream.
