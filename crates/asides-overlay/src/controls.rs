@@ -1278,17 +1278,25 @@ pub struct Select {
     choices: Vec<Choice>,
     selected: Option<usize>,
     width: Option<f32>,
+    /// How narrow it gets, giving way to what's beside it (its menu stays as wide).
+    least: Option<f32>,
     theme: Theme,
     on_select: Option<Handler<usize>>,
 }
 
 pub fn select(id: &str, choices: Vec<Choice>, selected: Option<usize>, theme: Theme) -> Select {
-    Select { id: id.to_string().into(), choices, selected, width: None, theme, on_select: None }
+    Select { id: id.to_string().into(), choices, selected, width: None, least: None, theme, on_select: None }
 }
 
 impl Select {
     pub fn width(mut self, w: f32) -> Self {
         self.width = Some(w);
+        self
+    }
+
+    /// Narrower, down to `w`, where there's no room for its width.
+    pub fn shrinks_to(mut self, w: f32) -> Self {
+        self.least = Some(w);
         self
     }
 
@@ -1385,7 +1393,10 @@ impl RenderOnce for Select {
             .on_key_down(keys)
             .when(ring, |d| d.child(focus_ring(t, Radius::CONTROL, 2.)))
             .relative()
-            .flex_none()
+            .map(|d| match self.least {
+                Some(least) => d.flex_shrink().min_w(px(least)),
+                None => d.flex_none(),
+            })
             .h(px(Metrics::CONTROL))
             .when_some(self.width, |d, w| d.w(px(w)))
             .px(px(9.))
@@ -1847,8 +1858,9 @@ pub fn toolbar_row(leading: Option<AnyElement>, trailing: Vec<AnyElement>) -> Di
         .items_center()
         .justify_between()
         .gap(px(6.))
-        .child(div().min_w_0().flex().items_center().children(leading))
-        .child(div().flex_none().flex().items_center().gap(px(6.)).children(trailing))
+        // Short of room, the actions give way (their selects, `Select::shrinks_to`), not what leads.
+        .child(div().flex_none().flex().items_center().children(leading))
+        .child(div().flex_shrink().min_w_0().flex().items_center().gap(px(6.)).children(trailing))
 }
 
 #[cfg(test)]

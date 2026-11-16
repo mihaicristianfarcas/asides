@@ -72,8 +72,18 @@ use crate::{assets, help, native, style};
 
 /// How often the window looks at what changed (the history, the app's state, the settings).
 const TOAST: Duration = Duration::from_millis(2500);
-/// History's list of asides.
+/// History's list of asides, at first; dragged, as wide as these allow and the aside shown leaves
+/// it: the aside keeps room for its strip of actions (a new session's two selects at their
+/// narrowest). In a narrow window the list gives way first, down to its narrowest.
 const LIST: f32 = 300.0;
+const LIST_MIN: f32 = 240.0;
+const LIST_MAX: f32 = 560.0;
+const ASIDE_MIN: f32 = 500.0;
+/// The sidebar, dragged (`Metrics::SIDEBAR` at first).
+const SIDEBAR_MIN: f32 = 180.0;
+const SIDEBAR_MAX: f32 = 280.0;
+/// How wide the strip a divider is dragged by is, over the line between two panels.
+const DIVIDER_GRIP: f32 = 6.0;
 /// What edited Markdown can't be, at most, listed under it.
 const PROBLEMS_SHOWN: usize = 4;
 /// Setup's column, and its How it works step's (the clip beside its steps).
@@ -337,6 +347,147 @@ enum Destination {
 /// The folders New session in… offers, at most.
 const NEW_SESSION_FOLDERS: usize = 5;
 
+/// The lines between the panels that can be dragged: the sidebar's edge, History's list's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Divider {
+    Sidebar,
+    List,
+}
+
+/// A divider being dragged (GPUI's drag, which follows the pointer out of the window and ends as
+/// it's let go anywhere).
+struct Dragged;
+
+/// How wide the panels were dragged, and where the window was, kept for the next time it opens
+/// (`window.json`, beside `state.json`; only the window reads and writes it).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Layout {
+    sidebar: f32,
+    list: f32,
+    window: Option<Placement>,
+}
+
+impl Default for Layout {
+    fn default() -> Layout {
+        Layout { sidebar: Metrics::SIDEBAR, list: LIST, window: None }
+    }
+}
+
+/// Where the window was and how big (GPUI's bounds on its display, as Zed keeps them, a frame drawn
+/// by the window not counted), on which display, and whether it filled it.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Placement {
+    display: Option<String>,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    #[serde(default)]
+    shown: Shown,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Shown {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+impl Placement {
+    /// Whether a window there (on a Mac, from its display's top left) still shows its title bar
+    /// on the display, which may be smaller since. Elsewhere GPUI (Windows) or the window manager
+    /// (Linux) keeps it on screen.
+    fn shows(at: gpui::Point<gpui::Pixels>, size: gpui::Size<gpui::Pixels>, screen: gpui::Size<gpui::Pixels>) -> bool {
+        if !cfg!(target_os = "macos") {
+            return true;
+        }
+        let (x, y, w) = (f32::from(at.x), f32::from(at.y), f32::from(size.width));
+        let (sw, sh) = (f32::from(screen.width), f32::from(screen.height));
+        y >= 0. && y <= sh - 44. && x + w >= 100. && x <= sw - 100.
+    }
+
+    fn of(window: &Window, cx: &App) -> Placement {
+        let (bounds, shown) = match window.inner_window_bounds() {
+            WindowBounds::Windowed(b) => (b, Shown::Windowed),
+            WindowBounds::Maximized(b) => (b, Shown::Maximized),
+            WindowBounds::Fullscreen(b) => (b, Shown::Fullscreen),
+        };
+        Placement {
+            display: window.display(cx).and_then(|d| d.uuid().ok()).map(|u| u.to_string()),
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            shown,
+        }
+    }
+
+    /// Where the window opens again: there, on that display, no smaller than `min` nor larger
+    /// than the display; that display gone (or not known), as big, in the middle of the main one.
+    fn restore(&self, min: gpui::Size<gpui::Pixels>, cx: &App) -> (WindowBounds, Option<gpui::DisplayId>) {
+        let display = self
+            .display
+            .as_ref()
+            .and_then(|saved| cx.displays().into_iter().find(|d| d.uuid().is_ok_and(|u| u.to_string() == *saved)));
+        let room = display.clone().or_else(|| cx.primary_display()).map(|d| d.bounds());
+        let fit = |wanted: f32, least: gpui::Pixels, most: Option<gpui::Pixels>| {
+            let least = f32::from(least);
+            px(wanted.min(most.map_or(wanted, f32::from)).max(least))
+        };
+        let size = size(
+            fit(self.width, min.width, room.map(|r| r.size.width)),
+            fit(self.height, min.height, room.map(|r| r.size.height)),
+        );
+        let bounds = match (&display, room) {
+            (Some(_), Some(screen)) if !Placement::shows(point(px(self.x), px(self.y)), size, screen.size) => {
+                // Whole points: a half point (as AppKit rounds it) made it a point taller.
+                let middle = |room: gpui::Pixels, length: gpui::Pixels| px((f32::from(room - length) / 2.).round());
+                Bounds::new(point(middle(screen.size.width, size.width), middle(screen.size.height, size.height)), size)
+            }
+            (Some(_), _) => Bounds::new(point(px(self.x), px(self.y)), size),
+            (None, Some(screen)) => Bounds::centered_at(screen.center(), size),
+            (None, None) => Bounds::centered(None, size, cx),
+        };
+        let bounds = match self.shown {
+            Shown::Windowed => WindowBounds::Windowed(bounds),
+            Shown::Maximized => WindowBounds::Maximized(bounds),
+            Shown::Fullscreen => WindowBounds::Fullscreen(bounds),
+        };
+        (bounds, display.map(|d| d.id()))
+    }
+}
+
+impl Layout {
+    fn path() -> PathBuf {
+        paths::support_dir().join("window.json")
+    }
+
+    /// As last kept; as designed while capturing the pages (their pictures are the docs').
+    fn read() -> Layout {
+        if std::env::var_os("ASIDES_WINDOW_CAPTURE").is_some() {
+            return Layout::default();
+        }
+        std::fs::read_to_string(Layout::path())
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        if std::env::var_os("ASIDES_WINDOW_CAPTURE").is_some() {
+            return Ok(());
+        }
+        let path = Layout::path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string(self)?)
+    }
+}
+
 pub struct AsidesWindow {
     page: Page,
     asides: Vec<Aside>,
@@ -370,6 +521,14 @@ pub struct AsidesWindow {
     /// The glass pills behind the page and the aside selected, sliding to the next.
     nav_glide: Glide,
     list_glide: Glide,
+    /// How wide the sidebar and History's list are (each as dragged, kept within what the window
+    /// leaves when drawn), and the divider pressed: where the pointer and the panel's edge were.
+    /// Dragged, the widths are saved as it's let go.
+    layout: Layout,
+    pressed: Option<(Divider, f32, f32)>,
+    resized: bool,
+    /// The window moved or resized: where it is is kept a moment after (once it's still).
+    placing: bool,
     /// Where History's list, the aside shown and a settings page are scrolled to (their bars).
     list_scroll: ScrollHandle,
     aside_scroll: ScrollHandle,
@@ -493,19 +652,28 @@ pub fn run() {
         });
         // On a small screen, it fits in what the taskbar or the Dock and menu bar leave, a little
         // inset (helio's; GPUI 0.2.2 doesn't say what they leave: room for them).
+        // Where it was last, as big, else in the middle of the main display.
         let (wanted, min) = (size(px(1240.), px(780.)), size(px(920.), px(600.)));
-        let bounds = match cx.primary_display().map(|d| d.bounds()) {
-            Some(screen) => Bounds::centered_at(
-                screen.center(),
-                size(
-                    wanted.width.min(screen.size.width - px(24.)).max(min.width),
-                    wanted.height.min(screen.size.height - px(96.)).max(min.height),
-                ),
-            ),
-            None => Bounds::centered(None, wanted, cx),
+        let layout = Layout::read();
+        let (bounds, display_id) = match &layout.window {
+            Some(placement) => placement.restore(min, cx),
+            None => {
+                let bounds = match cx.primary_display().map(|d| d.bounds()) {
+                    Some(screen) => Bounds::centered_at(
+                        screen.center(),
+                        size(
+                            wanted.width.min(screen.size.width - px(24.)).max(min.width),
+                            wanted.height.min(screen.size.height - px(96.)).max(min.height),
+                        ),
+                    ),
+                    None => Bounds::centered(None, wanted, cx),
+                };
+                (WindowBounds::Windowed(bounds), None)
+            }
         };
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(bounds),
+            display_id,
             titlebar: Some(TitlebarOptions {
                 title: Some("asides".into()),
                 appears_transparent: true,
@@ -534,8 +702,16 @@ pub fn run() {
                 // What had the keyboard went (a page left, a row gone): the window takes it, for its
                 // keys to work.
                 cx.on_focus_lost(window, |this: &mut AsidesWindow, window, _| window.focus(&this.focus)).detach();
+                // Where it is, kept as it moves and resizes, and as it closes.
+                cx.observe_window_bounds(window, |this: &mut AsidesWindow, window, cx| this.placed(window, cx))
+                    .detach();
+                let this = cx.weak_entity();
+                window.on_window_should_close(cx, move |window, cx| {
+                    let _ = this.update(cx, |this, cx| this.keep_placement(window, cx));
+                    true
+                });
                 let glides = (Glide::new(cx), Glide::new(cx));
-                AsidesWindow::new(theme, focus, glides)
+                AsidesWindow::new(theme, focus, glides, layout)
             })
         });
         let Ok(handle) = opened else {
@@ -683,7 +859,7 @@ fn capture_pages(handle: gpui::WindowHandle<AsidesWindow>, dir: PathBuf, cx: &mu
 }
 
 impl AsidesWindow {
-    fn new(theme: Theme, focus: FocusHandle, glides: (Glide, Glide)) -> AsidesWindow {
+    fn new(theme: Theme, focus: FocusHandle, glides: (Glide, Glide), layout: Layout) -> AsidesWindow {
         let mut this = AsidesWindow {
             page: Page::History,
             asides: Vec::new(),
@@ -705,6 +881,10 @@ impl AsidesWindow {
             recorded_by_key: false,
             nav_glide: glides.0,
             list_glide: glides.1,
+            layout,
+            pressed: None,
+            resized: false,
+            placing: false,
             list_scroll: ScrollHandle::new(),
             aside_scroll: ScrollHandle::new(),
             page_scroll: ScrollHandle::new(),
@@ -941,6 +1121,100 @@ impl AsidesWindow {
                 self.config_read = std::fs::metadata(paths::config_path()).and_then(|m| m.modified()).ok();
             }
             Err(err) => self.toast(format!("Could not save the settings: {err}")),
+        }
+    }
+
+    /// The sidebar's width, as drawn.
+    fn sidebar_width(&self) -> f32 {
+        self.layout.sidebar.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
+    }
+
+    /// History's list's width, as drawn: as dragged, unless the window is too narrow for it and
+    /// the aside shown.
+    fn list_width(&self) -> f32 {
+        self.layout.list.clamp(LIST_MIN, self.list_most())
+    }
+
+    fn list_most(&self) -> f32 {
+        (self.width - self.sidebar_width() - ASIDE_MIN).clamp(LIST_MIN, LIST_MAX)
+    }
+
+    /// The divider on the right edge of a panel `width` wide (from the left of what it's in):
+    /// dragged, the panel follows the pointer; double-clicked, it's as wide as at first.
+    fn divider(&self, which: Divider, width: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let id = match which {
+            Divider::Sidebar => "sidebar-divider",
+            Divider::List => "list-divider",
+        };
+        div()
+            .id(id)
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(width - DIVIDER_GRIP / 2.))
+            .w(px(DIVIDER_GRIP))
+            // Over the rows beside it: only the divider is under the pointer there.
+            .occlude()
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &gpui::MouseDownEvent, _, cx| {
+                    // The last drag kept first, if the window wasn't drawn since it ended.
+                    if std::mem::take(&mut this.resized) {
+                        this.save_layout();
+                    }
+                    this.pressed = Some((which, f32::from(e.position.x), width));
+                    if e.click_count == 2 {
+                        let at_first = Layout::default();
+                        match which {
+                            Divider::Sidebar => this.layout.sidebar = at_first.sidebar,
+                            Divider::List => this.layout.list = at_first.list,
+                        }
+                        this.save_layout();
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_drag(Dragged, |_, _, _, cx| cx.new(|_| gpui::Empty))
+    }
+
+    /// The divider pressed follows the pointer, within what the window allows.
+    fn drag_divider(&mut self, x: f32, cx: &mut Context<Self>) {
+        let Some((which, from, width)) = self.pressed else { return };
+        let wanted = width + x - from;
+        match which {
+            Divider::Sidebar => self.layout.sidebar = wanted.clamp(SIDEBAR_MIN, SIDEBAR_MAX),
+            Divider::List => self.layout.list = wanted.clamp(LIST_MIN, self.list_most()),
+        }
+        self.resized = true;
+        cx.notify();
+    }
+
+    /// The window moved or resized: where it is is kept once it's been still a moment (a drag or
+    /// a resize says so on every step: it's written once, after).
+    fn placed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.placing, true) {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            let _ = this.update_in(cx, |this, window, cx| this.keep_placement(window, cx));
+        })
+        .detach();
+    }
+
+    fn keep_placement(&mut self, window: &Window, cx: &App) {
+        self.placing = false;
+        let placement = Placement::of(window, cx);
+        if self.layout.window.as_ref() != Some(&placement) {
+            self.layout.window = Some(placement);
+            self.save_layout();
+        }
+    }
+
+    fn save_layout(&mut self) {
+        if let Err(err) = self.layout.save() {
+            self.toast(format!("Could not keep the window's size and panels: {err}"));
         }
     }
 
@@ -1466,6 +1740,12 @@ impl Render for AsidesWindow {
         controls::scroll_areas([self.page_scroll.clone(), self.list_scroll.clone(), self.aside_scroll.clone()]);
         self.clear_toast_when_due(cx);
         self.redraw_when_ago_changes(cx);
+        // A divider let go (GPUI draws the window again as a drag ends): the widths are kept.
+        if self.resized && !cx.has_active_drag() {
+            self.resized = false;
+            self.pressed = None;
+            self.save_layout();
+        }
         if std::mem::take(&mut self.edit_at_first)
             && let Some(id) = self.selected.clone()
         {
@@ -1489,6 +1769,7 @@ impl Render for AsidesWindow {
         let shown = gpui::ElementId::Name(format!("page-{}-{step}", self.page as usize).into());
         let content = fade_in(div().size_full().flex().flex_col().child(content), shown, 0.);
         let sidebar = (self.page != Page::Setup).then(|| self.sidebar(cx));
+        let sidebar_divider = sidebar.is_some().then(|| self.divider(Divider::Sidebar, self.sidebar_width(), cx));
         let surface = if self.page == Page::Setup { t.reading } else { t.background };
         let body = div()
             .track_focus(&self.focus)
@@ -1508,8 +1789,14 @@ impl Render for AsidesWindow {
                     this.save_draft(&id, cx);
                 }
             }))
+            .on_drag_move(cx.listener(|this, e: &gpui::DragMoveEvent<Dragged>, _, cx| {
+                this.drag_divider(f32::from(e.event.position.x), cx)
+            }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
-            .on_action(|_: &CloseWindow, window, _| window.remove_window())
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                this.keep_placement(window, cx);
+                window.remove_window()
+            }))
             // Recording, the next key pressed is it. In setup, Return with nothing else to press
             // goes on. In History, ⌘⌫ deletes the aside shown (not while it's edited: it's text).
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
@@ -1567,6 +1854,7 @@ impl Render for AsidesWindow {
             // Each page has its strip along the top (`page_strip`); on Windows the caption buttons
             // are over it, and it moves the window.
             .child(div().flex_1().min_w_0().h_full().flex().flex_col().bg(surface).child(content))
+            .children(sidebar_divider)
             .children(caption_buttons(window, t))
             .children(self.toast.as_ref().map(|(text, _)| {
                 div().absolute().bottom(px(18.)).left_0().right_0().flex().justify_center().child(fade_in(
@@ -1661,7 +1949,7 @@ impl AsidesWindow {
         let selected = (current != Page::WhatsNew).then_some(current as usize);
         div()
             .flex_none()
-            .w(px(Metrics::SIDEBAR))
+            .w(px(self.sidebar_width()))
             .h_full()
             .flex()
             .flex_col()
@@ -1957,6 +2245,8 @@ impl AsidesWindow {
             }
             None => None,
         };
+        let list_width = self.list_width();
+        let divider = self.divider(Divider::List, list_width, cx);
         let kept = match (searching, self.config.history_days) {
             (true, _) => format!("{} found", listed.len()),
             (false, 0) => "kept always".to_string(),
@@ -1964,11 +2254,12 @@ impl AsidesWindow {
         };
         div()
             .size_full()
+            .relative()
             .flex()
             .child(
                 div()
                     .flex_none()
-                    .w(px(LIST))
+                    .w(px(list_width))
                     .h_full()
                     .flex()
                     .flex_col()
@@ -1981,7 +2272,7 @@ impl AsidesWindow {
                             div()
                                 .pl(px(2.))
                                 .flex()
-                                .items_baseline()
+                                .items_center()
                                 .gap(px(8.))
                                 .child(
                                     div().text_size(px(Type::TITLE)).font_weight(FontWeight::SEMIBOLD).child("History"),
@@ -2022,6 +2313,7 @@ impl AsidesWindow {
                     .when(cfg!(not(target_os = "macos")), |d| d.child(page_strip()))
                     .children(detail),
             )
+            .child(divider)
             .into_any_element()
     }
 
@@ -2167,6 +2459,7 @@ impl AsidesWindow {
             actions.push(
                 select("new-agent", names, picked, t)
                     .width(130.)
+                    .shrinks_to(84.)
                     .on_select(move |i, _, cx| {
                         let agent = agents[i];
                         let _ = this.update(cx, |this, cx| {
@@ -2181,6 +2474,7 @@ impl AsidesWindow {
         actions.push(
             select("send-to", choices, chosen, t)
                 .width(240.)
+                .shrinks_to(110.)
                 .on_select(move |i, _, cx| {
                     let this = this.clone();
                     if i != choose_folder {
@@ -2287,7 +2581,7 @@ impl AsidesWindow {
             deliveries.push(status(format!("Edited at {}", history_time(ms)), t.tertiary));
         }
         // The reading column: the window less the sidebar, the list and the margins.
-        let column = (self.width - Metrics::SIDEBAR - LIST - 58.).clamp(200., Metrics::FORM + 60.);
+        let column = (self.width - self.sidebar_width() - self.list_width() - 58.).clamp(200., Metrics::FORM + 60.);
         let body = aside_body(t, aside, column);
         let unsaved = self.unsaved(aside, cx).is_some();
         let leading = self.mode_switch(aside, false, unsaved, cx);
@@ -2587,7 +2881,7 @@ impl AsidesWindow {
     /// tools, live and frozen, every key, and what's left after.
     fn help(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
-        let width = (self.width - Metrics::SIDEBAR - 56.).clamp(320., Metrics::FORM + 60.);
+        let width = (self.width - self.sidebar_width() - 56.).clamp(320., Metrics::FORM + 60.);
         let open = pretty_shortcut(&self.config.shortcuts.asides);
         let live = pretty_shortcut(&self.config.shortcuts.freeze);
         let k = |name: &str| self.key_label(name);
@@ -4803,4 +5097,42 @@ fn png_size(path: &Path) -> Option<(u32, u32)> {
 
 fn history_time(ms: u64) -> String {
     Local.timestamp_millis_opt(ms as i64).single().map(|t| t.format("%H:%M").to_string()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_reads_what_it_wrote_and_older_files() {
+        let placement = Placement {
+            display: Some("37d8832a-2d66-02ca-b9f7-8f30a301b230".into()),
+            x: 60.,
+            y: 90.,
+            width: 1000.,
+            height: 640.,
+            shown: Shown::Maximized,
+        };
+        let layout = Layout { sidebar: 240., list: 410., window: Some(placement) };
+        let text = serde_json::to_string(&layout).unwrap();
+        assert_eq!(serde_json::from_str::<Layout>(&text).unwrap(), layout);
+        // Only the panels (before the window was kept), or nothing: the rest as at first.
+        let panels: Layout = serde_json::from_str(r#"{"sidebar": 200}"#).unwrap();
+        assert_eq!(panels, Layout { sidebar: 200., ..Layout::default() });
+        let placed: Layout =
+            serde_json::from_str(r#"{"window": {"display": null, "x": 1, "y": 2, "width": 3, "height": 4}}"#).unwrap();
+        assert_eq!(placed.window.map(|p| p.shown), Some(Shown::Windowed));
+    }
+
+    #[test]
+    fn a_window_off_its_display_is_not_where_it_was() {
+        let (screen, size) = (size(px(1512.), px(945.)), size(px(1000.), px(640.)));
+        let shows = |x: f32, y: f32| Placement::shows(point(px(x), px(y)), size, screen);
+        assert!(shows(60., 90.));
+        // Its title bar along the bottom, or a sliver at either side: still there.
+        assert!(shows(-850., 900.) && shows(1400., 0.));
+        if cfg!(target_os = "macos") {
+            assert!(!shows(4000., 300.) && !shows(100., 940.) && !shows(100., -20.) && !shows(-950., 90.));
+        }
+    }
 }
