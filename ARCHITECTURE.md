@@ -355,6 +355,7 @@ Break these only on purpose, and update this list.
 | `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
 | `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, opening at login, setup |
+| `…/asides/window.json` | window | how wide its sidebar and History's list were dragged, where it was and how big (its display, maximized or full screen) |
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |
 | `$TMPDIR/asides-sessions/*.sh` | app | new-session launch scripts (delete themselves) |

@@ -310,7 +310,8 @@ use `asides mcp`'s `get_aside`.
   doesn't blur once linked with the macOS 26 SDK (releases had 15.5): what's behind showed sharp in
   local builds. `native::blur` sets `underWindowBackground`, as helio does.
 - `truncate()` showed no ellipsis: GPUI kept a text layout measured without a width (patched,
-  `PATCHES.md`).
+  `PATCHES.md`). A toolbar's actions shrink only if their row lets them: `min_w_0`, and
+  `Select::shrinks_to`.
 
 ### Capture and measuring
 

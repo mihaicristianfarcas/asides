@@ -108,7 +108,8 @@ Open it from the menu bar or with `asides`. While it's open it's in the Dock and
 closes it, `⌘Q` quits asides. It all works from the keyboard: `Tab` and `⇧Tab` go through what can
 be clicked (`Space` or `⏎` presses it), the arrow keys move in the sidebar, lists, menus and
 choices, `⌘1`–`⌘6` open History, Sessions, General, Keys, Voice and Pins, `⌘F` searches History,
-and `⌘⌫` in History deletes the aside shown.
+and `⌘⌫` in History deletes the aside shown. Drag the line beside the sidebar or History's list to
+widen it (double-click it for its first width); the window opens again where you left it, as big.
 
 - **History**: every aside, and whether it was sent (to which session) or only saved. What was
   said with its pins' numbers, the screenshots and each pin. Send it again, copy it (with its
