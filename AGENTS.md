@@ -306,7 +306,9 @@ use `asides mcp`'s `get_aside`.
   window; its `maskImage` keeps it to the pill's shapes (`native::set_glass`, again when the window
   resizes). No GPUI shadows on glass: they fill under the element too, and turned it near black.
   On a frozen screen, surfaces draw a blurred copy of the freeze (`glass.rs`). `screencapture -l`
-  of a blurred window shows gray behind it: capture its rect (`-R`).
+  of a blurred window shows gray behind it: capture its rect (`-R`). GPUI's material, `selection`,
+  doesn't blur once linked with the macOS 26 SDK (releases had 15.5): what's behind showed sharp in
+  local builds. `native::blur` sets `underWindowBackground`, as helio does.
 - `truncate()` showed no ellipsis: GPUI kept a text layout measured without a width (patched,
   `PATCHES.md`).
 

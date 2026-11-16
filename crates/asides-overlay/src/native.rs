@@ -14,8 +14,8 @@ use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSApplicationPresentationOptions,
     NSBezierPath, NSColor, NSEvent, NSEventType, NSImage, NSModalResponse, NSModalResponseOK, NSOpenPanel, NSPanel,
-    NSRunningApplication, NSScreen, NSScreenSaverWindowLevel, NSView, NSVisualEffectView, NSWindow,
-    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSRunningApplication, NSScreen, NSScreenSaverWindowLevel, NSView, NSVisualEffectMaterial, NSVisualEffectView,
+    NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -260,11 +260,7 @@ pub fn frame(pointer: usize) -> Option<PtRect> {
 /// points, from its top left; their radius and how much shows), so the window stays clear around
 /// them.
 pub fn set_glass(pointer: usize, shapes: &[(PtRect, f64, f64)]) {
-    let Some(v) = view(pointer) else { return };
-    // GPUI's view and the blur are both in the window's content view.
-    let Some(content) = v.window().and_then(|w| w.contentView()) else { return };
-    let subviews = content.subviews();
-    let Some(effect) = subviews.iter().find_map(|s| s.downcast::<NSVisualEffectView>().ok()) else { return };
+    let Some(effect) = view(pointer).and_then(blur) else { return };
     let shapes = shapes.to_vec();
     let draw = RcBlock::new(move |_: NSRect| {
         for (r, radius, alpha) in &shapes {
@@ -276,6 +272,20 @@ pub fn set_glass(pointer: usize, shapes: &[(PtRect, f64, f64)]) {
     });
     let mask = NSImage::imageWithSize_flipped_drawingHandler(effect.bounds().size, true, &draw);
     effect.setMaskImage(Some(&mask));
+}
+
+/// The blur GPUI puts under a window's view (`WindowBackgroundAppearance::Blurred`: an
+/// `NSVisualEffectView` beside it in the window's content view), in a material that blurs. GPUI's,
+/// `selection`, no longer blurs what's behind once asides is linked with the macOS 26 SDK or later:
+/// it showed sharp through the glass's tints (releases built with the 15.5 SDK still blurred).
+/// `underWindowBackground` blurs with every SDK, the same gray (as helio measured it).
+fn blur(v: &NSView) -> Option<Retained<NSVisualEffectView>> {
+    let content = v.window().and_then(|w| w.contentView())?;
+    let effect = content.subviews().iter().find_map(|s| s.downcast::<NSVisualEffectView>().ok())?;
+    if effect.material() != NSVisualEffectMaterial::UnderWindowBackground {
+        effect.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
+    }
+    Some(effect)
 }
 
 /// Moves the window, the same size: nothing to draw again.
@@ -529,19 +539,24 @@ pub fn monitor_keys() {
     std::mem::forget(monitor);
 }
 
-/// The asides window's glass: GPUI puts an `NSVisualEffectView` under its view, blurring the
-/// whole window.
 /// Linux's: a Mac's windows have their title bars from AppKit.
 pub fn draws_its_title_bar(_window: &gpui::Window) -> bool {
     false
 }
 
+/// The asides window's glass: GPUI puts an `NSVisualEffectView` under its view, blurring the
+/// whole window.
 pub fn window_glass() -> gpui::WindowBackgroundAppearance {
     gpui::WindowBackgroundAppearance::Blurred
 }
 
-/// Once the asides window is open: nothing more on macOS (Windows sets its acrylic).
-pub fn dress(_window: &Window) {}
+/// Once the asides window is open: its glass in a material that blurs (`blur`; Windows sets its
+/// acrylic).
+pub fn dress(window: &Window) {
+    if let Some(v) = view(view_pointer(window)) {
+        blur(v);
+    }
+}
 
 /// Windows' caption buttons' font: a Mac has its traffic lights.
 pub fn caption_font() -> &'static str {
