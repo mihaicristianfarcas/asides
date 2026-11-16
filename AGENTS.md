@@ -307,6 +307,8 @@ use `asides mcp`'s `get_aside`.
   resizes). No GPUI shadows on glass: they fill under the element too, and turned it near black.
   On a frozen screen, surfaces draw a blurred copy of the freeze (`glass.rs`). `screencapture -l`
   of a blurred window shows gray behind it: capture its rect (`-R`).
+- `truncate()` showed no ellipsis: GPUI kept a text layout measured without a width (patched,
+  `PATCHES.md`).
 
 ### Capture and measuring
 

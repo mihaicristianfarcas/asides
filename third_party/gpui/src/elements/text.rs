@@ -316,6 +316,7 @@ struct TextLayoutInner {
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
+    truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
 }
@@ -334,7 +335,7 @@ impl TextLayout {
             .line_height
             .to_pixels(font_size.into(), window.rem_size());
 
-        let mut runs = if let Some(runs) = runs {
+        let runs = if let Some(runs) = runs {
             runs
         } else {
             vec![text_style.to_run(text.len())]
@@ -370,23 +371,46 @@ impl TextLayout {
                         (None, "".into())
                     };
 
+                // asides: a layout measured without a width to truncate to (an intrinsic size)
+                // was kept and answered every later measure, so truncated text was never cut and
+                // ran under its clip with no ellipsis. Only an untruncated layout is reused for an
+                // untruncated measure (upstream's fix, zed b05f40c).
                 if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && text_layout.size.is_some()
+                    && let Some(size) = text_layout.size
                     && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
+                    && truncate_width.is_none()
+                    && text_layout.truncate_width.is_none()
                 {
-                    return text_layout.size.unwrap();
+                    return size;
                 }
 
+                // Each measure truncates the whole text with its own runs (truncating shortens
+                // them).
+                let mut runs = runs.clone();
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let text = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
+                let text = match truncate_width {
+                    // Truncating sums each character's advance, wider than the shaped line (no
+                    // kerning): text that fits as shaped isn't truncated.
+                    Some(truncate_width)
+                        if text_style.line_clamp.is_none()
+                            && window
+                                .text_system()
+                                .shape_text(text.clone(), font_size, &runs, None, None)
+                                .is_ok_and(|lines| {
+                                    lines
+                                        .iter()
+                                        .all(|line| line.size(line_height).width <= truncate_width)
+                                }) =>
+                    {
+                        text.clone()
+                    }
+                    Some(truncate_width) => line_wrapper.truncate_line(
                         text.clone(),
                         truncate_width,
                         &truncation_suffix,
                         &mut runs,
-                    )
-                } else {
-                    text.clone()
+                    ),
+                    None => text.clone(),
                 };
                 let len = text.len();
 
@@ -406,6 +430,7 @@ impl TextLayout {
                         len: 0,
                         line_height,
                         wrap_width,
+                        truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
                     });
@@ -424,6 +449,7 @@ impl TextLayout {
                     len,
                     line_height,
                     wrap_width,
+                    truncate_width,
                     size: Some(size),
                     bounds: None,
                 });

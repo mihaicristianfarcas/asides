@@ -152,8 +152,11 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let result =
-                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+                // asides: no space or punctuation before the ellipsis ("how…", not "how …"),
+                // as upstream.
+                let kept = line[..truncate_ix]
+                    .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
+                let result = SharedString::from(format!("{kept}{truncation_suffix}"));
                 update_runs_after_truncation(&result, truncation_suffix, runs);
 
                 return result;
