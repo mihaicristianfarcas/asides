@@ -54,10 +54,12 @@ set_config languages '["en", "ro"]'
 set_config annotation_detail '"standard"'
 set_config mic_on_open 'false'
 set_config wispr_flow 'false'
-# Measuring is checked in points, whatever the user's [measure] units.
+# Measuring is checked in points and at the default tolerance, whatever the user's [measure] units
+# and tolerance (the drawn card is 12/255 from white: at 5% its edge isn't one).
 /usr/bin/python3 -I -c 'import re, sys
 text = open(sys.argv[1]).read()
-open(sys.argv[1], "w").write(re.sub(r"(?m)^units = .*$", "units = \"pt\"", text))' "$CONFIG"
+text = re.sub(r"(?m)^units = .*$", "units = \"pt\"", text)
+open(sys.argv[1], "w").write(re.sub(r"(?m)^tolerance = .*\n", "", text))' "$CONFIG"
 
 pass() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31m✗\033[0m %s\n' "$1"; exit 1; }
@@ -354,7 +356,7 @@ MCP=$(printf '%s\n' \
     "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"measure_image\",\"arguments\":{\"path\":\"$SHOT\",\"area\":{\"x\":100,\"y\":320,\"width\":240,\"height\":100}}}}" \
     | "$CLI" mcp)
 check "it introduces itself" grep -q '"serverInfo":{"name":"asides"' <<<"$MCP"
-check "three read-only tools" test "$(grep -o '"readOnlyHint":true' <<<"$MCP" | wc -l | tr -d ' ')" = 3
+check "four read-only tools" test "$(grep -o '"readOnlyHint":true' <<<"$MCP" | wc -l | tr -d ' ')" = 4
 check "list_asides lists the history" grep -q 'Butonul de salvare' <<<"$MCP"
 check "list_asides finds an aside by its words" grep -q 'Butonul de salvare' <<<"$(grep '"id":6' <<<"$MCP")"
 check "get_aside sends the screenshots inline" grep -q '"type":"image"' <<<"$MCP"
