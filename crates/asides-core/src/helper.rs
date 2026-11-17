@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentKind;
 use crate::config::OverlayKeys;
-use crate::inspect::{Detail, Earlier, Element, PtRect, Screen, Spot, Units};
+use crate::inspect::{Annotation, Detail, Earlier, Element, PtRect, Screen, Spot, Units};
 use crate::overlay::{Saved, Script};
 
 pub const SPEC: &str = "session.json";
@@ -197,6 +197,38 @@ pub struct SpecScreen {
     pub menu_bar: f64,
 }
 
+/// A pin's part of the screen, recorded as a clip (whatever shows there, asides' own windows left
+/// out): the pin (its annotation's key), its display, and where, in global points (y down).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClipArea {
+    pub annotation: u32,
+    pub display: u32,
+    pub rect: PtRect,
+}
+
+/// How much around an element or a drawing a clip of its pin shows (a dragged area is recorded as
+/// dragged), in points.
+pub const CLIP_ROOM: f64 = 16.0;
+
+impl ClipArea {
+    /// Pin `a`'s part of `screen` for a clip of it: its area as dragged, or its drawing or the
+    /// element it's on with [`CLIP_ROOM`] around them, inside the screen. `None` for a pin on a
+    /// point.
+    pub fn of(a: &Annotation, screen: &SpecScreen) -> Option<ClipArea> {
+        let (r, room) = (a.region()?, if a.area.is_some() { 0.0 } else { CLIP_ROOM });
+        let (left, top) = ((r.x - room).max(0.0), (r.y - room).max(0.0));
+        let (right, bottom) =
+            ((r.right() + room).min(screen.frame.width), (r.bottom() + room).min(screen.frame.height));
+        let (x, y) = (screen.origin.0 + left, screen.origin.1 + top);
+        let rect = PtRect::new(x, y, right - left, bottom - top);
+        (rect.width >= 1.0 && rect.height >= 1.0).then_some(ClipArea {
+            annotation: a.key,
+            display: screen.display,
+            rect,
+        })
+    }
+}
+
 /// From the overlay to the app.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -224,9 +256,13 @@ pub enum Event {
     Freeze,
     /// Back to the live screen (give the keyboard back to the app that had it).
     Live,
-    /// Record what the app in front shows from now on (a clip, `asides_core::motion`), or stop:
-    /// answered with `Command::Clip`.
-    Clip { on: bool },
+    /// Record what the app in front shows from now on (a clip, `asides_core::motion`), or only
+    /// what's in a pin's area, or stop: answered with `Command::Clip`.
+    Clip {
+        on: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<ClipArea>,
+    },
     /// The user picked where the aside goes.
     Target { target: Target },
     /// The user moved the pill (remembered for next time).
@@ -371,7 +407,39 @@ mod tests {
             line(&Command::Open { dir: "/tmp/asides-overlay-1-0".into() }),
             r#"{"type":"open","dir":"/tmp/asides-overlay-1-0"}"#
         );
-        assert_eq!(line(&Event::Clip { on: true }), r#"{"type":"clip","on":true}"#);
+        assert_eq!(line(&Event::Clip { on: true, area: None }), r#"{"type":"clip","on":true}"#);
+        let area = ClipArea { annotation: 2, display: 1, rect: PtRect::new(10.0, 20.0, 300.0, 40.0) };
+        let event: Event = serde_json::from_str(&line(&Event::Clip { on: true, area: Some(area) })).unwrap();
+        assert_eq!(event, Event::Clip { on: true, area: Some(area) });
+    }
+
+    #[test]
+    fn a_clip_of_a_pin_records_its_part_of_the_screen() {
+        let screen = SpecScreen {
+            display: 3,
+            screen: Screen { name: None, width: 1000.0, height: 600.0, scale: 2.0 },
+            origin: (1440.0, 0.0),
+            frame: PtRect::new(1440.0, 0.0, 1000.0, 600.0),
+            pixels: String::new(),
+            width: 2000,
+            height: 1200,
+            place: None,
+            menu_bar: 0.0,
+        };
+        let pin = |area: Option<PtRect>, frame: Option<PtRect>| Annotation {
+            key: 4,
+            area,
+            element: frame.map(|frame| Element { frame: Some(frame), ..Element::default() }),
+            ..Annotation::default()
+        };
+        // A dragged area as dragged, in global points.
+        let area = ClipArea::of(&pin(Some(PtRect::new(100.0, 50.0, 300.0, 40.0)), None), &screen);
+        assert_eq!(area, Some(ClipArea { annotation: 4, display: 3, rect: PtRect::new(1540.0, 50.0, 300.0, 40.0) }));
+        // An element with room around it, inside the screen.
+        let button = ClipArea::of(&pin(None, Some(PtRect::new(5.0, 500.0, 80.0, 30.0))), &screen).unwrap();
+        assert_eq!(button.rect, PtRect::new(1440.0, 484.0, 101.0, 62.0));
+        // A point: nothing to record.
+        assert_eq!(ClipArea::of(&pin(None, None), &screen), None);
         let clip: Command = serde_json::from_str(r#"{"type":"clip","seconds":null}"#).unwrap();
         assert_eq!(clip, Command::Clip { seconds: None });
         let spec: Spec = serde_json::from_str(r#"{"screens": [], "tolerance": 4}"#).unwrap();

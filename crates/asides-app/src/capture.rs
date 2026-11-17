@@ -25,8 +25,9 @@ use objc2_core_video::{
 };
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{
-    SCContentFilter, SCScreenshotConfiguration, SCScreenshotDynamicRange, SCScreenshotManager, SCScreenshotOutput,
-    SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput, SCStreamOutputType, SCWindow,
+    SCContentFilter, SCRunningApplication, SCScreenshotConfiguration, SCScreenshotDynamicRange, SCScreenshotManager,
+    SCScreenshotOutput, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput, SCStreamOutputType,
+    SCWindow,
 };
 
 /// A display as AppKit and CoreGraphics know it.
@@ -260,16 +261,26 @@ struct Held(#[allow(dead_code)] Retained<FrameOutput>);
 // SAFETY: only dropped there; its callback is `Send + Sync`.
 unsafe impl Send for Held {}
 
-/// Frames a second, at most: every frame a 60 Hz screen shows (a flash can be one).
+/// Frames a second, at most: every frame a 60 Hz screen shows (a flash can be one); of a part of the
+/// screen (fewer pixels), every frame a 120 Hz one shows.
 const FRAMES_A_SECOND: i32 = 60;
+const AREA_FRAMES_A_SECOND: i32 = 120;
 
-/// Watches what app `app` (its process) shows on `display`, its windows alone (menus, popovers and
-/// sheets with them; no other app's, nor the pointer), `width` × `height` pixels, in sRGB: each
-/// frame it shows goes to `frame`, on a queue of the stream's own, until the `Watch` is dropped.
-/// Nothing comes while nothing changes. `failed` says why it couldn't start, or stopped.
+/// What a clip watches on a display.
+pub enum Watched {
+    /// An app's windows alone (its process): menus, popovers and sheets with them, no other app's.
+    App(i32),
+    /// A part of the display, in its points from its top-left corner: whatever shows there, but the
+    /// windows of these processes (asides' own).
+    Area(PtRect, Vec<i32>),
+}
+
+/// Watches what shows on `display` (`watched`), without the pointer, `width` × `height` pixels, in
+/// sRGB: each frame it shows goes to `frame`, on a queue of the stream's own, until the `Watch` is
+/// dropped. Nothing comes while nothing changes. `failed` says why it couldn't start, or stopped.
 pub fn watch(
     display: u32,
-    app: i32,
+    watched: Watched,
     (width, height): (usize, usize),
     frame: impl Fn(Frame) + Send + Sync + 'static,
     failed: impl Fn(String) + Send + Sync + 'static,
@@ -284,18 +295,40 @@ pub fn watch(
         let Some(shown) = unsafe { content.displays() }.iter().find(|d| unsafe { d.displayID() } == display) else {
             return failed("That screen is gone.".into());
         };
-        let Some(running) = unsafe { content.applications() }.iter().find(|a| unsafe { a.processID() } == app) else {
-            return failed("The app in front shows no window to record.".into());
+        let apps = |pids: &[i32]| -> Vec<Retained<SCRunningApplication>> {
+            unsafe { content.applications() }.iter().filter(|a| pids.contains(&unsafe { a.processID() })).collect()
+        };
+        let filter = match &watched {
+            Watched::App(app) => {
+                let running = apps(&[*app]);
+                if running.is_empty() {
+                    return failed("The app in front shows no window to record.".into());
+                }
+                let running = NSArray::from_retained_slice(&running);
+                let alloc = SCContentFilter::alloc();
+                unsafe {
+                    SCContentFilter::initWithDisplay_includingApplications_exceptingWindows(
+                        alloc,
+                        &shown,
+                        &running,
+                        &NSArray::new(),
+                    )
+                }
+            }
+            Watched::Area(_, without) => {
+                let ours = NSArray::from_retained_slice(&apps(without));
+                let alloc = SCContentFilter::alloc();
+                unsafe {
+                    SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
+                        alloc,
+                        &shown,
+                        &ours,
+                        &NSArray::new(),
+                    )
+                }
+            }
         };
         let Some(frame) = frame.lock().unwrap().take() else { return };
-        let filter = unsafe {
-            SCContentFilter::initWithDisplay_includingApplications_exceptingWindows(
-                SCContentFilter::alloc(),
-                &shown,
-                &NSArray::from_retained_slice(&[running]),
-                &NSArray::new(),
-            )
-        };
         let config = unsafe { SCStreamConfiguration::new() };
         unsafe {
             config.setWidth(width);
@@ -303,7 +336,14 @@ pub fn watch(
             config.setShowsCursor(false);
             config.setColorSpaceName(kCGColorSpaceSRGB);
             config.setPixelFormat(kCVPixelFormatType_32BGRA);
-            config.setMinimumFrameInterval(CMTime::new(1, FRAMES_A_SECOND));
+            match &watched {
+                Watched::App(_) => config.setMinimumFrameInterval(CMTime::new(1, FRAMES_A_SECOND)),
+                Watched::Area(rect, _) => {
+                    let origin = CGPoint { x: rect.x, y: rect.y };
+                    config.setSourceRect(CGRect { origin, size: CGSize { width: rect.width, height: rect.height } });
+                    config.setMinimumFrameInterval(CMTime::new(1, AREA_FRAMES_A_SECOND));
+                }
+            }
         }
         let output = FrameOutput::new(frame);
         let stream =
@@ -622,25 +662,44 @@ mod tests {
     }
 
     /// Records a clip of app `$ASIDES_CLIP_APP` (its process id) on the main display, as the pill's
-    /// button does, for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on)
-    /// and what's said after them, `clip.txt`. `--ignored`; needs the Screen Recording permission.
+    /// button does, or with `$ASIDES_CLIP_AREA` (`x,y,width,height`, the display's points) of that
+    /// part of it, as a pin's card's does (at the display's pixels, asides' own windows left out),
+    /// for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on) and what's
+    /// said after them, `clip.txt`. `--ignored`; needs the Screen Recording permission.
     #[test]
     #[ignore]
     fn records_a_clip() {
         let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
-        let app: i32 = std::env::var("ASIDES_CLIP_APP").expect("ASIDES_CLIP_APP").parse().unwrap();
         let seconds: f64 = std::env::var("ASIDES_CLIP_SECONDS").map_or(3.0, |s| s.parse().unwrap());
         let display = objc2_core_graphics::CGMainDisplayID();
-        let bounds = objc2_core_graphics::CGDisplayBounds(display);
-        let size = (bounds.size.width as usize, bounds.size.height as usize);
-        let recording = crate::clip::Recording::start(app, Some("the test's app".into()), |take| {
-            watch(display, app, size, move |frame| take(crate::clip::Shown::Frame(frame)), |why| panic!("{why}"))
+        let area = std::env::var("ASIDES_CLIP_AREA").ok().map(|area| {
+            let n: Vec<f64> = area.split(',').map(|n| n.trim().parse().unwrap()).collect();
+            PtRect::new(n[0], n[1], n[2], n[3])
+        });
+        let (watched, size, pid, pin, place) = match area {
+            Some(rect) => {
+                use objc2_core_graphics::{CGDisplayCopyDisplayMode, CGDisplayMode};
+                let mode = CGDisplayCopyDisplayMode(display);
+                let scale =
+                    CGDisplayMode::pixel_width(mode.as_deref()) as f64 / CGDisplayMode::width(mode.as_deref()) as f64;
+                let size = ((rect.width * scale) as usize, (rect.height * scale) as usize);
+                (Watched::Area(rect, vec![std::process::id() as i32]), size, 0, Some(1), "in pin 1's area")
+            }
+            None => {
+                let app: i32 = std::env::var("ASIDES_CLIP_APP").expect("ASIDES_CLIP_APP").parse().unwrap();
+                let bounds = objc2_core_graphics::CGDisplayBounds(display);
+                let size = (bounds.size.width as usize, bounds.size.height as usize);
+                (Watched::App(app), size, app, None, "in the test's app")
+            }
+        };
+        let recording = crate::clip::Recording::start(pid, None, pin, |take| {
+            watch(display, watched, size, move |frame| take(crate::clip::Shown::Frame(frame)), |why| panic!("{why}"))
         });
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
         let made = recording.finish().expect("no frame came");
         for (i, png) in made.pngs.iter().enumerate() {
             std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
         }
-        std::fs::write(dir.join("clip.txt"), made.summary.caption("in the test's app")).unwrap();
+        std::fs::write(dir.join("clip.txt"), made.summary.caption(place)).unwrap();
     }
 }

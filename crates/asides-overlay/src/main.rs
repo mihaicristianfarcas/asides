@@ -106,7 +106,17 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
                 session.show_earlier(&spec.earlier);
             }
             // The app records the real screen, whatever image the script plays on.
-            Action::Clip(on) if live && spec.clips => io::emit(&Event::Clip { on: *on }),
+            Action::Clip(on) if live && spec.clips => io::emit(&Event::Clip { on: *on, area: None }),
+            Action::ClipOf(number) if live && spec.clips => {
+                let pins =
+                    session.screens.iter().enumerate().flat_map(|(i, s)| s.annotations.iter().map(move |a| (i, a)));
+                let area = pins
+                    .filter(|(_, a)| a.number == *number)
+                    .find_map(|(i, a)| asides_core::helper::ClipArea::of(a, spec.screens.get(i)?));
+                if area.is_some() {
+                    io::emit(&Event::Clip { on: true, area });
+                }
+            }
             _ => {}
         }
         if let Placed::Shot { screen, rect } = session.apply(action)

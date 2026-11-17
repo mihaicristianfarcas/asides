@@ -112,6 +112,9 @@ pub struct Recorder {
     /// Parts of the screen that aren't the user's (asides' own pill, where a capture can't leave it
     /// out): they stay as the first frame showed them.
     ignored: Vec<Rect>,
+    /// The clip shows all of each frame (a part of the screen the user chose), not only the part
+    /// that changed.
+    whole: bool,
     /// How many different frames there were, and when the last one showed.
     seen: usize,
     last: f32,
@@ -163,10 +166,16 @@ impl Recorder {
             changed: None,
             touched: None,
             ignored,
+            whole: false,
             seen: 0,
             last: 0.0,
             previous: None,
         }
+    }
+
+    /// One whose clip shows all of each frame: a part of the screen the user chose.
+    pub fn showing_all(self) -> Recorder {
+        Recorder { whole: true, ..self }
     }
 
     /// The screen at `time` (seconds into the clip). Frames of another size than the first aren't
@@ -310,7 +319,10 @@ impl Recorder {
         let first = self.first.take()?;
         let whole = Rect::new(0, 0, first.width, first.height);
         // Nothing changed: the screen, as it stayed.
-        let rect = self.changed.map_or(whole, |r| around(r, first.width, first.height));
+        let rect = match self.changed {
+            Some(changed) if !self.whole => around(changed, first.width, first.height),
+            _ => whole,
+        };
         let most = MAX_FRAMES.min(per_picture(rect.width, rect.height) * MAX_PICTURES);
         let (mut frames, mut flashes) = (Vec::new(), Vec::new());
         for k in choose(self.kept, most) {
@@ -613,8 +625,8 @@ impl Clip {
 }
 
 impl Summary {
-    /// Said after the pictures: how many frames, of what (`place`: "in Safari", "on the screen"), over
-    /// how long, in how many pictures, when each showed, how to read them, and
+    /// Said after the pictures: how many frames, of what (`place`: "in Safari", "on the screen", "in
+    /// pin 2's area"), over how long, in how many pictures, when each showed, how to read them, and
     /// which the screen showed for an instant only.
     pub fn caption(&self, place: &str) -> String {
         let digits = digits(self.times.iter().copied());
@@ -769,6 +781,11 @@ mod tests {
         // Where it was is white again, its soft edge too (too faint to count as a change itself).
         let (x, y) = (110 - clip.rect.x, 99 - clip.rect.y);
         assert_eq!((clip.frames[0].1.rgb(x, y), after.rgb(x, y), after.rgb(x, y + 5)), (0xfcfcfc, 0xffffff, 0xffffff));
+        // Of a part of the screen the user chose, all of it shows.
+        let mut recorder = Recorder::new().showing_all();
+        recorder.push(0.0, soft(100));
+        recorder.push(0.5, soft(200));
+        assert_eq!(recorder.finish(1.0).unwrap().rect, Rect::new(0, 0, W, H));
     }
 
     #[test]

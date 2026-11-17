@@ -152,6 +152,37 @@ pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(Str
     Watch(stop)
 }
 
+/// How often a clip of a pin's area looks at it: as often as a 60 Hz screen shows a frame (a flash
+/// can be one), which a small part of the screen's pixels allow. A timer, as `LOOK_EVERY`.
+const AREA_LOOK_EVERY: Duration = Duration::from_micros(16_667);
+
+/// Watches a part of the screen (`area`, global points): what the desktop composes there (the pill
+/// keeps itself out, `WDA_EXCLUDEFROMCAPTURE`), handed to `shown` on a thread of its own until the
+/// `Watch` is dropped.
+pub fn watch_area(area: PtRect, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
+    let (stop, stopped) = channel::<()>();
+    let spawned = std::thread::Builder::new().name("asides-clip".into()).spawn(move || {
+        let all: Vec<Monitor> = monitors().iter().map(|l| l.monitor).collect();
+        let (left, top, w, h) = display::rect_to_pixels(&all, area);
+        let mut next = Instant::now();
+        loop {
+            if let Ok(frame) = grab_rect(left, top, w, h) {
+                shown(crate::clip::Shown::Frame(frame));
+            }
+            // Until the next look is due, or the clip ends (the channel closes).
+            next = (next + AREA_LOOK_EVERY).max(Instant::now());
+            let wait = next.saturating_duration_since(Instant::now());
+            if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                break;
+            }
+        }
+    });
+    if let Err(err) = spawned {
+        failed(format!("Could not start recording the screen: {err}"));
+    }
+    Watch(stop)
+}
+
 /// A monitor's pixels, as RGBA.
 fn grab(monitor: &Monitor) -> Result<Frame, String> {
     grab_rect(monitor.left, monitor.top, monitor.width, monitor.height)
@@ -228,5 +259,27 @@ mod tests {
             println!("{:?} {}x{} at {:?}, scale {}", s.name, frame.width, frame.height, s.origin, s.scale);
             assert_eq!((frame.width as i32, frame.height as i32), (m.width, m.height));
         }
+    }
+
+    /// Records a part of the screen as a pin's clip would: `ASIDES_CLIP_AREA="x,y,w,h"` (global
+    /// points) for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on) and what's
+    /// said after them, `clip.txt`. `--ignored`; in the desktop's session.
+    #[test]
+    #[ignore = "needs a desktop"]
+    fn records_an_area() {
+        let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
+        let seconds: f64 = std::env::var("ASIDES_CLIP_SECONDS").map_or(3.0, |s| s.parse().unwrap());
+        let area = std::env::var("ASIDES_CLIP_AREA").expect("ASIDES_CLIP_AREA");
+        let n: Vec<f64> = area.split(',').map(|n| n.trim().parse().unwrap()).collect();
+        let area = PtRect::new(n[0], n[1], n[2], n[3]);
+        let recording = crate::clip::Recording::start(0, None, Some(1), |take| {
+            watch_area(area, take, |why: String| panic!("{why}"))
+        });
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        let made = recording.finish().expect("no frame came");
+        for (i, png) in made.pngs.iter().enumerate() {
+            std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
+        }
+        std::fs::write(dir.join("clip.txt"), made.summary.caption("in pin 1's area")).unwrap();
     }
 }

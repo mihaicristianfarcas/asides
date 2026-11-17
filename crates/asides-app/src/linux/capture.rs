@@ -276,6 +276,47 @@ pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(Str
     Watch(stop)
 }
 
+/// How often a clip of a pin's area looks at it: as often as a 60 Hz screen shows a frame (a flash
+/// can be one), which a small part of the screen's pixels allow. A timer, as `LOOK_EVERY`.
+const AREA_LOOK_EVERY: Duration = Duration::from_micros(16_667);
+
+/// Watches a part of the screen (`area`, global points), read from the root window, handed to
+/// `shown` on a thread of its own until the `Watch` is dropped. Where asides' pill is over it is said
+/// first: it stays as it first was.
+pub fn watch_area(area: PtRect, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
+    let (stop, stopped) = channel::<()>();
+    let failed = Arc::new(Mutex::new(failed));
+    let failing = failed.clone();
+    let spawned = std::thread::Builder::new().name("asides-clip".into()).spawn(move || {
+        let failed = |why: String| (*failing.lock().unwrap())(why);
+        let Ok((connection, screen)) = x11rb::connect(None) else {
+            return failed("Could not reach the X server to record the screen.".into());
+        };
+        let Some(root) = connection.setup().roots.get(screen).cloned() else {
+            return failed("The X server has no such screen.".into());
+        };
+        let all: Vec<Monitor> = display::monitors_on(&connection, screen).into_iter().map(|l| l.monitor).collect();
+        let rect = on_screen(display::rect_to_pixels(&all, area), &root);
+        shown(crate::clip::Shown::Another(None, overlay_rects(&connection, root.root, rect)));
+        let mut next = Instant::now();
+        loop {
+            if let Ok(frame) = grab_rect(&connection, root.root, rect) {
+                shown(crate::clip::Shown::Frame(frame));
+            }
+            // Until the next look is due, or the clip ends (the channel closes).
+            next = (next + AREA_LOOK_EVERY).max(Instant::now());
+            let wait = next.saturating_duration_since(Instant::now());
+            if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                break;
+            }
+        }
+    });
+    if let Err(err) = spawned {
+        (*failed.lock().unwrap())(format!("Could not start recording the screen: {err}"));
+    }
+    Watch(stop)
+}
+
 /// The window in front, as the window manager says, and where the server has it: its corner on
 /// the screen and its size.
 fn front_window(connection: &impl Connection, root: Window, active: Atom) -> Option<(Window, (i16, i16, u16, u16))> {
@@ -545,5 +586,27 @@ mod tests {
         for c in &captures {
             println!("display {}: {}x{}", c.display, c.frame.width, c.frame.height);
         }
+    }
+
+    /// Records a part of the screen as a pin's clip would: `ASIDES_CLIP_AREA="x,y,w,h"` (global
+    /// points) for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on) and what's
+    /// said after them, `clip.txt`. `--ignored`; on an X11 desktop.
+    #[test]
+    #[ignore = "needs a desktop"]
+    fn records_an_area() {
+        let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
+        let seconds: f64 = std::env::var("ASIDES_CLIP_SECONDS").map_or(3.0, |s| s.parse().unwrap());
+        let area = std::env::var("ASIDES_CLIP_AREA").expect("ASIDES_CLIP_AREA");
+        let n: Vec<f64> = area.split(',').map(|n| n.trim().parse().unwrap()).collect();
+        let area = PtRect::new(n[0], n[1], n[2], n[3]);
+        let recording = crate::clip::Recording::start(0, None, Some(1), |take| {
+            watch_area(area, take, |why: String| panic!("{why}"))
+        });
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        let made = recording.finish().expect("no frame came");
+        for (i, png) in made.pngs.iter().enumerate() {
+            std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
+        }
+        std::fs::write(dir.join("clip.txt"), made.summary.caption("in pin 1's area")).unwrap();
     }
 }

@@ -126,6 +126,17 @@ pub fn make_toolbar(window: &Window, frame: PtRect) -> (isize, usize) {
     (ns.windowNumber(), view)
 }
 
+/// Makes `window` a strip of the outline around a pin's area while a clip of it records, at `frame`:
+/// as the pill's, a panel above other apps' windows that never takes the keyboard, and the clicks go
+/// through it. Returns its view.
+pub fn make_outline(window: &Window, frame: PtRect) -> usize {
+    let (_, view) = make_toolbar(window, frame);
+    if let Some(ns) = native_window(window) {
+        ns.setIgnoresMouseEvents(true);
+    }
+    view
+}
+
 // The windows, by their views (`make_overlay`, `make_toolbar`), changed outside GPUI's updates:
 // AppKit tells GPUI about each change (a new size, the keyboard) as it happens, which GPUI can't
 // take while it's updating, and drops.

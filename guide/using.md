@@ -20,6 +20,7 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 | `R` | Follow up on the last aside: its pins show again where they were, hollow, with their areas and drawings. Click one's number to pin what's there now (inside its area, a click is a new pin); the new pin says which one it follows up on (**Follow-up to:**), so the agent can compare. |
 | `K` or the pill's camera | Record a clip of what happens next, live (frozen, `K` goes live first). The pill's square stops it, and so do freezing, sending and closing (a minute at most). The aside gets the moments the app in front changed, numbered and timed, as large as you'd read them (more pictures for more): each screen it settled on, a frame of each movement between them, and anything that flashed for an instant. |
+| A pin's camera, or `⌘K` in its card | Record a clip of that pin's part of the screen alone, live: its area as dragged, or its element or drawing with a little room around it, at the screen's full sharpness. A thin red line around it shows what's recorded (it's never in the clip). Its pictures go right after the pin. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still
 works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) for every key. The
@@ -35,7 +36,8 @@ there (or press its microphone): that goes into the pin. `Tab` goes on to the ne
 `⇧Tab` back. Its field edits as macOS fields do (`⌥⌫` deletes a word, `⌘⌫` everything before the
 caret). The card also takes typed feedback and a kind (fix, change,
 question, approve: `⌘1`–`⌘4`; with no card open, they set the last pin's), shown in the pin's
-color. Its pencil and ruler pick Draw and Measure (their keys type there). `⏎` or `Esc` closes it.
+color. Its pencil and ruler pick Draw and Measure (their keys type there), and its camera records the
+pin's area (`⌘K`, above). `⏎` or `Esc` closes it.
 
 ## Where it goes
 

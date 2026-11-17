@@ -217,6 +217,16 @@ pub fn make_toolbar(window: &Window, frame: PtRect) -> (isize, usize) {
 /// The pill's window.
 static PILL: AtomicIsize = AtomicIsize::new(0);
 
+/// Makes `window` a strip of the outline around a pin's area while a clip of it records, at `frame`:
+/// above the others, never activated. Returns its view.
+pub fn make_outline(window: &Window, frame: PtRect) -> usize {
+    let view = view_pointer(window);
+    let Some(handle) = hwnd(view) else { return 0 };
+    style(handle, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    place(handle, frame, SWP_NOOWNERZORDER);
+    view
+}
+
 /// Draws these windows now, as GPUI would their next frames: GPUI draws on `WM_PAINT`, sent here
 /// even to hidden ones, so they show it when they're shown, not what they showed last.
 pub fn draw_now(views: &[usize]) {
