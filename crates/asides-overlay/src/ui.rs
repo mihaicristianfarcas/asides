@@ -5,8 +5,10 @@
 //! `Overlay` holds the session (`asides_core::overlay::Session`) and everything around it; each
 //! window's `ScreenView` draws its screen from it and feeds it the mouse and keyboard.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -353,6 +355,10 @@ pub struct Overlay {
     /// area they're around now (`windows::sync_outline`).
     pub outline: Vec<usize>,
     pub outline_at: Option<PtRect>,
+    /// Over the live screen, the notes' window (its view, `NotesView`), and where it shows now
+    /// (`windows::sync_notes`).
+    pub notes_window: Option<usize>,
+    pub notes_at: Option<PtRect>,
     /// The pill's window, frozen and live, and the screen it's on.
     pub toolbar_window: Option<ScreenWindow>,
     pub toolbar_screen: usize,
@@ -500,6 +506,8 @@ impl Overlay {
             clip_area: None,
             outline: Vec::new(),
             outline_at: None,
+            notes_window: None,
+            notes_at: None,
             toolbar_window: None,
             toolbar_screen: 0,
             shown: None,
@@ -996,6 +1004,43 @@ impl Overlay {
 
     fn cursor_screen(&self) -> usize {
         self.session.cursor.map_or(0, |c| c.0)
+    }
+
+    /// What the notes by the pill say: the toast, and the name of the button under the pointer
+    /// (unless the list or the keys are open where it would show).
+    fn notes_wanted(&self) -> [Option<SharedString>; 2] {
+        let tip = (!self.keys_sheet.is_open() && !self.list.is_open())
+            .then(|| self.hint.as_ref().map(|(_, name)| name.clone()))
+            .flatten();
+        [self.toast_shown.clone(), tip]
+    }
+
+    /// The pill (its screen, and where it is on it), for the notes by it. None while it moves
+    /// (they'd trail behind it, in another window) or is drawn at a size its window isn't yet (they
+    /// wait for it to fit, and a new toast for the pill to be drawn as it is now).
+    fn notes_by(&self) -> Option<(usize, PtRect)> {
+        self.pill_rect.filter(|_| self.moving_toolbar.is_none() && self.pill_fits())
+    }
+
+    /// Over the live screen, where the notes' window goes (AppKit's coordinates), as long as a note
+    /// shows or fades: as wide as they may be, in the pill's middle, under it in the upper half of
+    /// its screen and above it in the lower half, as on a frozen screen (`ScreenView::notes`). While
+    /// the pill moves, it stays (its notes not drawn, `notes_by`) and follows it once it's let go.
+    pub fn live_notes(&self) -> Option<PtRect> {
+        if !self.live || self.shown != Some(true) || self.closing {
+            return None;
+        }
+        if self.notes_wanted().iter().all(Option::is_none) && self.notes.iter().all(Option::is_none) {
+            return None;
+        }
+        let (index, pill) = self.pill_rect?;
+        let f = self.spec.screens.get(index)?.frame;
+        let x = pill.x + pill.width / 2.0 - NOTES_WIDTH / 2.0;
+        let top = match notes_below(pill, f.height) {
+            true => pill.y + pill.height + NOTES_GAP,
+            false => pill.y - NOTES_GAP - NOTES_HEIGHT,
+        };
+        Some(PtRect::new(f.x + x, f.y + f.height - top - NOTES_HEIGHT, NOTES_WIDTH, NOTES_HEIGHT))
     }
 
     fn toast(&mut self, text: impl Into<SharedString>) {
@@ -3730,6 +3775,149 @@ impl ToolbarView {
 
 /// Room around the pill in its window, for its edges' antialiasing.
 pub const TOOLBAR_MARGIN: f64 = 1.0;
+/// The notes by the pill: as wide as they may be (in its middle), how far from it, and over the
+/// live screen, how tall their window is (both notes, and a margin).
+pub const NOTES_WIDTH: f64 = 640.0;
+pub const NOTES_GAP: f64 = 8.0;
+pub const NOTES_HEIGHT: f64 = 88.0;
+/// Between the notes, and their corners.
+const NOTE_GAP: f32 = 8.0;
+const NOTE_RADIUS: f32 = 7.0;
+
+/// The notes go under the pill (`pill`, from the top of a screen `height` tall) in the upper half of
+/// its screen, above it in the lower half.
+fn notes_below(pill: PtRect, height: f64) -> bool {
+    pill.y + pill.height / 2.0 < height / 2.0
+}
+
+/// The notes by the pill (`Overlay::notes`), as wide as they may be: the toast, then the name of the
+/// button under the pointer, each in the middle on glass (`glass(i)`, for note `i`), the pill's side
+/// of them first (`below` it, or above). Drawn, they step on (`step_notes`): one view draws them at a
+/// time, a frozen screen's or, live, the notes' own (`NotesView`).
+fn notes_column(overlay: &Entity<Overlay>, o: &Overlay, below: bool, scale: f32, glass: impl Fn(usize) -> Div) -> Div {
+    let wanted = o.notes_wanted();
+    // Its words as wide as they're drawn (cut off on both sides while they're narrower), noting
+    // the width they take, over what it said, fading from one to the other. Both stay in its
+    // middle, which stays put (under the pill's), as its sides ease. It takes the room it shows
+    // in (`Note::room`): a note going, the other one stayed where it was until it had gone,
+    // then jumped to its place.
+    let small = |i: usize| {
+        let note = o.notes[i].as_ref();
+        let text = note.map_or(wanted[i].as_ref(), |n| n.says()).cloned()?;
+        let measure = overlay.clone();
+        let words = div()
+            .flex_none()
+            .whitespace_nowrap()
+            .relative()
+            .opacity(note.map_or(1.0, |n| n.fading_in()))
+            .child(text)
+            .child(measured(move |b, cx| {
+                measure.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.measured(f32::from(b.size.width))));
+            }));
+        let said = note.and_then(|n| n.said()).map(|(said, shown)| {
+            let said = div().flex_none().whitespace_nowrap().child(said.clone());
+            div().absolute().inset_0().flex().justify_center().opacity(shown).child(said)
+        });
+        let size = overlay.clone();
+        let glass = glass(i)
+            .px(px(9.))
+            .py(px(5.))
+            .font_family(controls::font())
+            .text_color(o.theme.primary.opacity(0.86))
+            .text_size(px(12.))
+            .opacity(note.map_or(0.0, |n| n.shown()))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .justify_center()
+                    .when_some(note.and_then(|n| n.width(scale)), |d, w| d.w(px(w)))
+                    .overflow_hidden()
+                    .children(said)
+                    .child(words),
+            )
+            .child(measured(move |b, cx| {
+                size.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.sized(f32::from(b.size.height))));
+            }));
+        let placed = div().absolute().left_0().right_0().flex().justify_center().child(glass);
+        let placed = if below { placed.top_0() } else { placed.bottom_0() };
+        Some(div().relative().w_full().h(px(note.map_or(0.0, |n| n.room(NOTE_GAP)))).child(placed))
+    };
+    div()
+        .w(px(NOTES_WIDTH as f32))
+        .flex()
+        .flex_col()
+        // The tip keeps its place (and doesn't fade again) as it names the next button.
+        .children(small(0))
+        .children(small(1))
+        .child(step_notes(overlay, wanted, scale))
+}
+
+/// Over the live screen, the notes by the pill (`notes_column`), in a window of their own just under
+/// the pill's (`windows::sync_notes`), where they'd be on a frozen screen: the clicks go through it to
+/// the user's app. On glass like the pill's: macOS blurs what's behind only behind the notes, as
+/// drawn (`native::set_glass`).
+pub struct NotesView {
+    overlay: Entity<Overlay>,
+    /// The window's view, for its glass.
+    view: usize,
+    /// Each note's glass as last drawn, and the shapes macOS was last told to blur behind.
+    drawn: Rc<RefCell<NotesGlass>>,
+    blurred: Rc<RefCell<Option<crate::windows::Shapes>>>,
+}
+
+/// Each note's glass, as drawn: where it is in the notes' window (points) and how much of it shows.
+type NotesGlass = [Option<(PtRect, f64)>; 2];
+
+impl NotesView {
+    pub fn new(overlay: Entity<Overlay>, view: usize, cx: &mut Context<Self>) -> NotesView {
+        cx.observe(&overlay, |_, _, cx| cx.notify()).detach();
+        NotesView { overlay, view, drawn: Rc::default(), blurred: Rc::default() }
+    }
+}
+
+impl Render for NotesView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let o = self.overlay.read(cx);
+        *self.drawn.borrow_mut() = [None, None];
+        // Only while it shows: the frozen screens draw them otherwise.
+        let column = o.live_notes().and(o.notes_by()).map(|(index, pill)| {
+            let below = notes_below(pill, o.spec.screens.get(index).map_or(0.0, |s| s.frame.height));
+            let (t, drawn) = (o.theme, self.drawn.clone());
+            let glass = move |i: usize| {
+                let (drawn, shown) = (drawn.clone(), o.notes[i].as_ref().map_or(0.0, |n| n.shown()) as f64);
+                live_glass(t, NOTE_RADIUS).child(measured(move |b, _| {
+                    let p = |v: Pixels| f64::from(f32::from(v));
+                    let rect = PtRect::new(p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
+                    drawn.borrow_mut()[i] = Some((rect, shown));
+                }))
+            };
+            let column = notes_column(&self.overlay, o, below, o.pill_scale(), glass).absolute().left_0();
+            if below { column.top_0() } else { column.bottom_0() }
+        });
+        let (drawn, blurred, view) = (self.drawn.clone(), self.blurred.clone(), self.view);
+        // Once every note is laid out: the glass blurs behind them as drawn, in the same frame.
+        let glass = canvas(
+            |_, _, _| {},
+            move |_, _, _, _| {
+                let radius = f64::from(NOTE_RADIUS);
+                let shapes: Vec<_> = drawn.borrow().iter().flatten().map(|&(r, shown)| (r, radius, shown)).collect();
+                if blurred.borrow().as_ref() != Some(&shapes) {
+                    crate::native::set_glass(view, &shapes);
+                    *blurred.borrow_mut() = Some(shapes);
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+        div().size_full().relative().children(column).child(glass)
+    }
+}
+
+/// A note's surface over the live screen: as the pill's (`glass_panel`), `radius` round.
+fn live_glass(t: Theme, radius: f32) -> Div {
+    div().relative().rounded(px(radius)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
+}
 /// Between the pill's buttons.
 const PILL_GAP: f32 = 2.0;
 /// The pill's list: its width, the most its rows take before they scroll, and the gap above it.
@@ -3763,80 +3951,20 @@ impl Render for ToolbarView {
 
 impl ScreenView {
     /// What goes with the pill, by it (in its own window, above): a toast, the name of the button
-    /// under the pointer, the keys. Under it, or above it in the lower half of the screen.
+    /// under the pointer. Under it, or above it in the lower half of the screen. Live, their own
+    /// window shows them (`NotesView`).
     fn notes(&self, o: &Overlay, (ox, oy): (f64, f64), wh: f64) -> Option<AnyElement> {
-        // Moving, they'd trail behind the pill (another window); drawn at a new size, they wait for
-        // its window to fit it, and a new toast for the pill to be drawn as it is now (the last one
-        // shows until then).
-        let (_, pill) = o.pill_rect.filter(|_| o.moving_toolbar.is_none() && o.pill_fits())?;
-        let toast = o.toast_shown.clone();
-        let tip = (!o.keys_sheet.is_open() && !o.list.is_open())
-            .then(|| o.hint.as_ref().map(|(_, name)| name.clone()))
-            .flatten();
-        let wanted = [toast, tip];
+        let (_, pill) = o.notes_by().filter(|_| !o.live)?;
         let scale = o.session.screens[self.screen].screen.scale as f32;
         let (x, y) = (pill.x - ox, pill.y - oy);
-        let below = y + pill.height / 2.0 < wh / 2.0;
-        // Its words as wide as they're drawn (cut off on both sides while they're narrower), noting
-        // the width they take, over what it said, fading from one to the other. Both stay in its
-        // middle, which stays put (under the pill's), as its sides ease. It takes the room it shows
-        // in (`Note::room`): a note going, the other one stayed where it was until it had gone,
-        // then jumped to its place.
-        let small = |i: usize| {
-            let note = o.notes[i].as_ref();
-            let text = note.map_or(wanted[i].as_ref(), |n| n.says()).cloned()?;
-            let measure = self.overlay.clone();
-            let words = div()
-                .flex_none()
-                .whitespace_nowrap()
-                .relative()
-                .opacity(note.map_or(1.0, |n| n.fading_in()))
-                .child(text)
-                .child(measured(move |b, cx| {
-                    measure.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.measured(f32::from(b.size.width))));
-                }));
-            let said = note.and_then(|n| n.said()).map(|(said, shown)| {
-                let said = div().flex_none().whitespace_nowrap().child(said.clone());
-                div().absolute().inset_0().flex().justify_center().opacity(shown).child(said)
-            });
-            let size = self.overlay.clone();
-            let glass = frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), 7.)
-                .px(px(9.))
-                .py(px(5.))
-                .font_family(controls::font())
-                .text_color(o.theme.primary.opacity(0.86))
-                .text_size(px(12.))
-                .opacity(note.map_or(0.0, |n| n.shown()))
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .justify_center()
-                        .when_some(note.and_then(|n| n.width(scale)), |d, w| d.w(px(w)))
-                        .overflow_hidden()
-                        .children(said)
-                        .child(words),
-                )
-                .child(measured(move |b, cx| {
-                    size.update(cx, |o, _| o.notes[i].as_mut().map(|n| n.sized(f32::from(b.size.height))));
-                }));
-            let placed = div().absolute().left_0().right_0().flex().justify_center().child(glass);
-            let placed = if below { placed.top_0() } else { placed.bottom_0() };
-            Some(div().relative().w_full().h(px(note.map_or(0.0, |n| n.room(8.)))).child(placed))
-        };
-        let notes = div()
+        let below = notes_below(PtRect { y, ..pill }, wh);
+        let glass = |_| frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), NOTE_RADIUS);
+        let notes = notes_column(&self.overlay, o, below, scale, glass)
             .absolute()
-            .left(px((x + pill.width / 2.0 - 320.0) as f32))
-            .w(px(640.))
-            .flex()
-            .flex_col()
-            // The tip keeps its place (and doesn't fade again) as it names the next button.
-            .children(small(0))
-            .children(small(1))
-            .child(step_notes(&self.overlay, wanted, scale));
+            .left(px((x + pill.width / 2.0 - NOTES_WIDTH / 2.0) as f32));
         let notes = match below {
-            true => notes.top(px((y + pill.height + 8.0) as f32)),
-            false => notes.bottom(px((wh - y + 8.0) as f32)),
+            true => notes.top(px((y + pill.height + NOTES_GAP) as f32)),
+            false => notes.bottom(px((wh - y + NOTES_GAP) as f32)),
         };
         Some(notes.into_any_element())
     }

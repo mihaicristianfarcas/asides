@@ -137,6 +137,18 @@ pub fn make_outline(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the notes' over the live screen (`ui::NotesView`), at `frame`: as the pill's, a
+/// panel above other apps' windows that never takes the keyboard, but just under the pill's (at the
+/// frozen screens' level: it shows only live), and the clicks go through it. Returns its view.
+pub fn make_notes(window: &Window, frame: PtRect) -> usize {
+    let (_, view) = make_toolbar(window, frame);
+    if let Some(ns) = native_window(window) {
+        ns.setLevel(NSScreenSaverWindowLevel);
+        ns.setIgnoresMouseEvents(true);
+    }
+    view
+}
+
 // The windows, by their views (`make_overlay`, `make_toolbar`), changed outside GPUI's updates:
 // AppKit tells GPUI about each change (a new size, the keyboard) as it happens, which GPUI can't
 // take while it's updating, and drops.

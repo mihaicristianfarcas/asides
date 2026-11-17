@@ -200,6 +200,31 @@ pub fn make_outline(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the notes' over the live screen (`ui::NotesView`), at `frame`: under the pill, and
+/// the clicks go through it (no input region). Marked 2: the app's clips needn't keep its part of the
+/// screen as it first was (`capture::overlay_rects`), as they do the pill's; it's only a note or
+/// two, for a moment. Returns its id.
+pub fn make_notes(window: &Window, frame: PtRect) -> usize {
+    use x11rb::protocol::shape::{self, ConnectionExt as _};
+    use x11rb::protocol::xproto::ClipOrdering;
+    let view = view_pointer(window);
+    if view == 0 {
+        return 0;
+    }
+    adopt(view, frame);
+    if let Some(server) = server() {
+        let connection = &server.connection;
+        let id = view as u32;
+        if let Some(mark) = atom(server, b"_ASIDES_OVERLAY") {
+            let _ = connection.change_property32(PropMode::REPLACE, id, mark, AtomEnum::CARDINAL, &[2]);
+        }
+        let _ = connection.shape_rectangles(shape::SO::SET, shape::SK::INPUT, ClipOrdering::UNSORTED, id, 0, 0, &[]);
+        pill_after(server, id);
+        let _ = connection.flush();
+    }
+    view
+}
+
 /// Draws these windows now, as GPUI would their next frames, off the screen or not: they show it
 /// when they're shown, not what they showed last.
 pub fn draw_now(views: &[usize], cx: &mut App) {

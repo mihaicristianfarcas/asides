@@ -17,8 +17,8 @@ use gpui::{
 
 use crate::native;
 use crate::ui::{
-    KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, Overlay, PILL_TOP, ScreenView, ScreenWindow, TOOLBAR_MARGIN,
-    ToolbarView,
+    KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, NOTES_HEIGHT, NOTES_WIDTH, NotesView, Overlay, PILL_TOP,
+    ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView,
 };
 
 /// Rounded rectangles in a window's points, their radii and how much of each shows: where the
@@ -410,19 +410,20 @@ fn open_missing(overlay: &Entity<Overlay>, cx: &mut App) {
 /// Puts the windows in line with the overlay: the screens' while frozen, the pill's always (where
 /// it goes, fitting the pill and its list). From the clock, outside updates.
 pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let (live, shown, closing, handing, taking_over, toolbar) = cx.update(|cx| {
+    let (live, shown, closing, handing, taking_over, toolbar, notes) = cx.update(|cx| {
         let o = overlay.read(cx);
         if !o.closing {
             open_missing(overlay, cx);
         }
         let o = overlay.read(cx);
         let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
-        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar)
+        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar, o.notes_window)
     })?;
     if closing {
-        // The aside is on its way: the pill goes at once, the frozen screens once the system is back.
-        if let Some(toolbar) = toolbar {
-            native::hide(toolbar);
+        // The aside is on its way: the pill goes at once (what's by it too), the frozen screens once
+        // the system is back.
+        for view in toolbar.into_iter().chain(notes) {
+            native::hide(view);
         }
         if shown == Some(false) && !handed_back(overlay, cx)? {
             return Ok(());
@@ -441,6 +442,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         pointer_moved(toolbar, cx);
     }
     sync_outline(overlay, cx)?;
+    sync_notes(overlay, cx)?;
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
         // Frozen again while still giving way: the system comes back to the overlay.
@@ -538,6 +540,48 @@ fn outline_options(frame: PtRect) -> WindowOptions {
         is_minimizable: false,
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
+    }
+}
+
+/// Over the live screen, the notes by the pill in their own window (`Overlay::live_notes`), shown
+/// where they go, drawn first; hidden once they've gone. It opens the first time, hidden.
+fn sync_notes(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let (wanted, at, open) = cx.update(|cx| {
+        let o = overlay.read(cx);
+        (o.live_notes(), o.notes_at, o.notes_window)
+    })?;
+    if wanted == at {
+        return Ok(());
+    }
+    if wanted.is_some() && open.is_none() {
+        cx.update(|cx| open_notes(overlay, cx))?;
+    }
+    let Some(view) = cx.update(|cx| overlay.read(cx).notes_window)? else { return Ok(()) };
+    match (wanted, at) {
+        // It follows the pill, let go somewhere else.
+        (Some(frame), Some(_)) => native::move_to(view, (frame.x, frame.y)),
+        (Some(frame), None) => {
+            native::set_frame(view, frame);
+            draw_now(&[view], cx);
+            native::show(view, false);
+        }
+        (None, _) => native::hide(view),
+    }
+    cx.update(|cx| overlay.update(cx, |o, _| o.notes_at = wanted))
+}
+
+/// Opens the notes' window, hidden (`native::make_notes`).
+fn open_notes(overlay: &Entity<Overlay>, cx: &mut App) {
+    let frame = PtRect::new(0.0, 0.0, NOTES_WIDTH, NOTES_HEIGHT);
+    let o = overlay.clone();
+    let opened = cx.open_window(toolbar_options(None, frame), move |w, cx| {
+        let view = native::make_notes(w, frame);
+        native::set_glass(view, &[]);
+        o.update(cx, |o, _| o.notes_window = Some(view));
+        cx.new(|cx| NotesView::new(o.clone(), view, cx))
+    });
+    if let Err(err) = opened {
+        eprintln!("asides-overlay: no notes window: {err:#}");
     }
 }
 
@@ -648,7 +692,9 @@ fn follow_now_inside(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
         let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
         let frozen = o.shown == Some(false) && o.handoff.is_none();
         let screens = ((waited || followed.changed) && frozen).then(|| o.windows.iter().map(|w| w.view));
-        toolbar.into_iter().chain(screens.into_iter().flatten()).collect::<Vec<usize>>()
+        // Live, the notes' own window, where it shows.
+        let notes = o.notes_window.filter(|_| waited && o.notes_at.is_some());
+        toolbar.into_iter().chain(screens.into_iter().flatten()).chain(notes).collect::<Vec<usize>>()
     });
     draw_now(&views.unwrap_or_default(), cx);
 }

@@ -360,14 +360,16 @@ fn on_screen((x, y, w, h): (i32, i32, i32, i32), root: &Screen) -> (i32, i32, i3
 }
 
 /// asides' own windows over `rect` of the screen (the pill), as rectangles in it: they can't be
-/// left out of what the root window shows, so a clip leaves them as they first were.
+/// left out of what the root window shows, so a clip leaves them as they first were. Not the notes by
+/// the pill (marked 2): they show for a moment, and their window is wide.
 fn overlay_rects(connection: &impl Connection, root: Window, rect: (i32, i32, i32, i32)) -> Vec<Rect> {
     let find = || -> Result<Vec<Rect>, Box<dyn std::error::Error>> {
         let mark = connection.intern_atom(false, b"_ASIDES_OVERLAY")?.reply()?.atom;
         let mut found = Vec::new();
         for window in connection.query_tree(root)?.reply()?.children {
             let marked = connection.get_property(false, window, mark, AtomEnum::ANY, 0, 1)?.reply();
-            if !marked.is_ok_and(|p| p.value_len > 0) {
+            let value = marked.ok().and_then(|p| p.value32().and_then(|mut v| v.next()));
+            if !value.is_some_and(|v| v != 2) {
                 continue;
             }
             let shown = connection.get_window_attributes(window)?.reply();
