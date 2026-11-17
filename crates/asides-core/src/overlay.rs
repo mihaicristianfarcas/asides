@@ -292,6 +292,9 @@ pub struct Session {
     /// Seconds into the session as of what the user last did: what's added is stamped with it.
     pub clock: f32,
     added: Vec<(usize, Added)>,
+    /// The number this freeze's first pin takes: an earlier freeze's pins (in the same aside) keep
+    /// theirs, whatever goes on this one.
+    first_number: u32,
     next_number: u32,
     /// Annotations' keys: unlike their numbers, never reused.
     next_key: u32,
@@ -319,6 +322,7 @@ impl Session {
             shots: Vec::new(),
             clock: 0.0,
             added: Vec::new(),
+            first_number: 1,
             next_number: 1,
             next_key: 1,
             followed: Vec::new(),
@@ -335,6 +339,7 @@ impl Session {
             normal_tolerance: self.normal_tolerance,
             units: self.units,
             clock: self.clock,
+            first_number: self.next_number,
             next_number: self.next_number,
             next_key: self.next_key,
             followed: self.followed.clone(),
@@ -1070,21 +1075,29 @@ impl Session {
         }
     }
 
-    /// Annotations stay numbered 1, 2, 3… in the order they were put down.
+    /// Annotations stay numbered 1, 2, 3… in the order they were put down (their keys' order), on
+    /// from the earlier freezes' pins.
     fn renumber(&mut self) {
         let mut all: Vec<(u32, usize, usize)> = Vec::new();
         for (s, state) in self.screens.iter().enumerate() {
             for (i, a) in state.annotations.iter().enumerate() {
-                all.push((a.number, s, i));
+                all.push((a.key, s, i));
             }
         }
         all.sort();
         for (n, (_, s, i)) in all.iter().enumerate() {
-            self.screens[*s].annotations[*i].number = n as u32 + 1;
+            self.screens[*s].annotations[*i].number = self.first_number + n as u32;
         }
-        self.next_number = all.len() as u32 + 1;
+        self.next_number = self.first_number + all.len() as u32;
     }
 
+    /// Start over: nothing on any freeze, the next pin is 1 again.
+    pub fn start_over(&mut self) {
+        self.clear();
+        (self.first_number, self.next_number) = (1, 1);
+    }
+
+    /// X: everything on this freeze goes; an earlier freeze's pins stay, and so do their numbers.
     pub fn clear(&mut self) {
         for state in &mut self.screens {
             state.held.clear();
@@ -1096,7 +1109,7 @@ impl Session {
         self.shots.clear();
         self.added.clear();
         self.followed.clear();
-        self.next_number = 1;
+        self.next_number = self.first_number;
     }
 
     pub fn raise_tolerance(&mut self) {
@@ -1703,6 +1716,19 @@ mod tests {
         next.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
         let a = &next.screens[0].annotations[0];
         assert_eq!((a.number, a.key, a.time), (2, 2, 3.0));
+        // Pin 1 is in the aside already: what goes on this freeze is numbered on from it.
+        next.apply(&Action::Click { screen: 0, at: (10.0, 45.0) });
+        next.remove_annotation(0, 0);
+        assert_eq!(next.screens[0].annotations[0].number, 2);
+        next.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
+        assert!(next.undo());
+        next.clear();
+        next.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
+        assert_eq!(next.screens[0].annotations[0].number, 2);
+        // Started over, it's 1 again.
+        next.start_over();
+        next.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
+        assert_eq!(next.screens[0].annotations[0].number, 1);
     }
 
     #[test]
