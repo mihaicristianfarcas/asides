@@ -1790,7 +1790,7 @@ impl Overlay {
         {
             window.focus(&focus);
         }
-        self.session.clear();
+        self.session.start_over();
         self.shots.clear();
         self.kept.clear();
         self.keeping = None;
