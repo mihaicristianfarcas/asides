@@ -174,7 +174,8 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Pill**: `Tab` switches the session, the toast under the pill without a jump; pointing at the
   name opens its list (it closes as the pointer leaves), showing sessions (unreachable dimmed), New
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves
-  it and it stays; `M`, `D`, `S` switch tools.
+  it and it stays; `M`, `D`, `S` switch tools. Low on the screen, its list and keys open above it:
+  frame by frame, the pill doesn't move and its glass stays blurred.
 - [ ] **Mic**: click mutes and unmutes; muted, Space held talks, and each new pin opens its card;
   the setting off opens muted. The card's pencil and ruler pick Draw and Measure.
 - [ ] **Live**: `⌃⌥P` leaves the pill only, unmoved, and the app takes keys and clicks; again

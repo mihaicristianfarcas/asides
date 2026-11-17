@@ -296,6 +296,10 @@ use `asides mcp`'s `get_aside`.
 - The notch is in the menu bar (safe area 38 pt, menu bar 39): keep drawing below it.
 - The pill's place is kept by its top middle: kept by its corner, recentered as its width eased, it
   crept right each time a long session name gave way to a short one.
+- The pill's window is kept, in whole points, by the corner the pill is drawn in (`toolbar_frame`):
+  kept by its top as its list grew upward 277.5 points, its bottom went half a point down, macOS
+  rounded it to a whole one, and the pill dropped a point. Its glass's mask moves with that corner as
+  it resizes (`glass_in`): masked where the pill was last drawn, the pill showed sharp for a frame.
 - A shortcut's ⌃⌥ reached Measure as ⌥: with ⌃ down, Measure takes no modifiers.
 - `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
   accessibility. `native::choose_folder` puts it above the frozen screens.
