@@ -412,6 +412,9 @@ pub fn move_to(pointer: usize, (x, y): (f64, f64)) {
     let _ = unsafe { SetWindowPos(window, None, px, py, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) };
 }
 
+/// macOS keeps a picture of the window's old size at the pill's corner; nothing does here.
+pub fn keep_corner(_pointer: usize, _sides: (bool, bool)) {}
+
 /// Moves and resizes the window.
 pub fn set_frame(pointer: usize, frame: PtRect) {
     let Some(window) = hwnd(pointer) else { return };

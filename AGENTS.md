@@ -300,6 +300,11 @@ use `asides mcp`'s `get_aside`.
   kept by its top as its list grew upward 277.5 points, its bottom went half a point down, macOS
   rounded it to a whole one, and the pill dropped a point. Its glass's mask moves with that corner as
   it resizes (`glass_in`): masked where the pill was last drawn, the pill showed sharp for a frame.
+  GPUI's layer stretches a picture of the old size over a resized window: the keys sheet's first
+  frame live, drawn slowly and still on the GPU as the window grew, sometimes showed after the
+  resize's frame, the pill smeared over the sheet. GPUI waits for it now (`PATCHES.md`), and the
+  layer keeps any picture at the pill's corner (`native::keep_corner`). To see such a frame every
+  time, resize without drawing: it's one frame, and a recording catches it about half the time.
 - A shortcut's ⌃⌥ reached Measure as ⌥: with ⌃ down, Measure takes no modifiers.
 - `NSOpenPanel` runs in its own service: posted keys don't reach it, press its buttons through
   accessibility. `native::choose_folder` puts it above the frozen screens.
