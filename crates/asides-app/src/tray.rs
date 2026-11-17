@@ -81,10 +81,11 @@ impl Tray {
         let sounds = CheckMenuItem::new("Sounds", true, config.sounds, None);
         let identify = CheckMenuItem::new("Name What's Pinned", true, config.measure.identify_elements, None);
         let copy_each = CheckMenuItem::new("Copy Each Aside", true, config.copy_asides, None);
-        let history = MenuItem::new("History…", true, None);
-        // A Mac app's ⌘, and ⌘Q; Windows' tray menus show no shortcuts.
+        // A Mac app's ⌘1 (the window's first page, as there), ⌘, and ⌘Q; Windows' tray menus show no
+        // shortcuts, and elsewhere the window takes Ctrl+1 and Ctrl+, itself.
         let mac = |text: &str| Accelerator::from_str(text).ok().filter(|_| cfg!(target_os = "macos"));
-        let settings = MenuItem::new("Settings…", true, mac("cmd+Comma"));
+        let history = MenuItem::new("History…", true, mac(HISTORY));
+        let settings = MenuItem::new("Settings…", true, mac(SETTINGS));
         let quit = MenuItem::new("Quit asides", true, mac("cmd+KeyQ"));
         let menu = Menu::new();
         menu.append_items(&[
@@ -196,6 +197,10 @@ impl Tray {
     }
 }
 
+/// History… and Settings…'s shortcuts, as the asides window's (`secondary-1`, `secondary-,`).
+const HISTORY: &str = "cmd+Digit1";
+const SETTINGS: &str = "cmd+Comma";
+
 /// muda drops a single `&` from menu titles (mnemonics): doubled, it shows.
 fn menu_text(text: &str) -> String {
     text.replace('&', "&&")
@@ -204,4 +209,19 @@ fn menu_text(text: &str) -> String {
 /// A global shortcut beside its item, as a Mac's menus show them (Windows' tray menus show none).
 fn accelerator(shortcut: &str) -> Option<Accelerator> {
     Accelerator::from_str(shortcut).ok().filter(|_| cfg!(target_os = "macos"))
+}
+
+// Only a Mac's menus have the shortcuts (Linux's stand-in for tray-icon has none to parse).
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use tray_icon::menu::accelerator::{Code, Modifiers};
+
+    use super::*;
+
+    #[test]
+    fn history_and_settings_have_a_macs_shortcuts() {
+        let shortcut = |text: &str| Accelerator::from_str(text).unwrap();
+        assert_eq!(shortcut(HISTORY), Accelerator::new(Modifiers::META, Code::Digit1));
+        assert_eq!(shortcut(SETTINGS), Accelerator::new(Modifiers::META, Code::Comma));
+    }
 }

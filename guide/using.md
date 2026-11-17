@@ -110,7 +110,7 @@ accessibility role).
 
 ## The asides window
 
-Open it from the menu bar or with `asides`. While it's open it's in the Dock and `⌘Tab`; `⌘W`
+Open it from the menu bar (**History…**, `⌘1`; **Settings…**, `⌘,`) or with `asides`. While it's open it's in the Dock and `⌘Tab`; `⌘W`
 closes it, `⌘Q` quits asides. It all works from the keyboard: `Tab` and `⇧Tab` go through what can
 be clicked (`Space` or `⏎` presses it), the arrow keys move in the sidebar, lists, menus and
 choices, `⌘1`–`⌘6` open History, Sessions, General, Keys, Voice and Pins, `⌘F` searches History,
