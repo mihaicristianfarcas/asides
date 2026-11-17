@@ -12,11 +12,13 @@ pub mod keys;
 pub mod launch;
 pub mod link;
 pub mod log;
+pub mod look;
 pub mod markdown;
 pub mod measure;
 pub mod models;
 pub mod overlay;
 pub mod paths;
+pub mod picture;
 #[cfg(target_os = "linux")]
 pub mod portal;
 pub mod resample;

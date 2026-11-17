@@ -53,6 +53,15 @@ pub struct WindowInfo {
     pub title: Option<String>,
     pub bounds: PtRect,
     pub layer: i64,
+    /// Its X window, the same for as long as it's open.
+    pub id: u32,
+}
+
+impl WindowInfo {
+    /// What the system calls it, for finding it again (`asides_core::look`).
+    pub fn id(&self) -> u64 {
+        self.id.into()
+    }
 }
 
 /// The monitors, for the coordinates.
@@ -185,6 +194,7 @@ fn info(
         title,
         bounds: display::rect_to_points(monitors, rect),
         layer,
+        id: window,
     }
 }
 
@@ -210,7 +220,8 @@ pub fn request_trust() -> bool {
 pub fn identify(windows: &[WindowInfo], x: f64, y: f64, deep: bool) -> Option<Element> {
     let window = window_at(windows, x, y)?;
     let nodes = if deep { element_at(window.pid, x, y) } else { Vec::new() };
-    Some(Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes))
+    let element = Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes);
+    Some(element.in_window(window.id(), window.bounds))
 }
 
 /// Where the user is in the app with process id `pid` (or, not knowing it, the app whose window is
@@ -553,6 +564,7 @@ mod tests {
             title: None,
             bounds: PtRect::new(x, 0.0, 10.0, 10.0),
             layer,
+            id: 0,
         };
         let windows = [window(ABOVE, 0.0), window(0, 0.0), window(0, 20.0)];
         assert_eq!(window_at(&windows, 5.0, 5.0).unwrap().layer, 0);

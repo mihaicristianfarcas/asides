@@ -1,7 +1,9 @@
 //! `asides mcp`: an MCP server (JSON-RPC 2.0 over stdio), optional. asides types the user's asides
 //! into the agent's chat as their own messages; this server lets an agent read them again from the
-//! history (with the screenshots inline, without asking to read files outside the repo) and measure
-//! screenshots. Every tool is read-only (Codex asks before each call to one that isn't).
+//! history (with the screenshots inline, without asking to read files outside the repo), measure
+//! screenshots, and look again at what a pin was on (`look_again`: the app captures, as far as
+//! `asides_core::look` lets it). Every tool is read-only (Codex asks before each call to one that
+//! isn't): none changes anything of the user's.
 //!
 //! Nothing but JSON-RPC goes to stdout.
 
@@ -27,7 +29,8 @@ const INSTRUCTIONS: &str = "asides lets the user freeze their screen, click what
     what they marked. Each aside is also kept in their history (~/.asides/history). get_aside reads one again (the newest by \
     default) with its screenshots; list_asides lists recent ones, or finds those that say some words. Transcripts are verbatim speech-to-text: expect \
     misheard words, especially names of projects and libraries. measure_image measures a screenshot (distances \
-    between edges, an object's bounds and padding).";
+    between edges, an object's bounds and padding). look_again shows what a pin was on as it is now (only the \
+    window the pin was in, for some minutes after the aside): use it to check your change before saying it's done.";
 
 pub fn run() -> Result<()> {
     let stdout = io::stdout();
@@ -109,6 +112,16 @@ fn call_tool(params: &Value) -> Value {
                 None => tool_text(format!("There's no aside \"{id}\" in the history (list_asides lists them)."), true),
             }
         }
+        "look_again" => {
+            let id = args.get("id").and_then(Value::as_str).unwrap_or("last");
+            let Some(pin) = args.get("pin").and_then(Value::as_u64) else {
+                return tool_text("pin is required: the pin's number in the aside.".into(), true);
+            };
+            match crate::look(id, pin as u32) {
+                Ok((what, image)) => looked_content(&what, &image),
+                Err(err) => tool_text(format!("{err:#}"), true),
+            }
+        }
         "measure_image" => match measure_image(&args) {
             Ok(text) => tool_text(text, false),
             Err(err) => tool_text(format!("{err:#}"), true),
@@ -179,6 +192,13 @@ fn aside_content(aside: &Aside) -> Value {
             }
         }
     }
+    json!({ "content": content, "isError": false })
+}
+
+/// What an agent looked at again: what it is, where the picture is kept, and the picture.
+fn looked_content(what: &str, image: &Path) -> Value {
+    let mut content = vec![json!({ "type": "text", "text": format!("{what}\n[Picture: {}]", image.display()) })];
+    content.extend(inline_image(image));
     json!({ "content": content, "isError": false })
 }
 
@@ -253,6 +273,25 @@ fn tools() -> Value {
                 }
             },
             "annotations": read_only("List asides")
+        },
+        {
+            "name": "look_again",
+            "title": "Look again at a pin",
+            "description": "See what a pin of the user's aside was on, as it is on their screen right now: a picture \
+                of that part of the window the pin was in (found again wherever the window is), and nothing else of \
+                their screen. Use it after changing what they pinned, to check the change before saying it's done, \
+                and compare with the aside's screenshot (get_aside). asides allows it for some minutes after the \
+                aside was sent and shows the user that you looked; when it can't look (the window is closed, the \
+                aside is old), it says why.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "pin": { "type": "integer", "minimum": 1, "description": "The pin's number in the aside." },
+                    "id": { "type": "string", "description": "The aside's id (list_asides), or \"last\" (the default)." }
+                },
+                "required": ["pin"]
+            },
+            "annotations": read_only("Look again at a pin")
         },
         {
             "name": "measure_image",
@@ -332,7 +371,17 @@ mod tests {
         assert!(dispatch(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).is_none());
         let names: Vec<String> =
             tools().as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().into()).collect();
-        assert_eq!(names, ["get_aside", "list_asides", "measure_image"]);
+        assert_eq!(names, ["get_aside", "list_asides", "look_again", "measure_image"]);
+        // A pin is needed; the picture comes with what it shows and where it's kept.
+        let asked = call("tools/call", json!({ "name": "look_again", "arguments": {} })).unwrap();
+        assert_eq!(asked["result"]["isError"], true);
+        let picture = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        fs::write(picture.path(), [0x89, b'P', b'N', b'G']).unwrap();
+        let looked = looked_content("Pin 2 of aside a (button \"Save\" in Safari), as it is now.", picture.path());
+        let kinds: Vec<&str> =
+            looked["content"].as_array().unwrap().iter().map(|c| c["type"].as_str().unwrap()).collect();
+        assert_eq!(kinds, ["text", "image"]);
+        assert!(looked["content"][0]["text"].as_str().unwrap().contains("[Picture: "));
         assert!(tools().as_array().unwrap().iter().all(|t| t["annotations"]["readOnlyHint"] == true));
 
         let tmp = tempfile::tempdir().unwrap();

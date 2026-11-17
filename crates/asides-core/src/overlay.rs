@@ -837,13 +837,18 @@ impl Session {
             _ => None,
         };
         // What's where it points or goes is named whatever its size.
+        // Only where it is: its app, window and page.
+        let place = |e: Element| Element {
+            app: e.app,
+            window: e.window,
+            url: e.url,
+            window_id: e.window_id,
+            window_frame: e.window_frame,
+            ..Element::default()
+        };
         let element = match (region.filter(|_| part == Part::Element), element.frame) {
-            (Some(region), Some(frame)) if !fits(frame, region) => {
-                Element { app: element.app, window: element.window, url: element.url, ..Element::default() }
-            }
-            (Some(_), None) => {
-                Element { app: element.app, window: element.window, url: element.url, ..Element::default() }
-            }
+            (Some(region), Some(frame)) if !fits(frame, region) => place(element),
+            (Some(_), None) => place(element),
             _ => element,
         };
         match part {

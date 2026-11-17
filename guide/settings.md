@@ -17,6 +17,7 @@ history_days = 30               # 0 keeps asides forever
 auto_update = true              # look for updates every 6 hours, install them as asides quits (Linux: say so)
 wispr_flow = false              # Wispr Flow dictations made while frozen join the aside
 copy_asides = false             # put each aside on the clipboard, with its screenshots, once sent or saved
+look_again_minutes = 15         # how long after an aside agents can look again at what its pins were on; 0 never
 annotation_detail = "standard"  # "compact", "standard", "detailed" or "forensic"
 
 [shortcuts]                     # "" turns one off

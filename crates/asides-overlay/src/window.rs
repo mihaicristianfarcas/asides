@@ -3987,6 +3987,10 @@ impl AsidesWindow {
         let pick_keep = self.setter(cx, move |c, i: usize| c.history_days = keep[i]);
         let audio = self.setter(cx, |c, on| c.keep_audio = on);
         let copy = self.setter(cx, |c, on| c.copy_asides = on);
+        // For how long after an aside an agent may look again at what its pins were on.
+        let look = [0, 5, 15, 60];
+        let look_labels = ["Never", "5 minutes", "15 minutes", "1 hour"];
+        let pick_look = self.setter(cx, move |c, i: usize| c.look_again_minutes = look[i]);
         let sounds = self.setter(cx, |c, on| c.sounds = on);
         let wispr = self.setter(cx, |c, on| c.wispr_flow = on);
         let auto_update = self.setter(cx, |c, on| c.auto_update = on);
@@ -4052,6 +4056,27 @@ impl AsidesWindow {
                                 t,
                             ),
                         ],
+                        t,
+                    )),
+                )
+                .child(
+                    section("Agents", t).child(rows(
+                        [setting(
+                            "Let agents look again for",
+                            Some(
+                                "After an aside, an agent can ask to see what a pin was on, to check its change: \
+                                 only the window the pin was in. The menu bar shows when one does.",
+                            ),
+                            select(
+                                "look-again",
+                                look_labels.map(Choice::new).to_vec(),
+                                look.iter().position(|m| *m == c.look_again_minutes),
+                                t,
+                            )
+                            .width(120.)
+                            .on_select(pick_look),
+                            t,
+                        )],
                         t,
                     )),
                 )

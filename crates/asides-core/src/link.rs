@@ -72,6 +72,13 @@ pub enum Link {
     Sessions {
         request: Option<String>,
     },
+    /// Looks again at what pin `pin` of aside `id` was on (`look.rs`); the answer is the state's
+    /// `looked`.
+    Look {
+        id: String,
+        pin: u32,
+        request: Option<String>,
+    },
     /// Development hook: process `wav` as if it had just been recorded (outside asides, an aside of
     /// its own, sent to session `to`, or kept in the history only).
     Simulate {
@@ -130,6 +137,10 @@ impl Link {
                 Link::Login { open, .. } => {
                     q.append_pair("open", if *open { "true" } else { "false" });
                 }
+                Link::Look { id, pin, .. } => {
+                    q.append_pair("id", id);
+                    q.append_pair("pin", &pin.to_string());
+                }
                 Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                     q.append_pair("wav", &wav.to_string_lossy());
                     if let Some(to) = to {
@@ -184,6 +195,7 @@ impl Link {
             "setup" => Some(Link::Setup { step: nonempty("step")?, request }),
             "login" => Some(Link::Login { open: get("open")?.parse().ok()?, request }),
             "sessions" => Some(Link::Sessions { request }),
+            "look" => Some(Link::Look { id: nonempty("id")?, pin: get("pin")?.parse().ok()?, request }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
                 image: get("image").map(PathBuf::from),
@@ -217,6 +229,7 @@ impl Link {
             Link::Setup { .. } => "setup",
             Link::Login { .. } => "login",
             Link::Sessions { .. } => "sessions",
+            Link::Look { .. } => "look",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
         }
@@ -237,6 +250,7 @@ impl Link {
             | Link::Setup { request, .. }
             | Link::Login { request, .. }
             | Link::Sessions { request }
+            | Link::Look { request, .. }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
             Link::Quit => None,
@@ -258,6 +272,7 @@ mod tests {
         round_trip(Link::Open { request: Some("r1".into()) });
         round_trip(Link::Live { request: None });
         round_trip(Link::Window { request: None });
+        round_trip(Link::Look { id: "2026-11-16-140200".into(), pin: 2, request: Some("r9".into()) });
         round_trip(Link::Send { id: "2026-10-18-221530".into(), to: Some("95393".into()), request: Some("r2".into()) });
         round_trip(Link::Send { id: "last".into(), to: None, request: None });
         round_trip(Link::Copy { id: "2026-11-15-011500".into(), request: Some("r7".into()) });

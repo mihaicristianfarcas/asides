@@ -112,6 +112,8 @@ crates/
                       where each pin was (`Spot`), and what it follows up on (`Earlier`)
     overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore,
                       follow-ups), scripts
+    look.rs           what an agent may look at again (`asides look`): a pin's window, for a while
+    picture.rs        frames cropped, scaled and encoded as PNGs (looks)
     takes.rs          a session's recordings, joined into one, with their moments
     helper.rs         app ↔ overlay protocol: Spec, Event, Command, Outcome
     keys.rs           the overlay's key chords
@@ -132,7 +134,7 @@ crates/
     launch.rs         Windows: finding and starting an agent without a shell (npm's shims)
   asides-cli/      the asides binary (asides.app/Contents/Helpers/asides)
     main.rs           subcommands, links, waiting for the app
-    mcp.rs            asides mcp: get_aside, list_asides (and searching), measure_image
+    mcp.rs            asides mcp: get_aside, list_asides (and searching), measure_image, look_again
     measure.rs        asides measure and measure_image
     windows.rs        Windows: links to the app, type-into (a console's input), launch
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
@@ -165,7 +167,8 @@ crates/
     terminal.rs       running plans (dirijor, osascript, clipboard), starting sessions
     clipboard.rs      pasting screenshots, restoring the pasteboard; an aside copied (text, HTML,
                       RTFD, and each screenshot as an item of its own)
-    capture.rs        ScreenCaptureKit screenshots in sRGB; Screen Recording
+    capture.rs        ScreenCaptureKit screenshots in sRGB; one window alone (looks); Screen
+                      Recording
     overlay.rs        driving asides-overlay; the standby process
     elements.rs       what's under a pin: window list and accessibility tree
     stt.rs            model downloads, whisper-rs, language choice
@@ -265,6 +268,14 @@ the pill names the session typed into last from its first frame.
 `UserEvent::Delivered` records where it went (`Aside::record_delivery`) and flashes `[n]` or the
 error.
 
+### Looking again
+
+`asides look` (or `look_again`) sends `asides://look`. The app asks `look::plan` whether it may:
+the aside is recent enough, the pin's window is found again (its id, else its app and title), and
+asides isn't open. A Mac captures that window alone (`capture::capture_window`); Windows and Linux
+capture its screen, only with nothing over it. The part around the pin is kept in the aside's
+`looks/`, the menu bar flashes an eye, and the answer is the state's `looked`.
+
 ### Setting up
 
 Until `onboarded`, the app opens the window on setup at launch (`--window`, page `setup`). It shows
@@ -314,7 +325,7 @@ Break these only on purpose, and update this list.
    own).
 4. **Only the worker creates asides**, in order. Records change after only to note delivery (a new
    file renamed over the old), an edit in History (only a message `markdown::check_message`
-   passes), deletion, or pruning.
+   passes), deletion, or pruning. What agents look at again goes beside it, in its `looks/`.
 5. **An aside is typed in as the user would**: nothing installed in or changed for the agents.
 6. **Never into a session the user didn't choose.** Dev hooks send to the history unless `--to`.
 7. **Transcripts are verbatim**: no prompt, vocabulary or post-processing (a prompt silently dropped
@@ -330,7 +341,8 @@ Break these only on purpose, and update this list.
     (optional), Automation for Terminal and Ghostty. Not Input Monitoring. On Windows, only the
     microphone. On Linux, where the kernel requires it, `cap_sys_ptrace` on `asides-keys` alone,
     which the user grants; a Wayland desktop may ask once before a screenshot.
-13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so).
+13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so):
+    `look_again` only adds a picture to the aside's `looks/`, as far as `look::plan` allows.
 14. **The overlay needs no permission**: the app captures and identifies. Its stdout carries only
     protocol lines.
 15. **Measuring logic stays in `asides-core`**, shared by the overlay, `asides measure` and
@@ -355,9 +367,9 @@ Break these only on purpose, and update this list.
 
 | Path | Written by | Notes |
 |---|---|---|
-| `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json` (with where each pin was), `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
+| `~/.asides/history/<id>/` | worker; main thread for deliveries and looks | `aside.json` (with where each pin was), `message.md`, `images/`, `audio/`, `looks/` (what agents looked at again); `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
-| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, opening at login, setup |
+| `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, opening at login, setup, what agents last looked at again |
 | `…/asides/window.json` | window | how wide its sidebar and History's list were dragged, where it was and how big (its display, maximized or full screen) |
 | `…/asides/models/` | download thread | `.part` until the SHA-256 checks |
 | `/usr/local/bin/asides` | app | a link, for a copy installed by hand |

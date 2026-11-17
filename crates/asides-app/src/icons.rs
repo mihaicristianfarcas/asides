@@ -49,12 +49,14 @@ pub enum Mark {
     Exclamation,
     /// Downloading the speech model.
     Arrow,
+    /// An agent looked again at what a pin was on.
+    Eye,
     /// Not bound to a repo.
     Nothing,
 }
 
 impl Mark {
-    const ALL: [Mark; 10] = [
+    const ALL: [Mark; 11] = [
         Mark::Letter,
         Mark::Dot,
         Mark::Ellipsis,
@@ -64,6 +66,7 @@ impl Mark {
         Mark::Question,
         Mark::Exclamation,
         Mark::Arrow,
+        Mark::Eye,
         Mark::Nothing,
     ];
 }
@@ -188,6 +191,12 @@ fn shapes(mark: Mark) -> Vec<Shape> {
         Mark::Arrow => {
             vec![Line((11.0, 7.4), (11.0, 14.0)), Line((8.4, 11.6), (11.0, 14.2)), Line((11.0, 14.2), (13.6, 11.6))]
         }
+        // Two lids meeting at the corners, and the pupil.
+        Mark::Eye => vec![
+            Arc((11.0, 13.1), 4.6, PI + 0.474, 2.0 * PI - 0.474),
+            Arc((11.0, 8.9), 4.6, 0.474, PI - 0.474),
+            Disc((11.0, 11.0), 1.0),
+        ],
         Mark::Number(n) => {
             let mut x = (width(mark) - number_width(n)) / 2.0;
             let mut strokes = Vec::new();

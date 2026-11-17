@@ -31,6 +31,11 @@ Only the latest release is supported.
   before reading anything.
 - **Your history** (`~/.asides`) and settings are files of your own user's. `asides mcp` lets the
   agents you add it to read your history.
+- **Agents look again only at what you pinned.** `asides look` (the MCP server's `look_again`)
+  shows only the window a pin of an aside was in, around what the pin was on, as it is now: for
+  `look_again_minutes` after that aside (0 turns it off), never while asides is open, and on
+  Windows and Linux only with nothing over it. The menu bar shows an eye each time. Any program of
+  yours can ask (`asides://look`), as it could run `asides` itself.
 
 ## Out of scope
 

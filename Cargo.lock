@@ -370,6 +370,7 @@ dependencies = [
  "chrono",
  "libc",
  "notify",
+ "png 0.18.1",
  "rusqlite",
  "rustc-demangle",
  "serde",
