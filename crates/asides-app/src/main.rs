@@ -1385,34 +1385,60 @@ impl App {
     }
 
     /// Starts recording what the app in front shows, on the screen its front window is on, a pixel
-    /// a point (smaller on a screen larger than `motion::SIDE`).
+    /// a point (smaller on a screen larger than `motion::SIDE`); where no app's window is in front
+    /// (the desktop: Finder shows none of its own), the whole screen under the pointer, asides' own
+    /// windows (the pill) left out.
     #[cfg(target_os = "macos")]
     fn record_front(&self) -> Result<clip::Recording, String> {
-        let without = self.overlay.as_ref().map(|o| o.pid());
-        let me = std::process::id() as i32;
-        let front = system::frontmost_app()
-            .filter(|&pid| pid != me && Some(pid) != without)
-            .ok_or("No app is in front to record.")?;
-        let windows = elements::windows(without);
-        let own = |layer: Option<i64>| windows.iter().find(|w| w.pid == front && layer.is_none_or(|l| w.layer == l));
-        let window = own(Some(0)).or_else(|| own(None)).ok_or("The app in front shows no window to record.")?;
-        let middle = (window.bounds.x + window.bounds.width / 2.0, window.bounds.y + window.bounds.height / 2.0);
         let screens = capture::screens(self.mtm);
-        let on = |s: &&ScreenInfo| {
-            let (x, y) = (middle.0 - s.origin.0, middle.1 - s.origin.1);
-            x >= 0.0 && y >= 0.0 && x < s.frame.width && y < s.frame.height
+        let (screen, watched, pid, app) = match self.front_window() {
+            Some(window) => {
+                let (x, y) =
+                    (window.bounds.x + window.bounds.width / 2.0, window.bounds.y + window.bounds.height / 2.0);
+                let on = |s: &&ScreenInfo| {
+                    let (x, y) = (x - s.origin.0, y - s.origin.1);
+                    x >= 0.0 && y >= 0.0 && x < s.frame.width && y < s.frame.height
+                };
+                (screens.iter().find(on), capture::Watched::App(window.pid), window.pid, Some(window.app))
+            }
+            None => {
+                // AppKit's coordinates, as the screens' frames.
+                let pointer = objc2_app_kit::NSEvent::mouseLocation();
+                let under = |s: &&ScreenInfo| {
+                    let (x, y) = (pointer.x - s.frame.x, pointer.y - s.frame.y);
+                    x >= 0.0 && y >= 0.0 && x < s.frame.width && y < s.frame.height
+                };
+                (screens.iter().find(under), capture::Watched::Screen(self.own_processes()), 0, None)
+            }
         };
-        let screen = screens.iter().find(on).or(screens.first()).ok_or("No screen to record.")?;
+        let screen = screen.or(screens.first()).ok_or("No screen to record.")?;
         let scale = (f64::from(asides_core::motion::SIDE) / screen.frame.width.max(screen.frame.height)).min(1.0);
         let size = ((screen.frame.width * scale).round() as usize, (screen.frame.height * scale).round() as usize);
         let proxy = Mutex::new(self.proxy.clone());
         let failed = move |why| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
         };
-        Ok(clip::Recording::start(front, Some(window.app.clone()), None, |take| {
-            let watched = capture::Watched::App(front);
+        Ok(clip::Recording::start(pid, app, None, |take| {
             capture::watch(screen.display, watched, size, move |frame| take(clip::Shown::Frame(frame)), failed)
         }))
+    }
+
+    /// The front window of the app in front, unless that's asides: its own, or, without one at the
+    /// normal level, any it shows (a menu bar app's). `None` on the desktop (Finder's is left out).
+    #[cfg(target_os = "macos")]
+    fn front_window(&self) -> Option<WindowInfo> {
+        let without = self.overlay.as_ref().map(|o| o.pid());
+        let front = system::frontmost_app().filter(|&pid| pid != std::process::id() as i32 && Some(pid) != without)?;
+        let windows = elements::windows(without);
+        let own = |layer: Option<i64>| windows.iter().find(|w| w.pid == front && layer.is_none_or(|l| w.layer == l));
+        own(Some(0)).or_else(|| own(None)).cloned()
+    }
+
+    /// asides' processes with windows on the screen: the app's (the menu bar's icon) and the
+    /// overlay's (the pill, an area's outline).
+    #[cfg(target_os = "macos")]
+    fn own_processes(&self) -> Vec<i32> {
+        std::iter::once(std::process::id() as i32).chain(self.overlay.as_ref().map(|o| o.pid())).collect()
     }
 
     /// Starts recording what shows in a pin's area (asides' own windows left out), at the screen's
@@ -1428,14 +1454,12 @@ impl App {
             .ok_or("That pin's area isn't on its screen any more.")?;
         let scale = screen.scale.min(f64::from(asides_core::motion::SIDE) / rect.width.max(rect.height));
         let size = (((rect.width * scale).round() as usize).max(1), ((rect.height * scale).round() as usize).max(1));
-        let without =
-            std::iter::once(std::process::id() as i32).chain(self.overlay.as_ref().map(|o| o.pid())).collect();
         let proxy = Mutex::new(self.proxy.clone());
         let failed = move |why| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
         };
         Ok(clip::Recording::start(0, None, Some(area.annotation), |take| {
-            let watched = capture::Watched::Area(rect, without);
+            let watched = capture::Watched::Area(rect, self.own_processes());
             capture::watch(screen.display, watched, size, move |frame| take(clip::Shown::Frame(frame)), failed)
         }))
     }
@@ -1461,16 +1485,21 @@ impl App {
         Ok(clip::Recording::start(0, None, Some(area.annotation), |take| capture::watch_area(area.rect, take, failed)))
     }
 
-    /// Another app came to the front while a clip records (macOS says so): the clip is of that one
-    /// from now on, started over.
+    /// Another app came to the front while a clip of an app records (macOS says so): the clip is of
+    /// that one from now on, started over. The desktop (no app's window) leaves it as it is, and a
+    /// clip of the whole screen already shows every app.
+    #[cfg(target_os = "macos")]
     fn clip_follows(&mut self) {
         let Some(pid) = self.clip.as_ref().map(|c| c.pid).filter(|&pid| pid != 0) else { return };
-        let asides = [Some(std::process::id() as i32), self.overlay.as_ref().map(|o| o.pid())];
-        if system::frontmost_app().is_some_and(|front| front != pid && !asides.contains(&Some(front))) {
+        if self.front_window().is_some_and(|window| window.pid != pid) {
             self.clip = None;
             self.start_clip(None);
         }
     }
+
+    /// Where the watch follows the window in front itself, there's nothing to follow.
+    #[cfg(not(target_os = "macos"))]
+    fn clip_follows(&mut self) {}
 
     /// Ends the clip being recorded: kept for the open session's aside (put together on a thread of
     /// its own), or thrown away.

@@ -248,6 +248,8 @@ the pill names the session typed into last from its first frame.
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
    Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each
    frame the app in front shows as it changes (`capture::watch`); `motion::Recorder` keeps a few.
+   With no app's window in front (the desktop), it's the whole screen under the pointer, without
+   asides' windows (`Watched::Screen`; on Windows and Linux the monitor, the pill as it is there).
    A pin's card's camera records only the pin's part of the screen (`ClipArea::of`; on a Mac
    `Watched::Area`, at the screen's pixels, elsewhere `capture::watch_area`), outlined just outside
    while it records (`windows::sync_outline`); its pictures go right after the pin.

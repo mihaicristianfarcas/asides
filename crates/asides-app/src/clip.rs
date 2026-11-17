@@ -69,7 +69,9 @@ pub struct Recording {
     /// Taken when it stops: frames still on their way find none.
     tape: Arc<Mutex<Option<Tape>>>,
     watch: capture::Watch,
-    /// The app it's of (0 where the watch follows the window in front, or for a pin's area).
+    /// The app it's of (0 where the watch follows the window in front, of the whole screen, or for
+    /// a pin's area). On a Mac, another app coming to the front starts it over on that one.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub pid: i32,
     /// The pin whose area it's of (its annotation's key).
     pub pin: Option<u32>,

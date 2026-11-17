@@ -19,7 +19,7 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 | `R` | Follow up on the last aside: its pins show again where they were, hollow, with their areas and drawings. Click one's number to pin what's there now (inside its area, a click is a new pin); the new pin says which one it follows up on (**Follow-up to:**), so the agent can compare. |
-| `K` or the pill's camera | Record a clip of what happens next, live (frozen, `K` goes live first). The pill's square stops it, and so do freezing, sending and closing (a minute at most). The aside gets the moments the app in front changed, numbered and timed, as large as you'd read them (more pictures for more): each screen it settled on, a frame of each movement between them, and anything that flashed for an instant. |
+| `K` or the pill's camera | Record a clip of what happens next, live (frozen, `K` goes live first). The pill's square stops it, and so do freezing, sending and closing (a minute at most). The aside gets the moments the app in front changed (on the desktop, the whole screen, without the pill), numbered and timed, as large as you'd read them (more pictures for more): each screen it settled on, a frame of each movement between them, and anything that flashed for an instant. |
 | A pin's camera, or `⌘K` in its card | Record a clip of that pin's part of the screen alone, live: its area as dragged, or its element or drawing with a little room around it, at the screen's full sharpness. A thin red line around it shows what's recorded (it's never in the clip). Its pictures go right after the pin. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still
@@ -215,7 +215,7 @@ differences:
 | Sessions | Agents in any terminal. tmux, Konsole and WezTerm take text themselves; kitty too with remote control on. Others go through a small helper, which where the system restricts it (Ubuntu, Arch) you allow once in setup. New sessions open in your desktop's terminal, or `[agents] terminal` in Settings. |
 | Frozen | Panels and keys aren't held back as on a Mac: `Alt+Tab` and the desktop's own shortcuts may still work. |
 | Permissions | GNOME on Wayland asks once before the first screenshot, with asides' window in front: **Allow…** by Screenshots in setup (a freeze not yet allowed opens it there). Pins name elements through AT-SPI: GTK apps always, Qt and browsers when the desktop's accessibility is on; KDE's and GNOME's Wayland tell asides nothing about windows, so otherwise a pin is a point. |
-| Clips | On X11 only: a Wayland desktop shows the screen to asides a picture at a time. |
+| Clips | On X11 only: a Wayland desktop shows the screen to asides a picture at a time. X11 can't leave the pill out: a clip of the desktop shows it as it was when the clip started. |
 | Scaled screens | On Wayland the overlay runs under Xwayland, which may draw it slightly soft at fractional scales. Screenshots keep the screen's full resolution. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `~/.asides/history`; settings in `~/.config/asides`; voice models in `~/.local/share/asides`; the log in `~/.local/state/asides`. |

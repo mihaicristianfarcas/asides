@@ -212,7 +212,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Clips**: live, the pill's camera turns red; clicks that change the screen, an animation, a
   flash, then its square: the aside's pictures show each screen it settled on, the animation and
   the flash (said to be one), numbered and timed, with readable text; `K` frozen goes live and records; freezing,
-  sending and closing end it; another app coming to the front starts it over on that one.
+  sending and closing end it; another app coming to the front starts it over on that one. Started
+  on the desktop (nothing open in Finder), it's the whole screen under the pointer, never the pill,
+  and stays so as apps come to the front; the desktop coming to the front leaves an app's clip be.
 - [ ] **A pin's clip**: a pin's camera (or `⌘K` in its card) goes live with a thin red line just
   around its area (an element's or a drawing's with a little room); the aside's pictures show only
   that area, sharp, right after the pin, never the line; freezing ends it, and the line goes.

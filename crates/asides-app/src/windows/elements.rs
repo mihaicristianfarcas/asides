@@ -26,7 +26,7 @@ use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersio
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWL_EXSTYLE, GetClassNameW, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
+    EnumWindows, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
 };
 use windows::core::{BOOL, HSTRING, Interface};
@@ -140,6 +140,16 @@ unsafe fn title(window: HWND) -> Option<String> {
         let mut text = vec![0u16; len as usize + 1];
         let got = GetWindowTextW(window, &mut text);
         Some(String::from_utf16_lossy(&text[..got as usize])).filter(|t| !t.trim().is_empty())
+    }
+}
+
+/// The desktop is in front (Explorer's `Progman` or `WorkerW`, its icons and wallpaper), or no
+/// window is: no app's window to record.
+pub fn desktop_in_front() -> bool {
+    // SAFETY: plain queries of the window in front.
+    unsafe {
+        let window = GetForegroundWindow();
+        window.is_invalid() || matches!(class(window).as_str(), "Progman" | "WorkerW")
     }
 }
 
