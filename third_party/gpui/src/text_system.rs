@@ -305,6 +305,20 @@ impl TextSystem {
         }
     }
 
+    /// The platform's text system, outside any app (only the main thread makes an app): to time
+    /// shaping in a test. macOS only.
+    #[cfg(target_os = "macos")]
+    pub fn of_platform() -> Self {
+        Self::new(Arc::new(crate::platform::MacTextSystem::new()))
+    }
+
+    /// Shapes one line in one font, outside any window (and its frame's cache of lines), as a
+    /// window's text system would: to time shaping without a window.
+    pub fn layout_line_in(&self, text: &str, font: &Font, font_size: Pixels) -> LineLayout {
+        let font_id = self.resolve_font(font);
+        self.platform_text_system.layout_line(text, font_size, &[FontRun { len: text.len(), font_id }])
+    }
+
     /// Get the rasterized size and location of a specific, rendered glyph.
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();

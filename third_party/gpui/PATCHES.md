@@ -24,8 +24,11 @@ depends on 0.2.2's internals).
   says so (asked for `Server`, the window went without a frame and `window_decorations` said
   `Server`).
 
-## macOS (`src/platform/mac/metal_renderer.rs`)
+## macOS (`src/platform/mac/`)
 
+- Lines are shaped with one copy of each font at each size (`text_system.rs`): a copy made for each
+  line had CoreText work out its advances again (for a variable font, from its variations), 25 µs a
+  line. R bringing back hundreds of labels spent more than a frame on it.
 - Before a frame is presented with a Core Animation transaction (`displayLayer:`, which the overlay
   calls as it resizes a window and draws it in one), the last frame presented on its own (the
   display link's) is waited for. Still on the GPU, it sometimes showed after the transaction's
@@ -35,6 +38,9 @@ depends on 0.2.2's internals).
 ## All
 
 - `Window::draw_now`: draws and presents a frame at once, as the platform's frame callback would.
+- `TextSystem::layout_line_in` shapes a line outside any window, and `TextSystem::of_platform`
+  (macOS) is the platform's text system outside any app: the overlay's test of R's cost times
+  shaping its labels (an app is made only on the main thread, a test runs on another).
 - `DispatchEventResult` is public: `Window::dispatch_event` returns it (0.2.2's private type).
 - Truncated text (`truncate()`) is cut, with its ellipsis (`elements/text.rs`): a layout measured
   without a width (a size it would like) was kept and answered every later measure, so the text ran

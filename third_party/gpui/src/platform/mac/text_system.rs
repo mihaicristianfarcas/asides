@@ -67,6 +67,10 @@ struct MacTextSystemState {
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     postscript_names_by_font_id: HashMap<FontId, String>,
+    /// Each font at each size lines are shaped in, made once: CoreText works out a font's
+    /// advances the first time it's used (for a variable font, from its variations), so a copy
+    /// made for each line did it for each line.
+    sized_fonts: HashMap<(FontId, u32), CTFont>,
     /// UTF-16 indices of ZWNJS
     zwnjs_scratch_space: Vec<usize>,
 }
@@ -81,6 +85,7 @@ impl MacTextSystem {
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
             postscript_names_by_font_id: HashMap::default(),
+            sized_fonts: HashMap::default(),
             zwnjs_scratch_space: Vec::new(),
         }))
     }
@@ -473,12 +478,12 @@ impl MacTextSystemState {
                 max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
                 max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
+                let sized = self
+                    .sized_fonts
+                    .entry((run.font_id, font_size.0.to_bits()))
+                    .or_insert_with(|| font.native_font().clone_with_font_size(font_size.into()));
                 unsafe {
-                    string.set_attribute(
-                        cf_range,
-                        kCTFontAttributeName,
-                        &font.native_font().clone_with_font_size(font_size.into()),
-                    );
+                    string.set_attribute(cf_range, kCTFontAttributeName, &*sized);
                 }
             }
         }
