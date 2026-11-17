@@ -1214,9 +1214,11 @@ impl Overlay {
                     self.open_card(screen, index, window, cx);
                 }
             }
-            // A follow-up is a pin like any other: what's there now is looked up again.
+            // A follow-up is a pin like any other: what's there now is looked up again, and where
+            // it was moved to.
             Placed::Again { screen, index } => {
                 self.look_up(screen, index);
+                self.look_up_move(screen, index);
                 if !self.listening() {
                     self.open_card(screen, index, window, cx);
                 }
@@ -2398,6 +2400,20 @@ impl Render for ScreenView {
                 if let Some(shape) = &e.shape {
                     earlier_drawing(&mut prims, shape, lit, &to);
                 }
+                // Moved by its number: where it asked what it marked to go, and an arrow there.
+                if let Some(dest) = e.moved_region() {
+                    if dest.width >= 1.0 && dest.height >= 1.0 {
+                        prims.push(Prim::Border(
+                            rect(dest),
+                            Hsla { a: if lit { 0.6 } else { 0.4 }, ..gpui::black() },
+                            3.0,
+                            false,
+                        ));
+                        prims.push(Prim::Border(rect(dest), line, 1.5, true));
+                    }
+                    let (start, end) = style::move_arrow(e.from(), dest);
+                    pale_arrow(&mut prims, to(start), to(end), lit);
+                }
                 let (mx, my) = to(e.at);
                 markers.push(
                     div()
@@ -2777,22 +2793,27 @@ fn earlier_drawing(prims: &mut Vec<Prim>, shape: &Shape, lit: bool, to: &impl Fn
             prims.push(Prim::Stroke(points.clone(), wide, band));
             prims.push(Prim::Stroke(points, thin, line));
         }
-        Shape::Arrow { from, to: end } => {
-            let (from, end) = (to(*from), to(*end));
-            if (end.0 - from.0).hypot(end.1 - from.1) < 2.0 {
-                return;
-            }
-            let [tip, left, right] = style::arrow_head(from, end);
-            let base = ((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0);
-            // The head's band: the head, half as large again about its middle.
-            let middle = ((tip.0 + left.0 + right.0) / 3.0, (tip.1 + left.1 + right.1) / 3.0);
-            let grown = |p: (f64, f64)| (middle.0 + (p.0 - middle.0) * 1.5, middle.1 + (p.1 - middle.1) * 1.5);
-            prims.push(Prim::Stroke(vec![from, base], wide, band));
-            prims.push(Prim::Polygon(vec![grown(tip), grown(left), grown(right)], band));
-            prims.push(Prim::Stroke(vec![from, base], thin, line));
-            prims.push(Prim::Polygon(vec![tip, left, right], line));
-        }
+        Shape::Arrow { from, to: end } => pale_arrow(prims, to(*from), to(*end), lit),
     }
+}
+
+/// An earlier pin's arrow (drawn, or where it was moved to), pale as its drawing is, in the window.
+fn pale_arrow(prims: &mut Vec<Prim>, from: (f64, f64), end: (f64, f64), lit: bool) {
+    if (end.0 - from.0).hypot(end.1 - from.1) < 2.0 {
+        return;
+    }
+    let band = Hsla { a: if lit { 0.55 } else { 0.4 }, ..gpui::black() };
+    let line = Hsla { a: if lit { 1.0 } else { 0.85 }, ..gpui::white() };
+    let (wide, thin) = (style::DRAW_WIDTH + 2.0, style::DRAW_WIDTH - 1.0);
+    let [tip, left, right] = style::arrow_head(from, end);
+    let base = ((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0);
+    // The head's band: the head, half as large again about its middle.
+    let middle = ((tip.0 + left.0 + right.0) / 3.0, (tip.1 + left.1 + right.1) / 3.0);
+    let grown = |p: (f64, f64)| (middle.0 + (p.0 - middle.0) * 1.5, middle.1 + (p.1 - middle.1) * 1.5);
+    prims.push(Prim::Stroke(vec![from, base], wide, band));
+    prims.push(Prim::Polygon(vec![grown(tip), grown(left), grown(right)], band));
+    prims.push(Prim::Stroke(vec![from, base], thin, line));
+    prims.push(Prim::Polygon(vec![tip, left, right], line));
 }
 
 // --- The toolbar, the card, the menu, the cheat sheet ---

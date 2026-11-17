@@ -762,8 +762,9 @@ impl Session {
             .min_by(|&a, &b| distance(&list[a]).total_cmp(&distance(&list[b])))
     }
 
-    /// Follows up on the earlier aside's pin `index` of `screen`: a pin of this session where it was
-    /// (its area or its drawing too), which says so.
+    /// Follows up on the earlier aside's pin `index` of `screen`: a pin of this session as it was
+    /// (its area, its drawing, what it was on, its move), which says so. What it's on is looked up
+    /// again; its move is a step of its own, which Undo takes back before the pin.
     pub fn follow_up(&mut self, screen: usize, index: usize, time: f32) -> Placed {
         let Some(state) = self.screens.get_mut(screen).filter(|s| index < s.earlier.len()) else {
             return Placed::Nothing;
@@ -772,7 +773,16 @@ impl Session {
         self.followed.push(earlier.number);
         match self.annotate(screen, earlier.at, earlier.area, earlier.shape.clone(), time) {
             Placed::Annotation { screen, index } => {
-                self.screens[screen].annotations[index].again = Some(earlier);
+                let a = &mut self.screens[screen].annotations[index];
+                // What it was on, until it's looked up again: where its move starts.
+                if a.area.is_none() && a.shape.is_none() {
+                    a.element = earlier.region.map(|frame| Element { frame: Some(frame), ..Element::default() });
+                }
+                if let Some(moved) = earlier.moved {
+                    self.added.push((screen, Added::Moved(index, None, None)));
+                    (a.moved, a.intent) = (Some(moved), Some(Intent::Change));
+                }
+                a.again = Some(earlier);
                 Placed::Again { screen, index }
             }
             placed => placed,
@@ -851,11 +861,15 @@ impl Session {
             window_frame: e.window_frame,
             ..Element::default()
         };
-        let element = match (region.filter(|_| part == Part::Element), element.frame) {
+        let mut element = match (region.filter(|_| part == Part::Element), element.frame) {
             (Some(region), Some(frame)) if !fits(frame, region) => place(element),
             (Some(_), None) => place(element),
             _ => element,
         };
+        // Nothing named there now (no Accessibility): a follow-up keeps what its pin was on.
+        if part == Part::Element && element.frame.is_none() {
+            element.frame = a.element.as_ref().and_then(|e| e.frame).filter(|_| a.again.is_some());
+        }
         match part {
             Part::Element => a.element = Some(element),
             Part::Target => a.target = Some(element),
@@ -1826,7 +1840,7 @@ mod tests {
             at,
             area,
             title: format!("pin {number}"),
-            shape: None,
+            ..Earlier::default()
         };
         let earlier = vec![vec![
             pin(1, (30.0, 20.0), None),
@@ -1893,6 +1907,28 @@ mod tests {
         assert_eq!(s.screens[0].earlier.len(), 2);
         s.clear();
         assert!(s.screens[0].earlier.is_empty());
+
+        // A moved pin comes back moved: its move is undone first, then the pin.
+        let moved = Earlier {
+            region: Some(PtRect::new(20.0, 15.0, 30.0, 10.0)),
+            moved: Some((40.0, 20.0)),
+            ..pin(5, (35.0, 20.0), None)
+        };
+        let mut m = session();
+        m.show_earlier(&[vec![moved]]);
+        assert_eq!(m.follow_up_on(5, 1.0), Placed::Again { screen: 0, index: 0 });
+        let a = &m.screens[0].annotations[0];
+        assert_eq!((a.moved, a.intent), (Some((40.0, 20.0)), Some(Intent::Change)));
+        assert_eq!(a.moved_region(), Some(PtRect::new(60.0, 35.0, 30.0, 10.0)));
+        assert_eq!(move_lookup(a), Some((75.0, 40.0)));
+        // Looked up again with nothing named there, it's still on what it was on.
+        m.set_element(0, 0, Part::Element, Element { app: Some("Safari".into()), ..Element::default() });
+        assert_eq!(m.screens[0].annotations[0].region(), Some(PtRect::new(20.0, 15.0, 30.0, 10.0)));
+        assert!(m.undo());
+        let a = &m.screens[0].annotations[0];
+        assert_eq!((a.moved, a.intent, a.again.as_ref().map(|e| e.number)), (None, None, Some(5)));
+        assert!(m.undo());
+        assert_eq!(m.screens[0].earlier[0].number, 5);
 
         // A drawing comes back drawn, and following up on it draws it again.
         let sketch = Shape::Sketch { points: vec![(10.0, 40.0), (30.0, 50.0), (12.0, 44.0)] };

@@ -175,6 +175,8 @@ impl Aside {
                 at: spot.at,
                 area: spot.area,
                 shape: spot.shape.clone(),
+                region: spot.region,
+                moved: spot.moved,
                 title: spot.title.clone(),
             });
         }
@@ -417,6 +419,7 @@ mod tests {
 
     #[test]
     fn a_later_aside_names_it_and_shows_its_pins_again() {
+        use crate::inspect::PtRect;
         let tmp = tempfile::tempdir().unwrap();
         let at = Local.with_ymd_and_hms(2026, 11, 16, 14, 2, 0).unwrap();
         let spot =
@@ -428,6 +431,16 @@ mod tests {
                 number: 1,
                 color: "#3B82F6".into(),
                 spot: Some(Spot { shape: Some(sketch.clone()), ..spot(1, (30.0, 20.0)) }),
+            },
+            // Moved by its number: where to comes back too.
+            Pin {
+                number: 4,
+                color: "#3B82F6".into(),
+                spot: Some(Spot {
+                    region: Some(PtRect::new(20.0, 70.0, 60.0, 20.0)),
+                    moved: Some((140.0, -20.0)),
+                    ..spot(1, (20.0, 70.0))
+                }),
             },
             // On a display that's gone since, and one from before pins' places were kept.
             Pin { number: 2, color: "#3B82F6".into(), spot: Some(spot(7, (10.0, 10.0))) },
@@ -443,7 +456,10 @@ mod tests {
         let again = find(tmp.path(), &aside.id).unwrap();
         let earlier = again.earlier(&[4, 1], at);
         assert_eq!(earlier[0], []);
-        assert_eq!(earlier[1].len(), 1);
+        assert_eq!(earlier[1].len(), 2);
+        let moved = &earlier[1][1];
+        assert_eq!((moved.number, moved.moved), (4, Some((140.0, -20.0))));
+        assert_eq!(moved.moved_region(), Some(PtRect::new(160.0, 50.0, 60.0, 20.0)));
         assert_eq!(
             (earlier[1][0].number, earlier[1][0].at, earlier[1][0].title.as_str()),
             (1, (30.0, 20.0), "button \"Save\"")
