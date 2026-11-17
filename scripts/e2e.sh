@@ -217,6 +217,47 @@ wait_aside 5 "$WORK/5.md"
 check "a dictation made while frozen joins the aside" contains "$WORK/5.md" "The total is off by a cent."
 set_config wispr_flow 'false'
 
+echo "R: the last aside's pins again, moves too, step by step; Undo and Redo"
+# A pin on the button, dragged by its number up under the title.
+cat > "$WORK/moved.json" <<'JSON'
+{"scale": 2, "actions": [{"tool": "annotate"}, {"click": {"at": [110, 182]}}, {"drag": {"from": [110, 182], "to": [110, 100]}}]}
+JSON
+"$CLI" simulate-measure "$SHOT" "$WORK/moved.json" >/dev/null
+wait_aside 6 "$WORK/6.md"
+check "a pin dragged by its number says where to" contains "$WORK/6.md" "**Move to:**"
+# R, and a click on that pin's number: a follow-up, moved as the pin was.
+cat > "$WORK/again.json" <<'JSON'
+{"scale": 2, "actions": ["restore", {"again": {"number": 1, "comment": "Still too low"}}]}
+JSON
+"$CLI" simulate-measure "$SHOT" "$WORK/again.json" >/dev/null
+wait_aside 7 "$WORK/7.md"
+check "R's follow-up says which pin it follows up on" contains "$WORK/7.md" "**Follow-up to:** pin 1 of"
+check "and is moved as that pin was" contains "$WORK/7.md" "**Move to:**"
+# R again hides the last aside's pins: a click where one was is no follow-up. Again, they're back.
+cat > "$WORK/hidden.json" <<'JSON'
+{"scale": 2, "actions": [{"annotate": {"area": {"x": 250, "y": 40, "width": 110, "height": 50}}},
+  "restore", "restore", {"again": {"number": 1}}]}
+JSON
+"$CLI" simulate-measure "$SHOT" "$WORK/hidden.json" >/dev/null
+wait_aside 8 "$WORK/8.md"
+check "R twice: the last aside's pins are hidden" test -z "$(grep -F '**Follow-up to:**' "$WORK/8.md")"
+cat > "$WORK/shown.json" <<'JSON'
+{"scale": 2, "actions": ["restore", "restore", "restore", {"again": {"number": 1}}]}
+JSON
+"$CLI" simulate-measure "$SHOT" "$WORK/shown.json" >/dev/null
+wait_aside 9 "$WORK/9.md"
+check "R three times: they're back" contains "$WORK/9.md" "**Follow-up to:** pin 1 of"
+# A guide and two pins; Undo twice takes the pins back, Redo the first again.
+cat > "$WORK/redo.json" <<'JSON'
+{"scale": 2, "actions": [{"guide": {"axis": "x", "at": [59, 50]}},
+  {"annotate": {"area": {"x": 250, "y": 40, "width": 110, "height": 50}}},
+  {"annotate": {"area": {"x": 60, "y": 170, "width": 100, "height": 24}}}, "undo", "undo", "redo"]}
+JSON
+"$CLI" simulate-measure "$SHOT" "$WORK/redo.json" >/dev/null
+wait_aside 10 "$WORK/10.md"
+check "Redo puts back what Undo took back" contains "$WORK/10.md" "### 1. Area 110 × 50 at (250, 40)"
+check "one step at a time" test -z "$(grep -F '### 2.' "$WORK/10.md")"
+
 echo "Sending to an agent session (a stand-in agent)"
 # What the user has on the clipboard comes back at the end; the test checks asides puts back its own.
 pbpaste > "$WORK/clipboard.saved" 2>/dev/null || true
