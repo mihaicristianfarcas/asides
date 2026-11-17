@@ -22,15 +22,20 @@ use asides_core::measure::{Frame, Tolerance};
 use asides_core::overlay::{MARKER, Part, Placed, Restore, Saved, Session, Tool, lookups, move_lookup};
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AnyWindowHandle, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, Div, Entity,
-    FocusHandle, Focusable, FontWeight, Hitbox, HitboxBehavior, Hsla, ImageSource, KeyDownEvent, KeyUpEvent, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Point,
-    Render, RenderImage, Rgba, ScrollHandle, SharedString, Window, canvas, deferred, div, img, point, prelude::*, px,
-    quad, size, svg, transparent_black,
+    AnyElement, AnyWindowHandle, App, Bounds, Context, CursorStyle, DispatchPhase, Div, Entity, FocusHandle, Focusable,
+    FontWeight, Hitbox, HitboxBehavior, Hsla, ImageSource, KeyDownEvent, KeyUpEvent, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, RenderImage, Rgba, ScrollHandle,
+    SharedString, Window, canvas, deferred, div, img, point, prelude::*, px, svg, transparent_black,
 };
 
 use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
+use crate::faces::{
+    Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face, card_cluster, card_tool,
+    choose_folder_content, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face, label_at,
+    list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
+    new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box, tool_face, tool_icon,
+};
 use crate::input::{self, TextInput};
 use crate::{finish, glass, io, style};
 
@@ -51,7 +56,7 @@ const LIST_LINGER: Duration = Duration::from_millis(200);
 const SPIN: u32 = 1000;
 /// Tab held moves to the next session this often, slower than keys repeat: each name can be read.
 const TARGET_REPEAT: Duration = Duration::from_millis(240);
-const CARD_WIDTH: f64 = 440.0;
+pub(crate) const CARD_WIDTH: f64 = 440.0;
 /// The card's trash button and the gap before it.
 const TRASH_WIDTH: f64 = 34.0;
 /// How much wider a card is with its camera (a clip of its pin's area).
@@ -79,7 +84,7 @@ pub struct ScreenWindow {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Cmd {
+pub(crate) enum Cmd {
     Tool(Tool),
     HoldH,
     HoldV,
@@ -110,13 +115,13 @@ enum Cmd {
 }
 
 /// The overlay's keys, parsed.
-struct Keys {
+pub(crate) struct Keys {
     list: Vec<(Vec<Chord>, Cmd)>,
-    talk: Vec<Chord>,
+    pub(crate) talk: Vec<Chord>,
 }
 
 impl Keys {
-    fn new(k: &OverlayKeys) -> Keys {
+    pub(crate) fn new(k: &OverlayKeys) -> Keys {
         let p = keys::parse;
         Keys {
             list: vec![
@@ -159,7 +164,7 @@ impl Keys {
         self.list.iter().find(|(chords, _)| keys::matches(chords, key, mods)).map(|(_, c)| *c)
     }
 
-    fn label(&self, cmd: Cmd) -> String {
+    pub(crate) fn label(&self, cmd: Cmd) -> String {
         self.list.iter().find(|(_, c)| *c == cmd).map(|(chords, _)| keys::label(chords)).unwrap_or_default()
     }
 }
@@ -2111,55 +2116,6 @@ fn color(value: u32, alpha: f32) -> Hsla {
 
 // --- Drawing ---
 
-/// What the canvas paints, in window points.
-enum Prim {
-    Fill(PtRect, Hsla),
-    Border(PtRect, Hsla, f32, bool),
-    Stroke(Vec<(f64, f64)>, f32, Hsla),
-    Polygon(Vec<(f64, f64)>, Hsla),
-}
-
-fn paint(prim: Prim, window: &mut Window) {
-    let b =
-        |r: PtRect| Bounds::new(point(px(r.x as f32), px(r.y as f32)), size(px(r.width as f32), px(r.height as f32)));
-    let p = |(x, y): (f64, f64)| point(px(x as f32), px(y as f32));
-    match prim {
-        Prim::Fill(r, c) => window.paint_quad(gpui::fill(b(r), c)),
-        Prim::Border(r, c, w, dashed) => window.paint_quad(quad(
-            b(r),
-            px(0.),
-            transparent_black(),
-            px(w),
-            c,
-            if dashed { BorderStyle::Dashed } else { BorderStyle::Solid },
-        )),
-        Prim::Stroke(points, w, c) => {
-            if points.len() < 2 {
-                return;
-            }
-            let mut builder = PathBuilder::stroke(px(w));
-            builder.move_to(p(points[0]));
-            for q in &points[1..] {
-                builder.line_to(p(*q));
-            }
-            if let Ok(path) = builder.build() {
-                window.paint_path(path, c);
-            }
-        }
-        Prim::Polygon(points, c) => {
-            let mut builder = PathBuilder::fill();
-            builder.move_to(p(points[0]));
-            for q in &points[1..] {
-                builder.line_to(p(*q));
-            }
-            builder.close();
-            if let Ok(path) = builder.build() {
-                window.paint_path(path, c);
-            }
-        }
-    }
-}
-
 /// A glass label, centered on `(x, y)` (window points, in a window `offset` points into screen
 /// `screen`). Its digits are all as wide, and it's never narrower than a short number:
 /// a measurement changing as it's dragged doesn't make it jump.
@@ -2171,37 +2127,8 @@ fn pill(
     text: impl Into<SharedString>,
     (x, y): (f64, f64),
 ) -> AnyElement {
-    let label = frozen_glass(overlay, t, screen, offset, 5.)
-        .min_w(px(LABEL_MIN_WIDTH))
-        .flex()
-        .justify_center()
-        .px(px(6.))
-        .py(px(1.5))
-        .text_color(t.primary)
-        .text_size(px(11.))
-        .font_weight(FontWeight::SEMIBOLD);
-    div()
-        .absolute()
-        .left(px(x as f32 - 150.))
-        .top(px(y as f32 - 10.))
-        .w(px(300.))
-        .h(px(20.))
-        .flex()
-        .justify_center()
-        .items_center()
-        .child(tabular(label).child(text.into()))
-        .into_any_element()
+    label_at(frozen_glass(overlay, t, screen, offset, 5.), t, text, (x, y))
 }
-
-/// Text with its figures all as wide (a label's digits don't jump as they change).
-pub fn tabular(mut text: Div) -> Div {
-    text.text_style().get_or_insert_with(Default::default).font_features =
-        Some(gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
-    text
-}
-
-/// The narrowest a label gets: a few digits and a unit.
-const LABEL_MIN_WIDTH: f32 = 44.0;
 
 /// About how wide a pill is, to keep it on screen.
 fn pill_width(text: &str) -> f64 {
@@ -2536,23 +2463,10 @@ impl Render for ScreenView {
                 let (mx, my) = to(a.at);
                 let hovered_marker = cursor.is_some_and(|(x, y)| (a.at.0 - x).hypot(a.at.1 - y) <= MARKER / 2.0 + 1.0);
                 markers.push(
-                    div()
+                    marker_face(a.number, ink)
                         .absolute()
                         .left(px((mx - MARKER / 2.0) as f32))
                         .top(px((my - MARKER / 2.0) as f32))
-                        .size(px(MARKER as f32))
-                        .rounded_full()
-                        .bg(ink)
-                        .border_2()
-                        .border_color(gpui::white())
-                        .shadow_md()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(gpui::white())
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::BOLD)
-                        .child(a.number.to_string())
                         .into_any_element(),
                 );
                 if hovered_marker && o.card.is_none() {
@@ -2790,16 +2704,6 @@ fn listen(
     });
 }
 
-fn arrow_prims(prims: &mut Vec<Prim>, from: (f64, f64), to: (f64, f64), c: Hsla) {
-    if (to.0 - from.0).hypot(to.1 - from.1) < 2.0 {
-        return;
-    }
-    let [tip, left, right] = style::arrow_head(from, to);
-    let base = ((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0);
-    prims.push(Prim::Stroke(vec![from, base], style::DRAW_WIDTH, c));
-    prims.push(Prim::Polygon(vec![tip, left, right], c));
-}
-
 /// An earlier pin's drawing (R), pale: a white line on a dark band, as its number is drawn, so it
 /// shows on a light page as on a dark one. `to` puts a screen's point in the window.
 fn earlier_drawing(prims: &mut Vec<Prim>, shape: &Shape, lit: bool, to: &impl Fn((f64, f64)) -> (f64, f64)) {
@@ -2840,30 +2744,6 @@ fn pale_arrow(prims: &mut Vec<Prim>, from: (f64, f64), end: (f64, f64), lit: boo
 /// What a toolbar button does.
 type OnPress = dyn Fn(&mut Overlay, &mut Window, &mut Context<Overlay>);
 
-/// How a toolbar button stands out: not at all, selected (a glass pill: the list open, a tool), or
-/// the main action (asides' soft blue).
-#[derive(Clone, Copy, PartialEq)]
-enum Emphasis {
-    Plain,
-    On,
-    Primary,
-}
-
-impl Emphasis {
-    /// Its text and icons.
-    fn ink(self, t: Theme) -> Hsla {
-        match self {
-            Emphasis::Plain => t.primary.opacity(0.86),
-            Emphasis::On => t.primary,
-            Emphasis::Primary => t.on_accent,
-        }
-    }
-}
-
-fn icon(name: &str, ink: Hsla) -> impl IntoElement {
-    svg().path(format!("icons/{name}.svg")).size(px(15.)).text_color(ink)
-}
-
 /// The pill: the microphone, where the aside goes (a click lists the sessions and New session…), the
 /// tool when it isn't Annotate (frozen), start over, send and close. One window, frozen and live; it moves when
 /// it's dragged anywhere but its buttons.
@@ -2876,30 +2756,14 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     let button = |id: &'static str, name: String, emphasis: Emphasis, content: AnyElement, on: Box<OnPress>| {
         let (o1, o2, o3) = (overlay.clone(), overlay.clone(), overlay.clone());
         let name: SharedString = name.into();
-        div()
+        // The tool's box is its slot's (`slot`), easing with it.
+        button_face(emphasis, id != "tool", t)
             .id(id)
             // Where the aside goes: pointed at, the list opens, and stays while the pointer is on it.
             .when(id == "target", |d| {
                 d.relative().child(measured(move |b, cx| o3.update(cx, |o, _| o.target_bounds = Some(b))))
             })
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(5.))
-            .h(px(28.))
-            .min_w(px(30.))
-            .px(px(8.))
-            .rounded(px(8.))
-            .border_1()
-            .border_color(color(0, 0.0))
-            .text_size(px(12.5))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(emphasis.ink(t))
-            // The tool's box is its slot's (`slot`), easing with it.
-            .when(emphasis == Emphasis::On && id != "tool", |d| d.bg(t.selected).border_color(t.selected_stroke))
-            .when(emphasis == Emphasis::Primary, |d| {
-                d.bg(t.accent).when(still, |d| d.hover(|s| s.bg(color(style::UI_LIGHT, 1.0))))
-            })
+            .when(emphasis == Emphasis::Primary && still, |d| d.hover(|s| s.bg(color(style::UI_LIGHT, 1.0))))
             .when(emphasis == Emphasis::Plain && still, |d| d.hover(|s| s.bg(t.hover)))
             .when(still, |d| d.cursor_pointer())
             .on_hover(move |hovered, _, cx| o1.update(cx, |o, cx| o.show_hint(id, name.clone(), *hovered, cx)))
@@ -2915,25 +2779,18 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
             .into_any_element()
     };
     // Room to grab the pill by, around the line.
-    let sep = || div().w(px(1.)).h(px(18.)).mx(px(10.)).bg(t.hairline).into_any_element();
+    let sep = || sep(t);
     // Buttons side by side as one control: the pointer goes from one to the next without leaving
     // them, and the name by the pill changes at once.
-    let group =
-        |buttons: Vec<AnyElement>| div().flex().rounded(px(8.)).bg(t.hover).children(buttons).into_any_element();
+    let group = |buttons: Vec<AnyElement>| group(buttons, t);
     let plain = Emphasis::Plain.ink(t);
     let open = o.list.is_open();
     let target = if open { Emphasis::On } else { Emphasis::Plain };
     let (hover, toggle) = (overlay.clone(), overlay.clone());
     let help = o.help;
     // The keys at a glance: the pill's first button, one control with the microphone.
-    let help_button = div()
+    let help_button = help_face(help, t)
         .id("help")
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(28.))
-        .rounded(px(8.))
-        .when(help, |d| d.bg(t.selected))
         .when(still, |d| d.cursor_pointer().hover(|s| s.bg(t.hover)))
         .on_hover(move |hovered, _, cx| {
             let hovered = *hovered;
@@ -2958,7 +2815,6 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 cx.notify();
             });
         })
-        .child(icon("help", if help { Emphasis::On.ink(t) } else { plain }))
         .into_any_element();
     // What a `Slot` shows, as wide as it's drawn (cut off on both sides while it's narrower, faded
     // while it grows in or shrinks away), noting the width it takes, over what it showed (`was`),
@@ -2998,7 +2854,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .child(div().flex_none().w(px(width.map_or(inset, |w| inset.min(w)))))
                 .child(inside)
         };
-    let name = |name: Option<SharedString>| div().max_w(px(240.)).truncate().children(name);
+    let name = target_name;
     let mut first = vec![help_button, mic_button(overlay, o)];
     if o.spec.clips {
         first.push(clip_button(overlay, o));
@@ -3023,17 +2879,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
     ));
     let first = group(first);
     // A tool's icon and name: in its button, and fading out for another.
-    let face = |tool: Tool| {
-        div()
-            .flex()
-            .items_center()
-            .gap(px(5.))
-            .text_size(px(12.5))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(Emphasis::On.ink(t))
-            .child(icon(tool_icon(tool), Emphasis::On.ink(t)))
-            .child(tool.label())
-    };
+    let face = |tool: Tool| tool_face(tool, t);
     let badge = o.badge.shows().copied().map(|tool| {
         let back = if tool == Tool::Shot { session.previous_tool } else { Tool::Annotate };
         let name = format!(
@@ -3057,7 +2903,7 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
         // Its box eases with the slot, one tool's name fading into the other's inside it: drawn by
         // the button, another tool's name was cut off at the box's edge, then the box moved what
         // came after it as the slot eased, a jump more than a change of length.
-        let under = div().rounded(px(8.)).border_1().bg(t.selected).border_color(t.selected_stroke);
+        let under = tool_box(t);
         slot(
             o.badge.width(scale),
             o.badge.shown(),
@@ -3106,137 +2952,14 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
 /// The keys at a glance, under the pill (or above it, as its list): what asides does, and the keys
 /// for it.
 fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
-    let t = o.theme;
-    let k = |c: Cmd| o.keys.label(c);
-    let where_it_goes = format!("Where it goes (↑ ↓, {})", keys::RETURN);
-    let left: Vec<(&str, Vec<(&str, String)>)> = vec![
-        (
-            "Pins",
-            vec![
-                ("Annotate (click, or drag)", k(Cmd::Tool(Tool::Annotate))),
-                (
-                    if cfg!(target_os = "macos") { "Draw (⇧ for an arrow)" } else { "Draw (Shift for an arrow)" },
-                    k(Cmd::Tool(Tool::Draw)),
-                ),
-                ("Screenshot", k(Cmd::Tool(Tool::Shot))),
-                ("Move it: drag a pin's number", String::new()),
-                ("A pin's card (Tab: the next)", "1 9".into()),
-                ("The last pin's type", format!("{c}1 {c}4", c = keys::COMMAND)),
-                // Short: a longer name pushed the other column's keys past the sheet's edge.
-                ("Follow up (again: hide)", k(Cmd::Restore)),
-            ],
-        ),
-        (
-            "Measuring",
-            vec![
-                ("Measure", k(Cmd::Tool(Tool::Measure))),
-                ("Hold a distance", format!("{} {}", k(Cmd::HoldH), k(Cmd::HoldV))),
-                ("Guide", format!("{} {}", k(Cmd::GuideH), k(Cmd::GuideV))),
-                ("Tolerance", format!("{} {}", k(Cmd::TolDown), k(Cmd::TolUp))),
-                ("Points or pixels", k(Cmd::Units)),
-            ],
-        ),
-    ];
-    let right: Vec<(&str, Vec<(&str, String)>)> = vec![
-        (
-            "Editing",
-            vec![
-                ("Undo", k(Cmd::Undo)),
-                ("Redo", k(Cmd::Redo)),
-                ("Clear", k(Cmd::Clear)),
-                ("Hide everything", k(Cmd::Hide)),
-                ("Copy as Markdown", k(Cmd::CopyMarkdown)),
-            ],
-        ),
-        (
-            "The aside",
-            vec![
-                ("Talk while muted (hold)", keys::label(&o.keys.talk)),
-                ("Mute or listen", k(Cmd::Mic)),
-                ("Next session", k(Cmd::Target)),
-                (&where_it_goes, k(Cmd::Sessions)),
-                ("Live or frozen", o.spec.freeze_shortcut.clone()),
-                ("Record a clip, live", k(Cmd::Clip)),
-                ("Send", format!("{} {}", k(Cmd::Done), o.spec.record_shortcut)),
-                ("Start over", k(Cmd::Restart)),
-                ("Close", k(Cmd::Close)),
-            ],
-        ),
-    ];
-    let cap = |text: String| {
-        div()
-            .min_w(px(18.))
-            .h(px(18.))
-            .px(px(5.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(4.))
-            .bg(t.selected)
-            .border_1()
-            .border_color(t.control_stroke)
-            .text_size(px(11.))
-            .child(text)
-    };
-    let column = |groups: Vec<(&str, Vec<(&str, String)>)>| {
-        div().flex_1().flex().flex_col().gap(px(10.)).children(groups.into_iter().map(|(name, rows)| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(5.))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(t.secondary)
-                        .child(name.to_string()),
-                )
-                .children(rows.into_iter().map(|(label, keys)| {
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(12.))
-                        .text_size(px(12.))
-                        .child(div().text_color(t.primary).child(label.to_string()))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(3.))
-                                .children(keys.split(' ').filter(|k| !k.is_empty()).map(|k| cap(k.to_string()))),
-                        )
-                }))
-        }))
-    };
-    let footer = match o.live {
-        true => format!("Live, your apps have the keyboard: {} freezes the screen again.", o.spec.freeze_shortcut),
-        false => "Click a pin's number (or press it) to type about it, right-click for more.".into(),
-    };
     let measure = overlay.clone();
     let shown = o.keys_sheet.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
-    glass_panel(t)
+    keys_sheet_face(o.theme, &o.keys, &o.spec.freeze_shortcut, &o.spec.record_shortcut, o.live)
         .id("keys")
         .top(slide)
         .opacity(shown)
-        // At least as wide: a wider font than a Mac's or Windows' (Linux's vary) makes it wider.
-        .when(cfg!(target_os = "macos"), |d| d.w(px(KEYS_WIDTH as f32)))
-        .when(!cfg!(target_os = "macos"), |d| d.min_w(px(KEYS_WIDTH as f32)))
-        .p(px(14.))
-        .flex()
-        .flex_col()
-        .gap(px(12.))
-        .text_color(t.primary)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(t.secondary)
-                .child("Click what's wrong or drag around it, say why, and send it."),
-        )
-        .child(div().flex().gap(px(22.)).child(column(left)).child(column(right)))
-        // asides' soft blue reads on the dark glass only.
-        .child(div().text_size(px(11.)).text_color(if t.dark { t.accent } else { t.secondary }).child(footer))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.keys_bounds = Some(bounds))))
         .into_any_element()
 }
@@ -3244,15 +2967,6 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
 /// A button's name, with its key when it has one.
 fn with_key(name: &str, key: String) -> String {
     if key.is_empty() { name.to_string() } else { format!("{name} ({key})") }
-}
-
-fn tool_icon(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Measure => "measure",
-        Tool::Annotate => "annotate",
-        Tool::Draw => "draw",
-        Tool::Shot => "shot",
-    }
 }
 
 /// What a row of the pill's list does.
@@ -3270,7 +2984,6 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     let targets = &o.spec.targets;
     // Firmer than on a solid surface: what's behind shows through.
     let t = o.theme;
-    let (primary, tertiary) = (t.primary, t.secondary);
     // A row: a check where it's chosen, then what it is; hovered (or the arrows on it), a glass
     // pill.
     let choices = o.list_choices();
@@ -3279,21 +2992,10 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
         let (pick, point) = (overlay.clone(), overlay.clone());
         let on = action.is_some() && action == lit;
         let index = action.as_ref().and_then(|a| choices.iter().position(|c| c == a));
-        div()
+        list_row_face(chosen, on, enabled, content, t)
             .id(SharedString::from(id))
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .min_h(px(28.))
-            .px(px(8.))
-            .py(px(3.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(color(0, 0.0))
             .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(t.selected).border_color(t.selected_stroke)))
-            .when(on, |d| d.bg(t.selected).border_color(t.selected_stroke).relative().child(reveal_lit(overlay, o)))
-            .when(!enabled, |d| d.opacity(0.55))
+            .when(on, |d| d.relative().child(reveal_lit(overlay, o)))
             // The pointer lights a row as the arrows do: one is lit at a time.
             .on_hover(move |hovered, _, cx| {
                 if *hovered && index.is_some() {
@@ -3312,32 +3014,11 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                     });
                 }
             })
-            .child(div().flex_none().w(px(14.)).when(chosen, |d| d.child(icon("check", primary))))
-            .child(content)
             .into_any_element()
     };
-    let lines = |title: SharedString, detail: Option<SharedString>| {
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .child(div().truncate().child(title))
-            .children(detail.map(|d| div().text_size(px(11.)).text_color(tertiary).truncate().child(d)))
-            .into_any_element()
-    };
-    let heading = |text: &str| {
-        div()
-            .flex_none()
-            .px(px(8.))
-            .pt(px(6.))
-            .pb(px(3.))
-            .text_size(px(11.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(tertiary)
-            .child(text.to_string())
-    };
-    let hairline = || div().flex_none().h(px(1.)).mx(px(8.)).my(px(4.)).bg(t.hairline).into_any_element();
+    let lines = |title: SharedString, detail: Option<SharedString>| list_lines(title, detail, t);
+    let heading = |text: &str| list_heading(text, t);
+    let hairline = || list_hairline(t);
     let mut rows: Vec<AnyElement> = Vec::new();
     if !targets.sessions.is_empty() || targets.looking {
         rows.push(heading("Sessions").into_any_element());
@@ -3366,21 +3047,11 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
         let segments = targets.agents.iter().enumerate().map(|(i, &agent)| {
             let pick = overlay.clone();
             let on = agent == o.new_agent;
-            div()
+            agent_segment(agent.name(), on, t)
                 .id(SharedString::from(format!("agent-{}", agent.program())))
                 .relative()
                 .child(glide.item(i))
-                .h(px(20.))
-                .px(px(8.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .border_1()
-                .border_color(color(0, 0.0))
-                .text_size(px(11.5))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(if on { primary } else { primary.opacity(0.7) })
-                .when(!on, |d| d.cursor_pointer().hover(|s| s.text_color(primary)))
+                .when(!on, |d| d.cursor_pointer().hover(|s| s.text_color(t.primary)))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     cx.stop_propagation();
                     pick.update(cx, |o, cx| {
@@ -3388,35 +3059,16 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                         cx.notify();
                     });
                 })
-                .child(agent.name())
         });
-        rows.push(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .pr(px(4.))
-                .child(heading("New session"))
-                .child(
-                    div()
-                        .relative()
-                        .flex()
-                        .p(px(2.))
-                        .gap(px(2.))
-                        .rounded(px(7.))
-                        .bg(t.hover)
-                        .child(glide.layer(
-                            targets.agents.iter().position(|&a| a == o.new_agent),
-                            t.selected,
-                            t.selected_stroke,
-                            5.,
-                        ))
-                        .children(segments),
-                )
-                .into_any_element(),
-        );
+        let track = agents_track(t)
+            .child(glide.layer(
+                targets.agents.iter().position(|&a| a == o.new_agent),
+                t.selected,
+                t.selected_stroke,
+                5.,
+            ))
+            .children(segments);
+        rows.push(new_session_row(track, t));
         for (i, (dir, name)) in o.list_folders().into_iter().enumerate() {
             let path = asides_core::paths::tilde(&dir);
             let target = Target::New { agent: o.new_agent, dir };
@@ -3425,16 +3077,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 format!("folder-{i}"),
                 chosen,
                 true,
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(icon("folder", tertiary))
-                    .child(div().flex_none().child(name))
-                    .child(div().min_w_0().text_size(px(11.)).text_color(tertiary).truncate().child(path))
-                    .into_any_element(),
+                folder_content(name, path, t),
                 Some(Pick::Target(target)),
             ));
         }
@@ -3442,13 +3085,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
             "choose-folder".into(),
             false,
             !o.folder_panel,
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(icon("plus", tertiary))
-                .child(format!("Choose {}…", asides_core::paths::DIRECTORY_TITLE))
-                .into_any_element(),
+            choose_folder_content(t),
             (!o.folder_panel).then_some(Pick::ChooseFolder),
         ));
     }
@@ -3464,45 +3101,22 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     let measure = overlay.clone();
     let shown = o.list.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
-    glass_panel(t)
+    list_panel(t)
         .id("targets")
         .top(slide)
         .opacity(shown)
-        .w(px(LIST_WIDTH as f32))
-        .text_size(px(13.))
-        .text_color(primary)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
-            div()
+            list_rows()
                 .id("targets-rows")
                 .max_h(px(LIST_ROWS_HEIGHT as f32))
                 .overflow_y_scroll()
                 .track_scroll(&o.list_scroll)
-                .p(px(4.))
-                .flex()
-                .flex_col()
                 .children(rows),
         )
         .child(controls::scrollbar("targets-bar", &o.list_scroll, t))
         .child(measured(move |bounds, cx| measure.update(cx, |o, _| o.list_bounds = Some(bounds))))
         .into_any_element()
-}
-
-/// A surface of the pill (the pill, its list): rounded, the glass behind it (macOS blurs what's
-/// behind the window there, `native::set_glass`) under the asides window's sidebar's tint, a
-/// hairline around it. No shadow: GPUI fills one under the whole surface too, between the blur and
-/// the tint, and it darkened the glass to near black.
-fn glass_panel(t: Theme) -> Div {
-    div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
-}
-
-/// The pill's tint. Only macOS blurs behind the pill's window (`windows.rs`): elsewhere it's nearly
-/// solid, as Windows' own acrylic is without its blur, or a page reads through the list.
-fn pill_tint(t: Theme) -> Hsla {
-    match cfg!(target_os = "macos") {
-        false => Hsla { a: 0.95, ..t.sidebar },
-        true => t.sidebar,
-    }
 }
 
 /// A surface on a frozen screen (a window `offset` points into screen `screen`), glass like the
@@ -3557,7 +3171,7 @@ fn toolbar_panel(
                     });
                 })
                 // Grabbed anywhere but its buttons; they fill it, their corners inside its own.
-                .child(div().flex().items_center().gap(px(PILL_GAP)).p(px(4.)).children(items))
+                .child(pill_row(items))
                 .child(measured(move |bounds, cx| measure_pill.update(cx, |o, _| o.drawn_pill(bounds)))),
         )
         .children(list)
@@ -3662,23 +3276,10 @@ fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         (true, true) => format!("Listening (click or {mic_key} to mute)").into(),
         (true, false) => format!("Muted (click to listen, or hold {})", keys::label(&o.keys.talk)).into(),
     };
-    let (red, t) = (color(style::RECORDING_SOFT, 1.0), o.theme);
-    // Listening, over the red fill: white on dark glass, the ink on light.
-    let ink = match listening {
-        true if t.dark => gpui::white(),
-        true => t.primary,
-        false => Emphasis::Plain.ink(t),
-    };
-    div()
+    let t = o.theme;
+    mic_face(listening, o.level.now(), t)
         .id("mic")
-        .relative()
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(28.))
-        .rounded(px(8.))
         .when(o.moving_toolbar.is_none(), |d| d.cursor_pointer())
-        .when(listening, |d| d.bg(red.opacity(0.32)))
         .when(!listening && o.moving_toolbar.is_none(), |d| d.hover(|s| s.bg(t.hover)))
         .on_hover(move |hovered, _, cx| tip.update(cx, |o, cx| o.show_hint("mic", name.clone(), *hovered, cx)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -3689,21 +3290,6 @@ fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 cx.notify();
             });
         })
-        // The fill: the button's whole shape, cut at the level (a short one rounded at its own
-        // height overflowed the corners).
-        .when(listening, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .w_full()
-                    .h(gpui::relative(o.level.now().clamp(0.0, 1.0)))
-                    .overflow_hidden()
-                    .child(div().absolute().bottom_0().left_0().size(px(28.)).rounded(px(8.)).bg(red)),
-            )
-        })
-        .child(icon(if listening { "mic" } else { "mic-off" }, ink))
         .into_any_element()
 }
 
@@ -3756,22 +3342,9 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
     let recording = o.recording_seconds();
     let (t1, t2, t3) = (overlay.clone(), overlay.clone(), overlay.clone());
     let name: SharedString = "Say what should change: hold, or tap to start and stop".into();
-    // White on the red while recording.
-    let ink = if recording.is_some() { gpui::white() } else { o.theme.primary };
-    div()
+    talk_face(recording.is_some(), o.theme)
         .id(SharedString::from(id.to_string()))
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(5.))
-        .h(px(28.))
-        .min_w(px(30.))
-        .px(px(7.))
-        .rounded(px(7.))
-        .text_size(px(12.))
-        .text_color(ink)
         .cursor_pointer()
-        .when(recording.is_some(), |d| d.bg(color(style::RECORDING, 1.0)))
         .when(recording.is_none(), |d| d.hover(|s| s.bg(o.theme.hover)))
         .on_hover(move |hovered, _, cx| {
             let name = name.clone();
@@ -3790,7 +3363,6 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .on_mouse_up(MouseButton::Left, move |_, _, cx| {
             t2.update(cx, |o, _| o.talk_button(false));
         })
-        .child(icon("mic", ink))
         .children(recording.filter(|_| timer).map(|s| format!("{}:{:02}", s / 60, s % 60)))
         .into_any_element()
 }
@@ -3960,8 +3532,6 @@ impl Render for NotesView {
 fn live_glass(t: Theme, radius: f32) -> Div {
     div().relative().rounded(px(radius)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
 }
-/// Between the pill's buttons.
-const PILL_GAP: f32 = 2.0;
 /// The pill's list: its width, the most its rows take before they scroll, and the gap above it.
 pub const LIST_WIDTH: f64 = 360.0;
 /// The keys under the pill: their width.
@@ -4087,15 +3657,9 @@ impl ScreenView {
             let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
             let on = card.intent == Some(intent);
             let name: SharedString = format!("{} {}{}", capitalized(intent.as_str()), keys::COMMAND, i + 1).into();
-            div()
+            intent_dot(intent, on, t)
                 .id(SharedString::from(format!("intent-{}", intent.as_str())))
-                .size(px(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
                 .cursor_pointer()
-                .when(on, |d| d.border_2().border_color(t.primary))
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
@@ -4110,27 +3674,15 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(
-                    div()
-                        .size(px(if on { 10. } else { 11. }))
-                        .rounded_full()
-                        .bg(color(style::intent_color(intent), 1.0)),
-                )
         });
         // Draw and Measure, a click away: in the card, their keys type.
         let tools = [Tool::Draw, Tool::Measure].map(|tool| {
             let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
             let on = o.session.tool == tool;
             let name: SharedString = format!("{} ({})", tool.label(), o.keys.label(Cmd::Tool(tool))).into();
-            div()
+            card_tool(tool, on, t)
                 .id(SharedString::from(format!("card-{}", tool_icon(tool))))
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(28.))
-                .rounded(px(7.))
                 .cursor_pointer()
-                .when(on, |d| d.bg(t.selected))
                 .when(!on, |d| d.hover(|s| s.bg(t.hover)))
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
@@ -4148,7 +3700,6 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(icon(tool_icon(tool), t.primary))
         });
         // A clip of what's in its pin's area, live: in the card, K types.
         let camera = filmable.then(|| {
@@ -4202,8 +3753,13 @@ impl ScreenView {
                     .items_start()
                     .gap(px(6.))
                     .child(div().flex_1().child(card.input.clone()))
-                    .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(dots))
-                    .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(tools).children(camera))
+                    .child(card_cluster(dots.map(IntoElement::into_any_element)))
+                    .child(card_cluster(
+                        tools
+                            .into_iter()
+                            .map(IntoElement::into_any_element)
+                            .chain(camera.map(IntoElement::into_any_element)),
+                    ))
                     .child(talk_button(&self.overlay, o, "card-talk", false))
                     .children(trash),
             )

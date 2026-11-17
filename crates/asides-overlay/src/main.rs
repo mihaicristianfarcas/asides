@@ -18,6 +18,7 @@ mod assets;
 mod controls;
 #[cfg_attr(not(target_os = "macos"), path = "win/export.rs")]
 mod export;
+mod faces;
 mod finish;
 mod glass;
 mod help;

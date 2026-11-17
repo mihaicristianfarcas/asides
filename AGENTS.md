@@ -39,7 +39,6 @@ A Rust workspace:
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image, README picture | `python3 scripts/make-og.py` (renders `docs/og.png`, the website's hero as its opening ends; needs Firefox) |
 | Website pictures | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png` and the website's `docs/overlay-*.webp`; shows a window for a few seconds) |
-| Help clips | `python3 scripts/make-help.py` (the real overlay on the demo, `crates/asides-overlay/help/`; shows a window for a few seconds per clip; on Windows, Windows' clips in `help-windows/`) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
 | Windows package | `scripts\package-windows.ps1`, on Windows (zip and installer in `dist\`) |
 | Linux package | `scripts/package-linux.sh`, on Linux (archive, `.deb` and `.rpm` in `dist/`) |
@@ -96,8 +95,8 @@ changes.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
   CONTRIBUTING.md. The website (`docs/index.html`) repeats the main shortcut, requirements and install
-  steps. When the overlay's look changes, regenerate `guide/overlay.png` and Help's clips (Windows'
-  too, made on Windows).
+  steps. When the overlay's look changes, regenerate `guide/overlay.png`; Help draws the overlay's
+  own pieces (`faces.rs`), so it follows by itself.
   What asides protects, the updater's checks included, goes in SECURITY.md.
 
 ## What you can and can't verify
@@ -118,7 +117,8 @@ changes.
   (`screencapture -l`, when your terminal has Screen Recording). Keep the window small and the run
   short: it's on the user's screen
 - open the asides window on a history of your own and capture each part (CONTRIBUTING.md), or
-  record a page to watch Help's clips play (`ASIDES_WINDOW_RECORD`)
+  record a page to watch Help's demonstrations play (`ASIDES_WINDOW_RECORD`), or hold them at a
+  moment (`ASIDES_HELP_AT=<ms>`); `ASIDES_WINDOW_QUIET` captures without taking the keyboard
 - measure screenshots with `asides measure <png> X,Y` (or `X,Y,W,H`)
 - render the menu-bar icons to inspect them: `ASIDES_ICON_DUMP=<dir> cargo test -p asides-app icons` writes RGBA dumps you can convert to PNG
 - read `~/Library/Application Support/asides/state.json`
@@ -438,7 +438,7 @@ use `asides mcp`'s `get_aside`.
 - Replays on Windows: GPUI reads modifiers from the thread's keyboard state (`synthetic::holding`)
   and punctuation is a key and Shift (`?` is Shift and `/`, `VkKeyScanW`); the pill is left out of
   captures until a replay lets it in; windowed screens are ordinary windows (close what's over
-  them); a debug build in a VM needs slower steps (`make-help.py`'s `START`, `DRAG_WAIT`).
+  them); a debug build in a VM needs slower steps.
 - Real agents without an account, nothing leaving the machine: Claude Code with a made-up
   `ANTHROPIC_API_KEY` (its last 20 characters approved in `~/.claude.json`) and
   `ANTHROPIC_BASE_URL` at a closed port; Codex with a `model_provider` whose `base_url` is a closed
