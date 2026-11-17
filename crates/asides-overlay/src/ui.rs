@@ -3122,7 +3122,8 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Move it: drag a pin's number", String::new()),
                 ("A pin's card (Tab: the next)", "1 9".into()),
                 ("The last pin's type", format!("{c}1 {c}4", c = keys::COMMAND)),
-                ("Follow up: the last pins (again: hide)", k(Cmd::Restore)),
+                // Short: a longer name pushed the other column's keys past the sheet's edge.
+                ("Follow up (again: hide)", k(Cmd::Restore)),
             ],
         ),
         (
