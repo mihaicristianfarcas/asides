@@ -214,8 +214,8 @@ kbd {
 /* Waiting to be played (`plays`, set in <head> when motion is welcome). */
 /* A layer of its own: moved by its place, Safari left trails of its shadow on the page. */
 .plays .pointer { display: block; will-change: transform; }
-.plays .ap-tool { width: 0; margin-left: -4px; }
-.plays .asides-pill, .plays .ap-tool, .plays .area-box, .plays .spot, .plays .guide, .plays .ruler, .plays .tag, .plays .note, .plays .say, .plays .say span, .plays .say i, .plays .pointer { opacity: 0; }
+.plays .hero .ap-tool { width: 0; margin-left: -4px; }
+.plays .hero :is(.asides-pill, .ap-tool, .area-box, .spot, .guide, .ruler, .tag, .note, .say, .say span, .say i), .plays .pointer { opacity: 0; }
 /* A gap longer than the path: with one as long, Chromium drew the next dash's round cap at its end. */
 .plays .drawn path { stroke-dasharray: 1 2; stroke-dashoffset: 1; }
 
@@ -225,7 +225,47 @@ kbd {
 .step.shown { display: flex; flex-wrap: wrap; align-items: center; gap: 28px 48px; }
 .step-text { flex: 1 1 300px; min-width: 0; }
 .shot { flex: 2 1 520px; min-width: 0; margin: 0; }
-.shot img { display: block; width: 100%; height: auto; border-radius: 16px; }
+/* What a step looks like, drawn here as asides draws it (the overlay's faces.rs): a plain screen, an
+   app on it, the pill, pins in their colors (an element outlined in blue, an area dashed in green,
+   each number on its pin), a pin's card and what's said. No picture: nothing behind them. */
+.screen { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 16px; padding: 78px 20px 26px; overflow: hidden; background: #e6e6eb; border-radius: 16px; }
+.screen-top { position: absolute; top: 18px; right: 0; left: 0; display: flex; justify-content: center; padding: 0 12px; }
+.app { position: relative; flex: none; width: 272px; padding: 16px 18px 18px; font: var(--text-small)/1.35 var(--sans); color: #1c1b19; text-align: left; text-indent: 0; white-space: normal; background: #fff; border-radius: 12px; box-shadow: 0 0 0 0.5px rgba(17, 17, 19, 0.08), 0 12px 28px -16px rgba(23, 22, 60, 0.35); }
+.app-title { display: block; font-weight: 600; }
+.items { position: relative; margin: 8px -6px 0; padding: 2px 6px; }
+.items p, .total { display: flex; align-items: center; gap: 10px; }
+.items p { padding: 4px 0; }
+.items i { flex: none; width: 26px; height: 26px; border-radius: 7px; }
+.items span:last-child, .total span:last-child { margin-left: auto; }
+.items span:last-child { color: var(--muted); }
+.total { margin-top: 8px; padding-top: 10px; font-weight: 600; border-top: 1px solid var(--line); }
+.pay { position: relative; display: block; width: 92px; margin-top: 14px; padding: 6px 8px; font-weight: 500; line-height: 1.3; color: #fff; text-align: center; background: #2b2a27; border-radius: 9px; }
+.term { flex: 1 1 0; align-self: stretch; min-width: 0; max-width: 280px; overflow: hidden; font: var(--text-small)/1.6 var(--mono); color: #e5e5e5; background: #1e1e1e; border-radius: 12px; }
+.term-bar { padding: 5px 12px; overflow: hidden; font: 500 var(--text-small)/1.6 var(--sans); color: #a8a8ad; white-space: nowrap; text-overflow: ellipsis; background: #38383a; border-bottom: 1px solid #000; }
+.term p { padding: 8px 12px 0; }
+.term .dim { color: #a1a1a6; }
+.term i { display: inline-block; width: 1ch; height: 1.2em; margin-left: 1ch; vertical-align: -0.25em; background: #e5e5e5; }
+.on-element { box-shadow: 0 0 0 1.5px rgba(59, 130, 246, 0.9); }
+.on-area { background: rgba(34, 197, 94, 0.14); outline: 1.5px dashed #22c55e; }
+.app .spot { width: 24px; height: 24px; }
+.app .spot.blue { background: #3b82f6; }
+.app .spot.green { background: #22c55e; }
+.pay .spot { top: -11px; right: -11px; }
+.items .spot { top: -12px; left: -12px; }
+.screen.marked { padding: 30px 20px 118px; }
+.screen.again { padding: 30px 20px 72px; }
+.app .spot.hollow { background: rgba(0, 0, 0, 0.42); border: 2px dashed rgba(255, 255, 255, 0.85); box-shadow: none; }
+.on-earlier { background: rgba(0, 0, 0, 0.12); outline: 1.5px dashed rgba(255, 255, 255, 0.85); }
+.items.roomy p { padding: 7px 0; }
+.pay.one-line { width: max-content; white-space: nowrap; }
+.term b { font-weight: 600; color: #fff; }
+.again .term { max-width: 340px; }
+.screen.marked .app { margin-right: 56px; }
+.screen .note { position: absolute; top: calc(100% - 22px); left: 52px; z-index: 2; flex-wrap: nowrap; }
+.screen .dots i:first-child { margin: 0; outline: 0; }
+.screen .say { position: absolute; bottom: 18px; left: 50%; z-index: 2; width: max-content; max-width: calc(100% - 32px); margin: 0; font-size: var(--text-small); transform: translateX(-50%); }
+.screen .say i.green { background: #22c55e; }
+.screen .say i.blue { background: #3b82f6; }
 .step .combo { margin-bottom: 18px; }
 .step kbd { min-width: 30px; height: 30px; }
 .step kbd:last-child { padding: 0 14px; }
@@ -260,7 +300,9 @@ kbd {
 .line.place { --c: var(--place); }
 .line b { font-weight: 600; color: #fff; }
 .line u { font-weight: 600; color: #fff; text-decoration: none; background: rgba(255, 255, 255, 0.16); border-radius: 3px; padding: 0 3px; }
-.line img { display: block; width: calc(100% + 104px); height: auto; margin-top: 8px; border-radius: 4px; }
+/* The screenshot the agent gets: the app as it was marked, a little smaller. */
+.snap { display: block; width: fit-content; max-width: 100%; margin-top: 8px; padding: 14px 18px; text-indent: 0; white-space: normal; background: #e6e6eb; border-radius: 6px; }
+.snap .app { zoom: 0.64; }
 .chat-prompt { padding: 8px 14px 10px 30px; border-top: 1px solid #3a3a3c; }
 .chat-prompt i { display: inline-block; width: 1ch; height: 1.25em; margin-left: 1ch; vertical-align: -0.25em; background: #e5e5e5; }
 .works { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 32px; padding-top: 22px; font-size: var(--text-small); color: var(--muted); border-top: 1px solid #e1e1e6; }
@@ -486,7 +528,12 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .step, .step.shown { border-radius: 22px; }
   .list li { grid-template-columns: minmax(0, 1fr); }
   .line { padding: 6px 12px 6px calc(24px + 2ch); }
-  .line img { width: 100%; }
+  .screen .term { display: none; }
+  .screen-top .asides-pill { zoom: 0.76; }
+  .screen:not(.marked, .again) { padding-top: 64px; }
+  .screen.marked .app { margin-right: 0; }
+  .screen .note { left: 8px; }
+  .screen .dots { display: none; }
   .line::before { left: 10px; }
   .chat-prompt { padding-left: 24px; }
   .line::after { position: static; display: block; margin-top: 2px; }
@@ -583,7 +630,11 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         <h2 id="frozen">Every screen freezes.</h2>
         <p>Opens in about 110 ms on a Mac, over anything on screen, under one small pill.</p>
       </div>
-      <figure class="shot"><img src="overlay-frozen.webp" width="1434" height="430" alt="A frozen screen: the menu bar, the asides pill sending to Claude Code (shop), and the top of a checkout page." decoding="async"></figure>
+      <figure class="shot screen" role="img" aria-label="A frozen screen: the asides pill at the top, sending to Claude Code (shop), over an order summary, and the agent's chat beside it.">
+        <div class="screen-top"><div class="asides-pill"><span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span><span class="ap-mic"><i class="ap-lit"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span><span class="ap-to">Claude Code (shop)</span><span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span><span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span></div></div>
+        <div class="app"><span class="app-title">Order summary</span><div class="items"><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay">Pay now · $72.00</div></div>
+        <div class="term"><div class="term-bar">shop — claude</div><p class="dim">&gt; Run the checkout tests</p><p>● All 14 tests pass.</p><p class="dim">&gt;<i></i></p></div>
+      </figure>
     </section>
 
     <section class="step shown" aria-labelledby="point">
@@ -591,7 +642,10 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         <h2 id="point">Click what's wrong. <br>Say why.</h2>
         <p>Each pin lands at the word you said as you placed it. Measure, draw, or drag a pin's number to show where it should go.</p>
       </div>
-      <figure class="shot"><img src="overlay-pins.webp" width="900" height="442" alt="Pins on an order summary and a Pay now button, with a card reading Keep the label on one line." loading="lazy" decoding="async"></figure>
+      <figure class="shot screen marked" role="img" aria-label="Pin 1 on the Pay now button, its card reading Keep the label on one line, and pin 2 around the order's items; below, what was said: This button 1 wraps, and these rows 2 are cramped.">
+        <div class="app-wrap" style="position:relative"><div class="app"><span class="app-title">Order summary</span><div class="items on-area"><span class="spot green" data-n="2"></span><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay on-element"><span class="spot blue" data-n="1"></span>Pay now · $72.00</div></div><div class="note"><span class="note-field">Keep the label on one line<i class="caret"></i></span><span class="dots"><i style="background:#ef4444"></i><i style="background:#f59e0b"></i><i style="background:#8b5cf6"></i><i style="background:#14b8a6"></i></span><span class="note-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span></div></div>
+        <p class="say">This button <i class="blue">1</i> wraps, and these rows <i class="green">2</i> are cramped.</p>
+      </figure>
     </section>
 
     <section class="step gets" aria-labelledby="gets">
@@ -625,22 +679,35 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         <figure class="chat" aria-label="An example message">
           <figcaption class="chat-bar">shop — claude — 96×34</figcaption>
           <div class="lines">
-            <div class="line marks" data-from="annotations">&gt; [Image #1]<img src="overlay-pins.webp" width="900" height="442" alt="The screenshot your agent gets: the same pins on the order summary and the button." loading="lazy" decoding="async"></div>
-            <div class="line place" data-from="screen"><b>**In:**</b> Safari ("Checkout · meadow", localhost:5173/checkout)</div>
-            <div class="line voice" data-from="voice">The summary card <u>[1]</u> is jammed under the header.</div>
+            <div class="line marks" data-from="annotations">&gt; [Image #1]<div class="snap" role="img" aria-label="The screenshot your agent gets: the order summary with pin 1 on the button and pin 2 around the items."><div class="app"><span class="app-title">Order summary</span><div class="items on-area"><span class="spot green" data-n="2"></span><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay on-element"><span class="spot blue" data-n="1"></span>Pay now · $72.00</div></div></div></div>
+            <div class="line place" data-from="screen"><b>**In:**</b> Safari ("Checkout · shop", localhost:5173/checkout)</div>
+            <div class="line voice" data-from="voice">This button <u>[1]</u> wraps.</div>
             <div class="line marks" data-from="annotations"><b>**Measured**</b> in pt (screen: Built-in Retina Display, 1512 × 945 pt, @2x)
-- Distance from (610, 173): 6 down (y 170 to y 176)</div>
-            <div class="line voice" data-from="voice">And this button <u>[2]</u> wraps.</div>
-            <div class="line marks" data-from="annotations"><b>### 1. group "Order summary"</b>
-<b>**Location:**</b> main &gt; aside.summary</div>
-            <div class="line marks" data-from="annotations"><b>### 2. button "Pay now · $72.00"</b>
+- Distance from (204, 247): 4 down (y 245 to y 249)</div>
+            <div class="line voice" data-from="voice">And these rows <u>[2]</u> are cramped.</div>
+            <div class="line marks" data-from="annotations"><b>### 1. button "Pay now · $72.00"</b>
 <b>**Location:**</b> aside.summary &gt; button.pay
 <b>**Feedback:**</b> Keep the label on one line</div>
+            <div class="line marks" data-from="annotations"><b>### 2. list "Items"</b>
+<b>**Location:**</b> aside.summary &gt; ul.items</div>
           </div>
           <div class="chat-prompt" aria-hidden="true">&gt;<i></i></div>
         </figure>
       </div>
       <p class="works"><span>Works with</span> <b>Claude Code</b> <b>Codex</b> <b>OpenCode</b> <b>Gemini CLI</b> <b>Copilot CLI</b> <b>Qwen Code</b></p>
+    </section>
+
+    <section class="step shown" aria-labelledby="again">
+      <div class="step-text">
+        <span class="combo"><kbd>R</kbd></span>
+        <h2 id="again">Then check the fix.</h2>
+        <p>Freeze again and press R: the last aside's pins come back where they were. Click one to pin what's there now, and your agent gets both, to compare. Through <code>asides mcp</code>, it can look again itself.</p>
+      </div>
+      <figure class="shot screen again" role="img" aria-label="The fixed order summary: pin 2 of the last aside still hollow around the items, and a new pin 1 on the Pay now button, now on one line; below, what was said: One line now 1. The agent's chat gets it as a follow-up to pin 1.">
+        <div class="app"><span class="app-title">Order summary</span><div class="items roomy on-earlier"><span class="spot hollow" data-n="2"></span><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay one-line on-element"><span class="spot blue" data-n="1"></span>Pay now · $72.00</div></div>
+        <div class="term"><div class="term-bar">shop — claude</div><p class="dim">&gt; One line now [1].</p><p><b>### 1. button "Pay now · $72.00"</b></p><p class="dim">**Follow-up to:** pin 1 of 2026-11-17-142310</p><p class="dim">&gt;<i></i></p></div>
+        <p class="say">One line now <i class="blue">1</i>.</p>
+      </figure>
     </section>
   </div>
 
@@ -659,6 +726,8 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
       <li><b>Draw and crop</b><span>Circle, underline or point with an arrow, or take just part of the screen.</span></li>
       <li><b>Talk, or type</b><span>Each pin lands at the word you said as you placed it. Muted, each opens a card to type in.</span></li>
       <li><b>Freeze, use, freeze again</b><span>Opens in about 110 ms on a Mac. One aside holds every freeze, in the order you went.</span></li>
+      <li><b>Record what happens</b><span><kbd>K</kbd> records a clip, live: each screen the app settled on, timed, or just a pin's area.</span></li>
+      <li><b>Check the fix</b><span><kbd>R</kbd> brings back the last aside's pins to follow up on; your agent can look again at what each was on.</span></li>
       <li><b>Local, verbatim and free</b><span>Whisper on your own computer, word for word, in any language. No account, no audio sent.</span></li>
       <li><b>A history, not files</b><span>Every aside kept on your computer for 30 days, to read or send again.</span></li>
       <li><b>From the keyboard</b><span>Tab through pins and sessions, or press a pin's number. <kbd>?</kbd> shows every key.</span></li>
@@ -754,8 +823,8 @@ brew install --cask mihaicristianfarcas/asides/asides</code></pre><button class=
         <p>Click what's wrong, say why, and press it again.</p>
       </li>
       <li class="extra">
-        <h3>Let your agent look back, if you like</h3>
-        <p>Through <code>asides mcp</code>, it can read past asides and measure screenshots.</p>
+        <h3>Let your agent look again, if you like</h3>
+        <p>Through <code>asides mcp</code>, it can read past asides, measure screenshots, and see what a pin was on as it is now, to check its change.</p>
         <div class="code"><div class="agents" role="tablist" aria-label="Coding agent" hidden><button type="button" role="tab" aria-selected="true">Claude Code</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Codex</button><button type="button" role="tab" aria-selected="false" tabindex="-1">OpenCode</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Gemini CLI</button><button type="button" role="tab" aria-selected="false" tabindex="-1">Copilot CLI</button></div><pre><code>claude mcp add --scope user asides -- asides mcp
 codex mcp add asides -- asides mcp
 opencode mcp add --global asides -- asides mcp
@@ -785,7 +854,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
       </details>
       <details>
         <summary>Which agents work with it?<span class="x" aria-hidden="true"></span></summary>
-        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code, in Terminal, Ghostty or Diri, and on Windows and Linux in any terminal. asides types each aside in the way you would, so there's nothing to install in the agent. Any agent with MCP can also read past asides through <code>asides mcp</code>.</p></div>
+        <div class="a"><p>Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI and Qwen Code, in Terminal, Ghostty or Diri, and on Windows and Linux in any terminal. asides types each aside in the way you would, so there's nothing to install in the agent. Any agent with MCP can also read past asides, and look again at what a pin was on, through <code>asides mcp</code>.</p></div>
       </details>
       <details>
         <summary>Does it only work on web pages?<span class="x" aria-hidden="true"></span></summary>

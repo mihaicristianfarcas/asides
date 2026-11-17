@@ -38,7 +38,6 @@ A Rust workspace:
 | Install | `make install` |
 | Test fixtures | `make fixtures` (needs the macOS voice "Ioana") |
 | Share image, README picture | `python3 scripts/make-og.py` (renders `docs/og.png`, the website's hero as its opening ends; needs Firefox) |
-| Website pictures | `python3 scripts/make-screenshot.py` (the real overlay on the demo, `guide/overlay.png` and the website's `docs/overlay-*.webp`; shows a window for a few seconds) |
 | App icon | `swift scripts/make-icon.swift` (writes `packaging/asides.icns` and `asides.ico`) |
 | Windows package | `scripts\package-windows.ps1`, on Windows (zip and installer in `dist\`) |
 | Linux package | `scripts/package-linux.sh`, on Linux (archive, `.deb` and `.rpm` in `dist/`) |
@@ -95,8 +94,8 @@ changes.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
   CONTRIBUTING.md. The website (`docs/index.html`) repeats the main shortcut, requirements and install
-  steps. When the overlay's look changes, regenerate `guide/overlay.png`; Help draws the overlay's
-  own pieces (`faces.rs`), so it follows by itself.
+  steps. When the overlay's look changes, change the website's figures (HTML, in `faces.rs`'s
+  shapes and colors); Help draws the overlay's own pieces, so it follows by itself.
   What asides protects, the updater's checks included, goes in SECURITY.md.
 
 ## What you can and can't verify
