@@ -209,8 +209,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Looking again**: `asides look 1` soon after an aside answers with only the pin's window
   (on a Mac, even covered), the menu bar's eye; refused while asides is open, once the setting's
   minutes are over, and with Never.
-- [ ] **Clips**: live, the pill's camera turns red; an animation, a flash, then its square: the
-  aside's strip shows them, numbered and timed; `K` frozen goes live and records; freezing,
+- [ ] **Clips**: live, the pill's camera turns red; clicks that change the screen, an animation, a
+  flash, then its square: the aside's pictures show each screen it settled on, the animation and
+  the flash (said to be one), numbered and timed, with readable text; `K` frozen goes live and records; freezing,
   sending and closing end it; another app coming to the front starts it over on that one.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
