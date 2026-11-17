@@ -287,7 +287,7 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "pin": { "type": "integer", "minimum": 1, "description": "The pin's number in the aside." },
-                    "id": { "type": "string", "description": "The aside's id (list_asides), or \"last\" (the default)." }
+                    "id": { "type": "string", "description": "The aside's id (list_asides), or \"last\" (the default: the newest aside with pins)." }
                 },
                 "required": ["pin"]
             },

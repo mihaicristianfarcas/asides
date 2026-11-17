@@ -155,7 +155,7 @@ release-signing.pub`.
 | `asides send [ID] [--to SESSION]` | Send an aside again, to a session from `asides sessions` or `--to history`. |
 | `asides download [MODEL]` | Download a voice model. |
 | `asides measure IMAGE X,Y` | Measure a PNG from a point, or `X,Y,W,H` for the object in an area. |
-| `asides look PIN [ID]` | What a pin of an aside (the newest by default) was on, as it is now: a picture of only the window it was in, for your agent to check its change. For 15 minutes after the aside (General → **Let agents look again for**), never while asides is open; on Windows and Linux, only with nothing over that part of the window. The menu bar shows an eye each time. |
+| `asides look PIN [ID]` | What a pin of an aside (by default the newest with pins) was on, as it is now: a picture of only the window it was in, for your agent to check its change. For 15 minutes after the aside (General → **Let agents look again for**), never while asides is open; on Windows and Linux, only with nothing over that part of the window. The menu bar shows an eye each time. |
 | `asides status` | What asides is doing, and where asides go. |
 | `asides log` | What went wrong lately: problems, crash reports, the log's last lines. |
 | `asides mcp` | The MCP server (below). |

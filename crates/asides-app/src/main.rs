@@ -557,7 +557,7 @@ impl App {
         self.look_for_agents();
         self.sync_wispr();
         self.prune_history();
-        self.last_pinned = history::list(&history::dir()).into_iter().find(has_places);
+        self.last_pinned = history::last_pinned(&history::dir());
         self.link_command();
         self.stand_by();
         self.start_updater();
@@ -824,7 +824,7 @@ impl App {
             Outcome::Kept { aside, target } => {
                 self.error = None;
                 self.last_aside = Some(aside.id.clone());
-                if has_places(&aside) {
+                if aside.has_places() {
                     self.last_pinned = Some((*aside).clone());
                 }
                 if self.config.copy_asides {
@@ -1484,8 +1484,16 @@ impl App {
     /// An agent asks to see what pin `pin` of aside `id` was on, as it is now (`asides look`): only
     /// what `look::plan` lets it, captured off the main thread. The answer is the state's `looked`.
     fn look_again(&mut self, id: &str, pin: u32, request: String) {
-        let Some(aside) = history::find(&history::dir(), id) else {
-            return self.not_looked(request, id.into(), pin, format!("There's no aside {id} in the history."));
+        // Unnamed, the aside the agent most likely got: the newest with pins, not a clip sent since.
+        let found = match id.trim() {
+            "" | "last" | "latest" => {
+                history::last_pinned(&history::dir()).ok_or_else(|| "No aside in the history has pins.".to_string())
+            }
+            id => history::find(&history::dir(), id).ok_or_else(|| format!("There's no aside {id} in the history.")),
+        };
+        let aside = match found {
+            Ok(aside) => aside,
+            Err(why) => return self.not_looked(request, id.into(), pin, why),
         };
         let refuse = |this: &mut Self, why: String| this.not_looked(request.clone(), aside.id.clone(), pin, why);
         // Frozen, the screens show asides' own windows.
@@ -2749,11 +2757,6 @@ fn inspection_parts(
         }
     }
     (pictures, texts, pins)
-}
-
-/// Whether `aside` has pins whose places on the screen are known.
-fn has_places(aside: &Aside) -> bool {
-    aside.record.pins.iter().any(|p| p.spot.is_some())
 }
 
 /// Aside `id`'s number among today's (it's the newest): the menu bar shows it (`[3]`).
