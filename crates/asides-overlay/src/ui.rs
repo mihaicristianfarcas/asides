@@ -19,7 +19,7 @@ use asides_core::helper::{ClipArea, Command, Event, Item, Spec, SpecScreen, Targ
 use asides_core::inspect::{Annotation, Axis, Element, Intent, Measurement, PtRect, Said, Severity, Shape, num};
 use asides_core::keys::{self, Chord, Mods};
 use asides_core::measure::{Frame, Tolerance};
-use asides_core::overlay::{MARKER, Part, Placed, Saved, Session, Tool, lookups, move_lookup};
+use asides_core::overlay::{MARKER, Part, Placed, Restore, Saved, Session, Tool, lookups, move_lookup};
 use futures::StreamExt;
 use gpui::{
     AnyElement, AnyWindowHandle, App, BorderStyle, Bounds, Context, CursorStyle, DispatchPhase, Div, Entity,
@@ -1646,18 +1646,21 @@ impl Overlay {
                 self.shots.clear();
             }
             Cmd::Hide => s.hidden = !s.hidden,
-            Cmd::Restore => {
-                let saved = self.spec.saved.clone();
-                let measured = self.session.restore(&saved);
-                let earlier = self.spec.earlier.clone();
-                let pins = self.session.show_earlier(&earlier);
-                match (pins, measured) {
-                    (true, true) => self.toast("The last pins, guides and measurements are back"),
-                    (true, false) => self.toast("The last aside's pins are back: click one to follow up"),
-                    (false, true) => self.toast("Restored the last guides and measurements"),
-                    (false, false) => {}
+            // R, then again: the last aside's pins go, and come back (`Session::press_restore`).
+            Cmd::Restore => match self.session.press_restore(&self.spec.saved, &self.spec.earlier) {
+                Restore::Back { pins: true, measured: true } => {
+                    self.toast("The last pins, guides and measurements are back")
                 }
-            }
+                Restore::Back { pins: true, measured: false } | Restore::Showed(_) => {
+                    self.toast("The last aside's pins are back: click one to follow up")
+                }
+                Restore::Back { pins: false, .. } => self.toast("Restored the last guides and measurements"),
+                Restore::Hid(_) => self.toast(format!(
+                    "The last aside's pins are hidden ({} shows them again)",
+                    self.keys.label(Cmd::Restore)
+                )),
+                Restore::Nothing => {}
+            },
             Cmd::Help => self.help = !self.help,
             Cmd::Mic => self.mic(),
             Cmd::Target => self.next_target(),
@@ -3103,7 +3106,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Move it: drag a pin's number", String::new()),
                 ("A pin's card (Tab: the next)", "1 9".into()),
                 ("The last pin's type", format!("{c}1 {c}4", c = keys::COMMAND)),
-                ("Follow up: the last aside's pins", k(Cmd::Restore)),
+                ("Follow up: the last pins (again: hide)", k(Cmd::Restore)),
             ],
         ),
         (
