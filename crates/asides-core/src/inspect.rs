@@ -483,8 +483,24 @@ pub struct Earlier {
     pub at: (f64, f64),
     pub area: Option<PtRect>,
     pub shape: Option<Shape>,
+    /// What it marked (`Spot::region`), and how far it asked that to move (`Annotation::moved`).
+    pub region: Option<PtRect>,
+    pub moved: Option<(f64, f64)>,
     /// What it was on (`button "Save"`).
     pub title: String,
+}
+
+impl Earlier {
+    /// What it marked, or its number's point: where its move starts.
+    pub fn from(&self) -> PtRect {
+        self.region.unwrap_or(PtRect::new(self.at.0, self.at.1, 0.0, 0.0))
+    }
+
+    /// Where it asked what it marked to go, when it was moved by its number.
+    pub fn moved_region(&self) -> Option<PtRect> {
+        let ((dx, dy), r) = (self.moved?, self.from());
+        Some(PtRect::new(r.x + dx, r.y + dy, r.width, r.height))
+    }
 }
 
 /// Where a pin was on the screen, kept with its aside (`history::Pin`): a later freeze shows it
@@ -505,6 +521,8 @@ pub struct Spot {
     /// What it marked, in the screen's points: its area, its drawing, or the element it was on.
     /// None for a point on nothing named.
     pub region: Option<PtRect>,
+    /// Dragged by its number: how far what it marked should go (`Annotation::moved`).
+    pub moved: Option<(f64, f64)>,
     /// What it was on (`button "Save"`).
     pub title: String,
     /// The app and the window it was in, and that window as the system knew it and where it was
@@ -535,6 +553,7 @@ impl Spot {
             area: annotation.area,
             shape: annotation.shape.clone(),
             region: annotation.region(),
+            moved: annotation.moved,
             title: annotation.title(on.scale, units),
             app: element.app,
             window: element.window,
