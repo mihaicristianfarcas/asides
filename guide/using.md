@@ -19,6 +19,7 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
 | `R` | Follow up on the last aside: its pins show again where they were, hollow. Click one to pin what's there now; the new pin says which one it follows up on (**Follow-up to:**), so the agent can compare. |
+| `K` or the pill's camera | Record a clip of what happens next, live (frozen, `K` goes live first). The pill's square stops it, and so do freezing, sending and closing (a minute at most). The aside gets one picture of the moments the app in front changed, numbered and timed: a flash, a stutter, things in the wrong order. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still
 works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) for every key. The
@@ -212,6 +213,7 @@ differences:
 | Sessions | Agents in any terminal. tmux, Konsole and WezTerm take text themselves; kitty too with remote control on. Others go through a small helper, which where the system restricts it (Ubuntu, Arch) you allow once in setup. New sessions open in your desktop's terminal, or `[agents] terminal` in Settings. |
 | Frozen | Panels and keys aren't held back as on a Mac: `Alt+Tab` and the desktop's own shortcuts may still work. |
 | Permissions | GNOME on Wayland asks once before the first screenshot, with asides' window in front: **Allow…** by Screenshots in setup (a freeze not yet allowed opens it there). Pins name elements through AT-SPI: GTK apps always, Qt and browsers when the desktop's accessibility is on; KDE's and GNOME's Wayland tell asides nothing about windows, so otherwise a pin is a point. |
+| Clips | On X11 only: a Wayland desktop shows the screen to asides a picture at a time. |
 | Scaled screens | On Wayland the overlay runs under Xwayland, which may draw it slightly soft at fractional scales. Screenshots keep the screen's full resolution. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |
 | Files | History in `~/.asides/history`; settings in `~/.config/asides`; voice models in `~/.local/share/asides`; the log in `~/.local/state/asides`. |

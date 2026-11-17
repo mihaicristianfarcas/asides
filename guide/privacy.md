@@ -20,7 +20,7 @@ Setup asks for each as you go (General → **Set Up Again** shows them, allowed 
 | Permission | Asked | For |
 |---|---|---|
 | Microphone | the first time you talk | talking |
-| Screen Recording | the first time you freeze the screen | the screenshots, and what agents look at again |
+| Screen Recording | the first time you freeze the screen | the screenshots, clips, and what agents look at again |
 | Accessibility | the first time asides opens | naming what's under a pin. Without it, pins name the app and window. |
 | Automation | the first time asides types into Terminal or Ghostty | typing the aside in (Diri needs none) |
 | Administrator password | once, for a downloaded copy | linking `asides` into `/usr/local/bin`. Cancel to skip. |

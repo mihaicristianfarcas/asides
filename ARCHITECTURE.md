@@ -113,7 +113,8 @@ crates/
     overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore,
                       follow-ups), scripts
     look.rs           what an agent may look at again (`asides look`): a pin's window, for a while
-    picture.rs        frames cropped, scaled and encoded as PNGs (looks)
+    motion.rs         clips: the frames a recording keeps as the screen changes, and their strip
+    picture.rs        frames cropped, scaled and encoded as PNGs (looks, clips)
     takes.rs          a session's recordings, joined into one, with their moments
     helper.rs         app ↔ overlay protocol: Spec, Event, Command, Outcome
     keys.rs           the overlay's key chords
@@ -167,8 +168,10 @@ crates/
     terminal.rs       running plans (dirijor, osascript, clipboard), starting sessions
     clipboard.rs      pasting screenshots, restoring the pasteboard; an aside copied (text, HTML,
                       RTFD, and each screenshot as an item of its own)
-    capture.rs        ScreenCaptureKit screenshots in sRGB; one window alone (looks); Screen
-                      Recording
+    capture.rs        ScreenCaptureKit screenshots in sRGB; one window alone (looks); an app's
+                      frames as they change (clips); Screen Recording
+    clip.rs           a clip being recorded: frames into motion.rs's recorder, put together off
+                      the main thread
     overlay.rs        driving asides-overlay; the standby process
     elements.rs       what's under a pin: window list and accessibility tree
     stt.rs            model downloads, whisper-rs, language choice
@@ -243,6 +246,9 @@ the pill names the session typed into last from its first frame.
    non-activating panel (the same one frozen, above the screens). Freezing again captures again, leaving out the overlay's windows
    (`Session::refrozen`). `R` shows the last aside's pins again (`Spec::earlier`, from the places
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
+   Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each
+   frame the app in front shows as it changes (`capture::watch`); `motion::Recorder` keeps a few.
+   Freezing, sending or closing ends it, and its strip joins the aside as an image.
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).
 5. **Send** (`finish`): the overlay renders each freeze's screenshot, around what's on it
@@ -319,7 +325,8 @@ Break these only on purpose, and update this list.
 2. **Nothing polls.** Everything waits on what happens (input, notifications, FSEvents through
    `watch.rs`, kqueue, a process ending, a channel) or sleeps until the exact time something is
    due. A timer only where nothing says, and the code says why (the update check, the watchdog's
-   deadline: a stuck thread can't say so).
+   deadline: a stuck thread can't say so; a clip on Windows and Linux, where nothing says when the
+   screen changes).
 3. **AppKit, tray and menu objects are touched on the main thread only** (the pasteboard excepted);
    on Windows, each window's messages on the thread that made it (UI Automation on a thread of its
    own).

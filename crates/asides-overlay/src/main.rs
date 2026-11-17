@@ -105,6 +105,8 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
                 session.restore(&spec.saved);
                 session.show_earlier(&spec.earlier);
             }
+            // The app records the real screen, whatever image the script plays on.
+            Action::Clip(on) if live && spec.clips => io::emit(&Event::Clip { on: *on }),
             _ => {}
         }
         if let Placed::Shot { screen, rect } = session.apply(action)

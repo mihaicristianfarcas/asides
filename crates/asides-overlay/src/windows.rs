@@ -677,6 +677,7 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
             o.pill_hidden = false;
             // The live screen shows: what was done on the frozen one goes in the aside.
             o.keep_last();
+            o.live_shown();
         })
     })
 }

@@ -88,6 +88,15 @@ pub fn rect_to_points(monitors: &[Monitor], (x, y, w, h): (f64, f64, f64, f64)) 
     PtRect::new(px, py, w / scale, h / scale)
 }
 
+/// A rectangle in global points (y down) in physical pixels (`x, y, width, height`), by the monitor
+/// its top-left corner is on.
+pub fn rect_to_pixels(monitors: &[Monitor], rect: PtRect) -> (i32, i32, i32, i32) {
+    let corner = (rect.x, rect.y);
+    let scale = nearest(monitors, |m| m.contains_point(corner), corner).map_or(1.0, |m| m.scale);
+    let (x, y) = to_pixels(monitors, corner);
+    (x.round() as i32, y.round() as i32, (rect.width * scale).round() as i32, (rect.height * scale).round() as i32)
+}
+
 /// AppKit's y (up from the main screen's bottom) and global points' (down from its top) for a
 /// rectangle `height` tall.
 pub fn flip_y(monitors: &[Monitor], y: f64, height: f64) -> f64 {
@@ -306,6 +315,8 @@ mod tests {
         assert_eq!(to_points(&desk, (-100.0, 50.0)), (-100.0, 50.0));
         assert_eq!(to_pixels(&desk, (-100.0, 50.0)), (-100.0, 50.0));
         assert_eq!(rect_to_points(&desk, (300.0, 150.0, 600.0, 300.0)), PtRect::new(200.0, 100.0, 400.0, 200.0));
+        assert_eq!(rect_to_pixels(&desk, PtRect::new(200.0, 100.0, 400.0, 200.0)), (300, 150, 600, 300));
+        assert_eq!(rect_to_pixels(&desk, PtRect::new(-1000.0, -100.0, 400.0, 300.0)), (-1000, -100, 400, 300));
         assert_eq!(flip_y(&desk, 100.0, 200.0), 900.0);
         // A window's frame (AppKit's), on the main screen and on the other.
         let pill = PtRect::new(800.0, 1200.0 - 50.0 - 40.0, 300.0, 40.0);

@@ -187,6 +187,8 @@ pub struct OverlayKeys {
     pub restart: String,
     /// Back to the live screen (the freeze shortcut does it too, from anywhere).
     pub live: String,
+    /// Record a clip of what happens next: the screen goes live, and the pill's button stops it.
+    pub clip: String,
     /// Close without sending anything; a second press when there's something to lose.
     pub close: String,
 }
@@ -223,6 +225,7 @@ impl Default for OverlayKeys {
             done_whole_screen: k("alt+enter"),
             restart: k("cmd+backspace"),
             live: k(""),
+            clip: k("k"),
             close: k("escape"),
         }
     }
@@ -230,7 +233,7 @@ impl Default for OverlayKeys {
 
 impl OverlayKeys {
     /// Every action's name in the settings, in the order they're declared.
-    pub const NAMES: [&str; 29] = [
+    pub const NAMES: [&str; 30] = [
         "measure",
         "annotate",
         "draw",
@@ -259,6 +262,7 @@ impl OverlayKeys {
         "done_whole_screen",
         "restart",
         "live",
+        "clip",
         "close",
     ];
 
@@ -293,6 +297,7 @@ impl OverlayKeys {
             "done_whole_screen" => &self.done_whole_screen,
             "restart" => &self.restart,
             "live" => &self.live,
+            "clip" => &self.clip,
             "close" => &self.close,
             _ => return None,
         })
@@ -328,6 +333,7 @@ impl OverlayKeys {
             "done_whole_screen" => &mut self.done_whole_screen,
             "restart" => &mut self.restart,
             "live" => &mut self.live,
+            "clip" => &mut self.clip,
             "close" => &mut self.close,
             _ => return None,
         })

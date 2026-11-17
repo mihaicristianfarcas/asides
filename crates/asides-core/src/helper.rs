@@ -73,6 +73,8 @@ pub struct Spec {
     pub live: bool,
     /// Where the pill goes (`AppState::pill_at`).
     pub pill_at: Option<(f64, f64)>,
+    /// The app can record what happens on the live screen (`Event::Clip`): the pill has its button.
+    pub clips: bool,
 }
 
 /// The speech model, as the pill shows it.
@@ -222,6 +224,9 @@ pub enum Event {
     Freeze,
     /// Back to the live screen (give the keyboard back to the app that had it).
     Live,
+    /// Record what the app in front shows from now on (a clip, `asides_core::motion`), or stop:
+    /// answered with `Command::Clip`.
+    Clip { on: bool },
     /// The user picked where the aside goes.
     Target { target: Target },
     /// The user moved the pill (remembered for next time).
@@ -287,6 +292,10 @@ pub enum Command {
     /// The speech model's download.
     Model {
         model: ModelInfo,
+    },
+    /// A clip is being recorded (seconds so far), or isn't any more.
+    Clip {
+        seconds: Option<f32>,
     },
     /// The freeze shortcut: freeze the screens, or back to live.
     ToggleFreeze,
@@ -362,6 +371,9 @@ mod tests {
             line(&Command::Open { dir: "/tmp/asides-overlay-1-0".into() }),
             r#"{"type":"open","dir":"/tmp/asides-overlay-1-0"}"#
         );
+        assert_eq!(line(&Event::Clip { on: true }), r#"{"type":"clip","on":true}"#);
+        let clip: Command = serde_json::from_str(r#"{"type":"clip","seconds":null}"#).unwrap();
+        assert_eq!(clip, Command::Clip { seconds: None });
         let spec: Spec = serde_json::from_str(r#"{"screens": [], "tolerance": 4}"#).unwrap();
         assert_eq!((spec.tolerance, spec.identify, spec.keys.annotate.as_str()), (4, false, "a"));
         let target = Event::Target { target: Target::New { agent: AgentKind::Codex, dir: "/r/shop".into() } };

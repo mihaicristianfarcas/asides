@@ -11,6 +11,7 @@ mod audio;
 #[cfg_attr(windows, path = "windows/capture.rs")]
 #[cfg_attr(target_os = "linux", path = "linux/capture.rs")]
 mod capture;
+mod clip;
 #[cfg_attr(windows, path = "windows/clipboard.rs")]
 #[cfg_attr(target_os = "linux", path = "linux/clipboard.rs")]
 mod clipboard;
@@ -114,6 +115,8 @@ const MIN_RECORDING_SECS: f32 = 0.3;
 const SENT_FLASH: Duration = Duration::from_secs(4);
 /// How long asides waits for the screenshots before it may ask again.
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A clip stops by itself after this long: one left recording doesn't watch the screen for good.
+const CLIP_MAX: Duration = Duration::from_secs(60);
 /// How many folders New session in… offers.
 const FOLDERS: usize = 8;
 /// How long the folders found are good for.
@@ -142,6 +145,10 @@ enum UserEvent {
     /// What an agent asked to look at again, captured: the pixels, how many to a point, and the
     /// part of the screen they show (global points); or why not.
     Looked(Box<Looking>, Result<(Frame, f64, PtRect), String>),
+    /// A clip of this session (`App::clip_session`), put together; `None` when no frame came.
+    Clip(u64, Option<clip::Made>),
+    /// A clip couldn't be recorded: why.
+    ClipFailed(String),
     /// What the overlay (its process id) said.
     Overlay(u32, OverlayMessage),
     /// What the updater found, downloaded or couldn't do.
@@ -210,6 +217,8 @@ struct Finishing {
     last_take: u64,
     /// Wispr Flow dictations made in it while frozen, at the seconds since it opened.
     dictations: Vec<(f32, String)>,
+    /// Its clips are those of this session (`App::clip_session`).
+    clips: u64,
 }
 
 /// A look again under way (`asides look`): who asked, and what's being captured.
@@ -297,6 +306,14 @@ struct App {
     dictations: Vec<(f32, String)>,
     /// What agents last looked at again, newest last (published for the commands that asked).
     looked: Vec<Looked>,
+    /// A clip being recorded over the live screen.
+    clip: Option<clip::Recording>,
+    /// The clips made, each with its session's number, and the sessions with one still being put
+    /// together. A session's number is its own from the moment it opens or starts over: a clip
+    /// that comes late for one closed or started over belongs to none.
+    clips: Vec<(u64, clip::Made)>,
+    clips_composing: Vec<u64>,
+    clip_session: u64,
     /// The last session's guides and held measurements, which the next can restore.
     last_measure: Saved,
     /// The last aside with pins whose places are known: the next freeze can show them again (R),
@@ -468,6 +485,10 @@ impl App {
             finishing: None,
             dictations: Vec::new(),
             looked: Vec::new(),
+            clip: None,
+            clips: Vec::new(),
+            clips_composing: Vec::new(),
+            clip_session: 0,
             last_measure: Saved::default(),
             last_pinned: None,
             overlay_tips_seen: previous.overlay_tips_seen,
@@ -604,6 +625,8 @@ impl App {
                 if self.window_open() {
                     self.check_permissions();
                 }
+                // On a Mac it says an app came to the front: a clip is of the app in front.
+                self.clip_follows();
             }
             UserEvent::Heard => self.show_level(),
             #[cfg(target_os = "linux")]
@@ -658,6 +681,11 @@ impl App {
                 self.fail(message);
             }
             UserEvent::Looked(looking, result) => self.looked(*looking, result),
+            UserEvent::Clip(session, made) => self.clip_made(session, made),
+            UserEvent::ClipFailed(why) => {
+                self.stop_clip(false);
+                self.fail(why);
+            }
             UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
             UserEvent::Update(reply) => self.on_update(reply),
             UserEvent::Permissions(mut permissions, mic, open_at_login) => {
@@ -1333,7 +1361,123 @@ impl App {
             targets,
             saved: self.last_measure.clone(),
             pill_at: self.pill_at,
+            clips: capture::watches(),
             ..Spec::default()
+        }
+    }
+
+    /// The pill's record button: a clip of what the app in front shows from now on.
+    fn start_clip(&mut self) {
+        if self.clip.is_some() || self.overlay.is_none() {
+            return;
+        }
+        if !self.screen_permitted && !capture::permitted() {
+            self.tell_overlay_clip();
+            return self.screen_not_permitted();
+        }
+        self.screen_permitted = true;
+        match self.record_front() {
+            Ok(recording) => self.clip = Some(recording),
+            Err(why) => self.fail(why),
+        }
+        self.tell_overlay_clip();
+    }
+
+    /// Starts recording what the app in front shows, on the screen its front window is on, a pixel
+    /// a point (smaller on a screen larger than `motion::SIDE`).
+    #[cfg(target_os = "macos")]
+    fn record_front(&self) -> Result<clip::Recording, String> {
+        let without = self.overlay.as_ref().map(|o| o.pid());
+        let me = std::process::id() as i32;
+        let front = system::frontmost_app()
+            .filter(|&pid| pid != me && Some(pid) != without)
+            .ok_or("No app is in front to record.")?;
+        let windows = elements::windows(without);
+        let own = |layer: Option<i64>| windows.iter().find(|w| w.pid == front && layer.is_none_or(|l| w.layer == l));
+        let window = own(Some(0)).or_else(|| own(None)).ok_or("The app in front shows no window to record.")?;
+        let middle = (window.bounds.x + window.bounds.width / 2.0, window.bounds.y + window.bounds.height / 2.0);
+        let screens = capture::screens(self.mtm);
+        let on = |s: &&ScreenInfo| {
+            let (x, y) = (middle.0 - s.origin.0, middle.1 - s.origin.1);
+            x >= 0.0 && y >= 0.0 && x < s.frame.width && y < s.frame.height
+        };
+        let screen = screens.iter().find(on).or(screens.first()).ok_or("No screen to record.")?;
+        let scale = (f64::from(asides_core::motion::SIDE) / screen.frame.width.max(screen.frame.height)).min(1.0);
+        let size = ((screen.frame.width * scale).round() as usize, (screen.frame.height * scale).round() as usize);
+        let proxy = Mutex::new(self.proxy.clone());
+        let failed = move |why| {
+            let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
+        };
+        Ok(clip::Recording::start(front, Some(window.app.clone()), |take| {
+            capture::watch(screen.display, front, size, move |frame| take(clip::Shown::Frame(frame)), failed)
+        }))
+    }
+
+    /// Starts recording what the window in front shows; the watch follows it.
+    #[cfg(not(target_os = "macos"))]
+    fn record_front(&self) -> Result<clip::Recording, String> {
+        let without = self.overlay.as_ref().map(|o| o.pid());
+        let proxy = Mutex::new(self.proxy.clone());
+        let failed = move |why| {
+            let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
+        };
+        Ok(clip::Recording::start(0, None, |take| capture::watch(without, take, failed)))
+    }
+
+    /// Another app came to the front while a clip records (macOS says so): the clip is of that one
+    /// from now on, started over.
+    fn clip_follows(&mut self) {
+        let Some(pid) = self.clip.as_ref().map(|c| c.pid).filter(|&pid| pid != 0) else { return };
+        let asides = [Some(std::process::id() as i32), self.overlay.as_ref().map(|o| o.pid())];
+        if system::frontmost_app().is_some_and(|front| front != pid && !asides.contains(&Some(front))) {
+            self.clip = None;
+            self.start_clip();
+        }
+    }
+
+    /// Ends the clip being recorded: kept for the open session's aside (put together on a thread of
+    /// its own), or thrown away.
+    fn stop_clip(&mut self, keep: bool) {
+        let Some(recording) = self.clip.take() else { return };
+        self.tell_overlay_clip();
+        if !keep || self.overlay.is_none() {
+            return;
+        }
+        let session = self.clip_session;
+        self.clips_composing.push(session);
+        let proxy = self.proxy.clone();
+        std::thread::spawn(move || {
+            let _ = proxy.send_event(UserEvent::Clip(session, recording.finish()));
+        });
+    }
+
+    /// A clip is put together: it's its session's, if that's still open or being kept.
+    fn clip_made(&mut self, session: u64, made: Option<clip::Made>) {
+        if let Some(i) = self.clips_composing.iter().position(|&s| s == session) {
+            self.clips_composing.remove(i);
+        }
+        let open = session == self.clip_session && self.overlay.as_ref().is_some_and(|o| !o.over);
+        let kept = self.finishing.as_ref().is_some_and(|f| f.clips == session);
+        if let Some(made) = made.filter(|_| open || kept) {
+            self.clips.push((session, made));
+        }
+        self.try_finish();
+    }
+
+    /// The open session's clips go (closed, or started over), the one being recorded too.
+    fn drop_clips(&mut self) {
+        self.clip = None;
+        self.tell_overlay_clip();
+        let session = self.clip_session;
+        self.clips.retain(|c| c.0 != session);
+        self.clip_session += 1;
+    }
+
+    /// Tells the overlay whether a clip is being recorded (its pill shows it).
+    fn tell_overlay_clip(&mut self) {
+        let seconds = self.clip.as_ref().map(|c| c.asked.elapsed().as_secs_f32());
+        if let Some(overlay) = &mut self.overlay {
+            overlay.send(&OverlayCommand::Clip { seconds });
         }
     }
 
@@ -1494,6 +1638,7 @@ impl App {
             overlay.pid()
         ));
         self.dictations.clear();
+        self.clip_session += 1;
         self.overlay = Some(overlay);
         Ok(())
     }
@@ -1589,8 +1734,12 @@ impl App {
             }
             OverlayMessage::Event(OverlayEvent::Freeze) => {
                 overlay.frozen = true;
+                // What the frozen screen shows is no longer what happens.
+                self.stop_clip(true);
                 self.capture_screens();
             }
+            OverlayMessage::Event(OverlayEvent::Clip { on: true }) => self.start_clip(),
+            OverlayMessage::Event(OverlayEvent::Clip { on: false }) => self.stop_clip(true),
             OverlayMessage::Event(OverlayEvent::Live) => {
                 // The overlay gives the keyboard back to the app the user was in.
                 overlay.frozen = false;
@@ -1615,6 +1764,7 @@ impl App {
             OverlayMessage::Event(OverlayEvent::Copied) => {}
             OverlayMessage::Event(OverlayEvent::Restart) => {
                 let listening = self.recording.as_ref().is_some_and(|r| r.annotation.is_none() && !r.push_to_talk);
+                self.drop_clips();
                 self.drop_said();
                 if listening {
                     self.start_recording(None, None, false);
@@ -1623,9 +1773,14 @@ impl App {
                 self.publish();
             }
             OverlayMessage::Event(OverlayEvent::Finished) => {
-                overlay.over = true;
                 let origin = overlay.origin();
-                match overlay.result() {
+                let result = overlay.result();
+                // A clip still recording ends here, and is in the aside.
+                self.stop_clip(true);
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.over = true;
+                }
+                match result {
                     Ok((outcome, images)) => {
                         self.last_measure = outcome.saved.clone();
                         // The microphone turns off quietly: the aside's sound is "sent", once
@@ -1640,7 +1795,9 @@ impl App {
                         takes.extend(self.end_recording());
                         let last_take = self.next_take - 1;
                         let dictations = std::mem::take(&mut self.dictations);
-                        self.finishing = Some(Finishing { outcome, images, takes, origin, last_take, dictations });
+                        let clips = self.clip_session;
+                        self.finishing =
+                            Some(Finishing { outcome, images, takes, origin, last_take, dictations, clips });
                         self.try_finish();
                     }
                     Err(err) => self.fail(format!("asides: {err:#}")),
@@ -1651,6 +1808,7 @@ impl App {
                 if !saved.is_empty() {
                     self.last_measure = saved;
                 }
+                self.drop_clips();
                 // Esc sends nothing, what was said in it included.
                 if self.drop_said() {
                     self.sound(Sound::Closed);
@@ -1672,6 +1830,8 @@ impl App {
                 if self.finishing.is_none() {
                     self.said.clear();
                 }
+                // Recording still (it crashed): the clip goes with it.
+                self.clip = None;
                 self.overlay = None;
                 if let Some(pid) = previous {
                     system::activate_app(pid);
@@ -1733,7 +1893,21 @@ impl App {
         if self.said.iter().any(|&(key, take, ref text)| take <= last && keys.contains(&key) && text.is_none()) {
             return;
         }
+        // And for its clips to be put together.
+        if self.clips_composing.contains(&finishing.clips) {
+            return;
+        }
         let Some(mut f) = self.finishing.take() else { return };
+        // Each clip where it was recorded, its strip an image of the aside, said what it shows.
+        for (_, made) in self.clips.extract_if(.., |c| c.0 == f.clips) {
+            f.outcome.items.push(asides_core::helper::Item {
+                time: overlay::seconds_between(f.origin, made.started),
+                image: Some("clip".into()),
+                text: Some(made.caption),
+                ..Default::default()
+            });
+            f.images.push(Some(made.png));
+        }
         let detail = self.config.annotation_detail;
         for item in &mut f.outcome.items {
             let (Some(key), Some(block)) = (item.annotation, item.text.as_mut()) else { continue };
@@ -1936,6 +2110,9 @@ impl App {
         if self.flash.as_ref().is_some_and(|f| Instant::now() >= f.until) {
             self.flash = None;
         }
+        if self.clip.as_ref().is_some_and(|c| c.asked.elapsed() >= CLIP_MAX) {
+            self.stop_clip(true);
+        }
         self.refresh();
     }
 
@@ -1966,7 +2143,8 @@ impl App {
         });
         let flash = self.flash.as_ref().map(|f| f.until);
         let error = self.error.as_ref().map(|(at, _)| *at + ERROR_ICON);
-        [second, flash, error].into_iter().flatten().filter(|at| *at > now).min()
+        let clip = self.clip.as_ref().map(|c| c.asked + CLIP_MAX);
+        [second, flash, error, clip].into_iter().flatten().filter(|at| *at > now).min()
     }
 
     fn refresh(&mut self) {
