@@ -1078,6 +1078,13 @@ impl Overlay {
                     self.open_card(screen, index, window, cx);
                 }
             }
+            // A follow-up is a pin like any other: what's there now is looked up again.
+            Placed::Again { screen, index } => {
+                self.look_up(screen, index);
+                if !self.listening() {
+                    self.open_card(screen, index, window, cx);
+                }
+            }
             Placed::Edit { screen, index } => self.open_card(screen, index, window, cx),
             Placed::Moved { screen, index } => self.look_up_move(screen, index),
             Placed::Shot { screen, rect } => self.take_shot(screen, rect),
@@ -1492,8 +1499,14 @@ impl Overlay {
             Cmd::Hide => s.hidden = !s.hidden,
             Cmd::Restore => {
                 let saved = self.spec.saved.clone();
-                if self.session.restore(&saved) {
-                    self.toast("Restored the last guides and measurements");
+                let measured = self.session.restore(&saved);
+                let earlier = self.spec.earlier.clone();
+                let pins = self.session.show_earlier(&earlier);
+                match (pins, measured) {
+                    (true, true) => self.toast("The last pins, guides and measurements are back"),
+                    (true, false) => self.toast("The last aside's pins are back: click one to follow up"),
+                    (false, true) => self.toast("Restored the last guides and measurements"),
+                    (false, false) => {}
                 }
             }
             Cmd::Help => self.help = !self.help,
@@ -2211,6 +2224,57 @@ impl Render for ScreenView {
                 }
             }
 
+            // The last aside's pins, where they were (R): hollow, until a click follows up on one.
+            let on_earlier = cursor
+                .filter(|_| session.tool == Tool::Annotate && session.drag.is_none() && o.card.is_none())
+                .filter(|&(x, y)| session.marker_at(screen, x, y).is_none())
+                .and_then(|(x, y)| session.earlier_at(screen, x, y));
+            for (i, e) in state.earlier.iter().enumerate() {
+                let lit = on_earlier == Some(i);
+                let line = Hsla { a: if lit { 1.0 } else { 0.85 }, ..gpui::white() };
+                if let Some(area) = e.area {
+                    prims.push(Prim::Fill(rect(area), Hsla { a: if lit { 0.22 } else { 0.12 }, ..gpui::black() }));
+                    prims.push(Prim::Border(rect(area), line, 1.5, true));
+                }
+                let (mx, my) = to(e.at);
+                markers.push(
+                    div()
+                        .absolute()
+                        .left(px((mx - MARKER / 2.0) as f32))
+                        .top(px((my - MARKER / 2.0) as f32))
+                        .size(px(MARKER as f32))
+                        .rounded_full()
+                        .bg(Hsla { a: if lit { 0.6 } else { 0.42 }, ..gpui::black() })
+                        .border_2()
+                        .border_dashed()
+                        .border_color(line)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_color(line)
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(e.number.to_string())
+                        .into_any_element(),
+                );
+                if lit {
+                    let text: String = format!("Follow up on pin {}: {}", e.number, e.title).chars().take(90).collect();
+                    markers.push(
+                        frozen_glass(&overlay, t, screen, (ox, oy), 6.)
+                            .absolute()
+                            .left(px((mx + MARKER / 2.0 + 6.0) as f32))
+                            .top(px((my - 11.0) as f32))
+                            .max_w(px(360.))
+                            .px(px(8.))
+                            .py(px(3.))
+                            .text_color(t.primary)
+                            .text_size(px(12.))
+                            .child(text)
+                            .into_any_element(),
+                    );
+                }
+            }
+
             // Annotations.
             for a in &state.annotations {
                 // The open card's type shows as it's chosen.
@@ -2408,9 +2472,13 @@ impl Render for ScreenView {
 
         // A pin's number can be dragged (it moves what it's on).
         let on_marker = cursor.is_some_and(|(x, y)| session.marker_at(screen, x, y).is_some());
+        // An earlier aside's pin can be clicked (it's followed up on).
+        let on_earlier =
+            !session.hidden && !on_marker && cursor.is_some_and(|(x, y)| session.earlier_at(screen, x, y).is_some());
         let cursor_style = match session.tool {
             _ if session.moving_pin().is_some() => CursorStyle::ClosedHand,
             Tool::Annotate | Tool::Draw if on_marker && session.drag.is_none() => CursorStyle::OpenHand,
+            Tool::Annotate if on_earlier && session.drag.is_none() => CursorStyle::PointingHand,
             Tool::Annotate => CursorStyle::Arrow,
             _ => CursorStyle::Crosshair,
         };
@@ -2821,6 +2889,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Move it: drag a pin's number", String::new()),
                 ("A pin's card (Tab: the next)", "1 9".into()),
                 ("The last pin's type", format!("{c}1 {c}4", c = keys::COMMAND)),
+                ("Follow up: the last aside's pins", k(Cmd::Restore)),
             ],
         ),
         (

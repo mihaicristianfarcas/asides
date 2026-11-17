@@ -204,6 +204,8 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Kiosk**: while frozen, no Dock, menu bar, `⌘Tab`, Mission Control or spaces; Force Quit
   works.
 - [ ] **Measuring**: distances, holds, guides, snapping, tolerance, units, copying, `R`.
+- [ ] **Follow-ups**: after an aside with pins, `R` shows them hollow where they were; pointing at
+  one names it, a click pins what's there now (**Follow-up to:** in the aside), `⌫` gives it back.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
 - [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart

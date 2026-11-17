@@ -64,7 +64,7 @@ use asides_core::helper::{
     Target, TargetSession, Targets,
 };
 use asides_core::history::{self, Aside, Delivery};
-use asides_core::inspect::{self, PtRect, Screen};
+use asides_core::inspect::{self, Earlier, PtRect, Screen};
 use asides_core::install;
 use asides_core::link::Link;
 use asides_core::models::ModelSpec;
@@ -281,6 +281,9 @@ struct App {
     dictations: Vec<(f32, String)>,
     /// The last session's guides and held measurements, which the next can restore.
     last_measure: Saved,
+    /// The last aside with pins whose places are known: the next freeze can show them again (R),
+    /// to follow up on.
+    last_pinned: Option<Aside>,
     /// The overlay showed its keys once already.
     overlay_tips_seen: bool,
     /// The asides window's process.
@@ -447,6 +450,7 @@ impl App {
             finishing: None,
             dictations: Vec::new(),
             last_measure: Saved::default(),
+            last_pinned: None,
             overlay_tips_seen: previous.overlay_tips_seen,
             window: None,
             #[cfg(target_os = "linux")]
@@ -513,6 +517,7 @@ impl App {
         self.look_for_agents();
         self.sync_wispr();
         self.prune_history();
+        self.last_pinned = history::list(&history::dir()).into_iter().find(has_places);
         self.link_command();
         self.stand_by();
         self.start_updater();
@@ -770,6 +775,9 @@ impl App {
             Outcome::Kept { aside, target } => {
                 self.error = None;
                 self.last_aside = Some(aside.id.clone());
+                if has_places(&aside) {
+                    self.last_pinned = Some((*aside).clone());
+                }
                 if self.config.copy_asides {
                     self.to_copy = Some(aside.id.clone());
                 }
@@ -1265,7 +1273,8 @@ impl App {
             elements::request_trust();
         }
         let tips = !self.overlay_tips_seen;
-        let spec = Spec { screens: spec_screens, tips, live, ..self.overlay_spec() };
+        let earlier = self.earlier_pins(&spec_screens);
+        let spec = Spec { screens: spec_screens, tips, live, earlier, ..self.overlay_spec() };
         if let Err(err) = self.open_overlay(spec, &frames, windows) {
             self.stand_by();
             return self.fail(format!("Could not open asides: {err:#}"));
@@ -1305,6 +1314,16 @@ impl App {
             pill_at: self.pill_at,
             ..Spec::default()
         }
+    }
+
+    /// The pins of the last aside that had any, by the screen each was on (of `screens`, as they
+    /// are now), for R; none once that aside is gone from the history.
+    fn earlier_pins(&mut self, screens: &[SpecScreen]) -> Vec<Vec<Earlier>> {
+        if self.last_pinned.as_ref().is_some_and(|a| !a.dir.is_dir()) {
+            self.last_pinned = None;
+        }
+        let displays: Vec<u32> = screens.iter().map(|s| s.display).collect();
+        self.last_pinned.as_ref().map(|a| a.earlier(&displays, Local::now())).unwrap_or_default()
     }
 
     fn open_overlay(
@@ -2284,7 +2303,8 @@ impl App {
             place: None,
             menu_bar: 0.0,
         };
-        let mut spec = Spec { screens: vec![screen], script: Some(script), ..self.overlay_spec() };
+        let earlier = self.earlier_pins(std::slice::from_ref(&screen));
+        let mut spec = Spec { screens: vec![screen], script: Some(script), earlier, ..self.overlay_spec() };
         // Never into the user's own sessions unless asked.
         spec.targets.chosen = Some(simulated_target(to));
         self.target = spec.targets.chosen.clone();
@@ -2396,7 +2416,7 @@ fn inspection_parts(
         let offset = offset(item.time);
         let number = item.text.as_deref().and_then(asides_core::markdown::pin_number);
         if let (Some(number), Some(color)) = (number, item.color) {
-            pins.push(history::Pin { number, color });
+            pins.push(history::Pin { number, color, spot: item.spot });
         }
         match bytes {
             Some(bytes) => pictures.push(CapturedImage { offset, bytes, extension: "png".into(), details: item.text }),
@@ -2404,6 +2424,11 @@ fn inspection_parts(
         }
     }
     (pictures, texts, pins)
+}
+
+/// Whether `aside` has pins whose places on the screen are known.
+fn has_places(aside: &Aside) -> bool {
+    aside.record.pins.iter().any(|p| p.spot.is_some())
 }
 
 /// Aside `id`'s number among today's (it's the newest): the menu bar shows it (`[3]`).

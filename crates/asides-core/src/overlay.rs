@@ -15,14 +15,17 @@
 //!
 //! Annotations and measurements carry when they were made, so they can sit among what the user
 //! said.
+//!
+//! The pins of the aside sent last can be shown again where they were (R, `show_earlier`): a click
+//! on one with Annotate makes it a pin of this session that says what it follows up on.
 
 use std::sync::{Arc, Mutex, Weak};
 
 use serde::{Deserialize, Serialize};
 
 use crate::inspect::{
-    Annotation, Axis, Detail, Element, Guide, Inspection, Intent, Look, Measurement, PtRect, Run, Screen, Severity,
-    Shape, Units,
+    Annotation, Axis, Detail, Earlier, Element, Guide, Inspection, Intent, Look, Measurement, PtRect, Run, Screen,
+    Severity, Shape, Units,
 };
 use crate::measure::{self, Edges, Frame, Rect, Stops, Tolerance};
 
@@ -74,6 +77,9 @@ pub struct ScreenState {
     /// When each held measurement was made, in seconds into the session.
     pub held_times: Vec<f32>,
     pub annotations: Vec<Annotation>,
+    /// The pins of the aside sent last, shown again where they were (`Session::show_earlier`):
+    /// those not followed up on.
+    pub earlier: Vec<Earlier>,
 }
 
 /// A screen's edges at the session's tolerance, found on a thread of their own as soon as the pointer
@@ -175,6 +181,12 @@ pub enum Placed {
     },
     /// A click on an existing marker: edit its feedback.
     Edit {
+        screen: usize,
+        index: usize,
+    },
+    /// A click on an earlier aside's pin: a new annotation there, following up on it. What it's on
+    /// is identified again (it may have changed).
+    Again {
         screen: usize,
         index: usize,
     },
@@ -283,6 +295,9 @@ pub struct Session {
     next_number: u32,
     /// Annotations' keys: unlike their numbers, never reused.
     next_key: u32,
+    /// The earlier aside's pins followed up on in this session (their numbers there), on any freeze
+    /// of it: they aren't shown again.
+    followed: Vec<u32>,
 }
 
 impl Session {
@@ -306,6 +321,7 @@ impl Session {
             added: Vec::new(),
             next_number: 1,
             next_key: 1,
+            followed: Vec::new(),
         }
     }
 
@@ -321,6 +337,7 @@ impl Session {
             clock: self.clock,
             next_number: self.next_number,
             next_key: self.next_key,
+            followed: self.followed.clone(),
             ..Session::new(screens, self.tolerance, self.units)
         }
     }
@@ -340,6 +357,7 @@ impl Session {
             held: Vec::new(),
             held_times: Vec::new(),
             annotations: Vec::new(),
+            earlier: Vec::new(),
         }
     }
 
@@ -569,7 +587,10 @@ impl Session {
             },
             Tool::Annotate | Tool::Draw if click => match self.marker_at(screen, drag.start.0, drag.start.1) {
                 Some(index) => Placed::Edit { screen, index },
-                None if self.tool == Tool::Annotate => self.annotate_at(screen, drag.start.0, drag.start.1, time),
+                None if self.tool == Tool::Annotate => match self.earlier_at(screen, drag.start.0, drag.start.1) {
+                    Some(index) => self.follow_up(screen, index, time),
+                    None => self.annotate_at(screen, drag.start.0, drag.start.1, time),
+                },
                 None => Placed::Nothing,
             },
             Tool::Annotate => self.annotate(screen, drag.start, Some(drag.rect()), None, time),
@@ -706,6 +727,72 @@ impl Session {
             self.describe(screen, index);
         }
         Placed::Annotation { screen, index }
+    }
+
+    /// Shows the pins of the aside sent last again, on the screens they were on (R): those not
+    /// shown already, nor followed up on in this session. Whether any showed.
+    pub fn show_earlier(&mut self, earlier: &[Vec<Earlier>]) -> bool {
+        let mut shown = false;
+        for (state, list) in self.screens.iter_mut().zip(earlier) {
+            for pin in list {
+                let known = self.followed.contains(&pin.number) || state.earlier.iter().any(|e| e.number == pin.number);
+                // A screen that changed size since: a pin off it has nowhere to go.
+                let on_screen = pin.at.0 < state.screen.width && pin.at.1 < state.screen.height;
+                if !known && on_screen {
+                    state.earlier.push(pin.clone());
+                    shown = true;
+                }
+            }
+        }
+        shown
+    }
+
+    /// The earlier aside's pin under `(x, y)`, if any: its number, or inside its area.
+    pub fn earlier_at(&self, screen: usize, x: f64, y: f64) -> Option<usize> {
+        let list = &self.screens.get(screen)?.earlier;
+        let distance = |e: &Earlier| (e.at.0 - x).hypot(e.at.1 - y);
+        (0..list.len())
+            .filter(|&i| distance(&list[i]) <= MARKER / 2.0 + 1.0)
+            .min_by(|&a, &b| distance(&list[a]).total_cmp(&distance(&list[b])))
+            .or_else(|| list.iter().position(|e| e.area.is_some_and(|r| r.contains(x, y))))
+    }
+
+    /// Follows up on the earlier aside's pin `index` of `screen`: a pin of this session where it was
+    /// (its area too), which says so.
+    pub fn follow_up(&mut self, screen: usize, index: usize, time: f32) -> Placed {
+        let Some(state) = self.screens.get_mut(screen).filter(|s| index < s.earlier.len()) else {
+            return Placed::Nothing;
+        };
+        let earlier = state.earlier.remove(index);
+        self.followed.push(earlier.number);
+        match self.annotate(screen, earlier.at, earlier.area, None, time) {
+            Placed::Annotation { screen, index } => {
+                self.screens[screen].annotations[index].again = Some(earlier);
+                Placed::Again { screen, index }
+            }
+            placed => placed,
+        }
+    }
+
+    /// Follows up on the earlier aside's pin numbered `number` there, on whichever screen it shows.
+    pub fn follow_up_on(&mut self, number: u32, time: f32) -> Placed {
+        let found = self
+            .screens
+            .iter()
+            .enumerate()
+            .find_map(|(s, state)| state.earlier.iter().position(|e| e.number == number).map(|i| (s, i)));
+        match found {
+            Some((screen, index)) => self.follow_up(screen, index, time),
+            None => Placed::Nothing,
+        }
+    }
+
+    /// An annotation that followed up on an earlier pin is going: that pin shows again.
+    fn give_back(&mut self, screen: usize, annotation: Annotation) {
+        if let Some(earlier) = annotation.again {
+            self.followed.retain(|n| *n != earlier.number);
+            self.screens[screen].earlier.push(earlier);
+        }
     }
 
     /// Moves what annotation `index` is on by `offset` (its number dragged there): a change, unless
@@ -931,7 +1018,8 @@ impl Session {
             }
             Added::Guide(i) if i < state.guides.len() => drop(state.guides.remove(i)),
             Added::Annotation(i) if i < state.annotations.len() => {
-                state.annotations.remove(i);
+                let annotation = state.annotations.remove(i);
+                self.give_back(screen, annotation);
                 self.renumber();
             }
             Added::Moved(i, moved, intent) if i < state.annotations.len() => {
@@ -945,7 +1033,8 @@ impl Session {
 
     pub fn remove_annotation(&mut self, screen: usize, index: usize) {
         if self.screens.get(screen).is_some_and(|s| index < s.annotations.len()) {
-            self.screens[screen].annotations.remove(index);
+            let annotation = self.screens[screen].annotations.remove(index);
+            self.give_back(screen, annotation);
             self.added.retain_mut(|(s, a)| !(*s == screen && a.annotation().is_some_and(|i| *i == index)));
             for (s, a) in &mut self.added {
                 if let Some(i) = a.annotation()
@@ -997,9 +1086,11 @@ impl Session {
             state.held_times.clear();
             state.guides.clear();
             state.annotations.clear();
+            state.earlier.clear();
         }
         self.shots.clear();
         self.added.clear();
+        self.followed.clear();
         self.next_number = 1;
     }
 
@@ -1075,8 +1166,16 @@ impl Session {
             Action::Units(units) => self.units = *units,
             // The player waits; the session's clock moves on.
             Action::Wait(seconds) => self.clock += *seconds as f32,
-            // The player goes back to the live screen, or freezes it again.
-            Action::Live | Action::Freeze => {}
+            // The player goes back to the live screen, or freezes it again; and brings back what the
+            // last session left (it has the session's spec).
+            Action::Live | Action::Freeze | Action::Restore => {}
+            Action::Again { number, comment, intent } => {
+                let placed = self.follow_up_on(*number, self.clock);
+                if let Placed::Again { screen, index } = placed {
+                    self.set_feedback(screen, index, comment, *intent, None);
+                }
+                return placed;
+            }
             Action::Click { screen, at } => {
                 self.mouse_down(*screen, at.0, at.1, false);
                 return self.mouse_up(*screen, at.0, at.1, self.clock);
@@ -1274,6 +1373,16 @@ pub enum Action {
     Live,
     /// Freeze the screen again (the same image).
     Freeze,
+    /// R: the last session's guides and held measurements, and the last aside's pins, again.
+    Restore,
+    /// A click on the earlier aside's pin `number` (after `restore`): a follow-up on it.
+    Again {
+        number: u32,
+        #[serde(default)]
+        comment: String,
+        #[serde(default)]
+        intent: Option<Intent>,
+    },
 }
 
 fn yes() -> bool {
@@ -1670,6 +1779,77 @@ mod tests {
         assert!(s.undo());
         let a = &s.screens[0].annotations[0];
         assert_eq!((a.moved, a.intent), (None, None));
+    }
+
+    #[test]
+    fn follows_up_on_the_last_asides_pins() {
+        let aside = "the aside from 14:02, \"The gap is too big.\" (/h/2026-11-16-140200)";
+        let pin = |number: u32, at: (f64, f64), area: Option<PtRect>| Earlier {
+            number,
+            aside: aside.into(),
+            at,
+            area,
+            title: format!("pin {number}"),
+        };
+        let earlier = vec![vec![
+            pin(1, (30.0, 20.0), None),
+            pin(2, (60.0, 10.0), Some(PtRect::new(60.0, 10.0, 20.0, 8.0))),
+            // Its screen was larger then: nowhere to show.
+            pin(3, (400.0, 20.0), None),
+        ]];
+        let mut s = session();
+        s.set_tool(Tool::Annotate);
+        assert!(s.show_earlier(&earlier));
+        assert!(!s.show_earlier(&earlier), "they show once");
+        assert_eq!(s.screens[0].earlier.iter().map(|e| e.number).collect::<Vec<_>>(), [1, 2]);
+        // Shown, they're no part of the aside.
+        assert!(s.is_empty() && s.inspections().is_empty());
+        assert_eq!(
+            (s.earlier_at(0, 31.0, 21.0), s.earlier_at(0, 70.0, 15.0), s.earlier_at(0, 5.0, 5.0)),
+            (Some(0), Some(1), None)
+        );
+
+        // A new pin first; then a click on the earlier pin 2, inside its area: this aside's pin 2,
+        // on that area.
+        s.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
+        s.mouse_down(0, 70.0, 15.0, false);
+        assert_eq!(s.mouse_up(0, 70.0, 15.0, 4.0), Placed::Again { screen: 0, index: 1 });
+        let a = s.screens[0].annotations[1].clone();
+        assert_eq!((a.number, a.area, a.time), (2, Some(PtRect::new(60.0, 10.0, 20.0, 8.0)), 4.0));
+        assert_eq!(a.again.as_ref().map(|e| e.number), Some(2));
+        assert_eq!(s.screens[0].earlier.len(), 1);
+        let inspection = &s.inspections()[0].1;
+        let block = inspection.annotation_markdown(&a, Detail::Standard);
+        assert!(
+            block.starts_with(&format!("### 2. Area 20 × 8 at (60, 10)\n**Follow-up to:** pin 2 of {aside}")),
+            "{block}"
+        );
+        assert!(crate::markdown::check_message(&block, &[]).is_empty());
+        let line = inspection.annotation_markdown(&a, Detail::Compact);
+        assert_eq!(line, format!("2. **Area 20 × 8 at (60, 10)** (follow-up to pin 2 of {aside})"));
+
+        // Frozen again in the same session, R shows only what wasn't followed up on.
+        let mut next = s.refrozen(session().screens);
+        assert!(next.show_earlier(&earlier));
+        assert_eq!(next.screens[0].earlier.iter().map(|e| e.number).collect::<Vec<_>>(), [1]);
+        // By its number, as a script does.
+        let again = Action::Again { number: 1, comment: "Still 2 pt off.".into(), intent: Some(Intent::Fix) };
+        assert_eq!(next.apply(&again), Placed::Again { screen: 0, index: 0 });
+        let a = &next.screens[0].annotations[0];
+        assert_eq!(
+            (a.number, a.at, a.comment.as_str(), a.intent),
+            (3, (30.0, 20.0), "Still 2 pt off.", Some(Intent::Fix))
+        );
+        assert_eq!(next.apply(&again), Placed::Nothing);
+
+        // Removed, a follow-up gives its pin back; and X clears them all.
+        assert!(s.undo());
+        assert_eq!(s.screens[0].earlier.iter().map(|e| e.number).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(s.follow_up_on(2, 5.0), Placed::Again { screen: 0, index: 1 });
+        s.remove_annotation(0, 1);
+        assert_eq!(s.screens[0].earlier.len(), 2);
+        s.clear();
+        assert!(s.screens[0].earlier.is_empty());
     }
 
     #[test]

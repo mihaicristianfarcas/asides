@@ -106,7 +106,8 @@ changes.
 - run all the automated tests
 - drive the installed app through the CLI with `asides simulate <wav> [--image FILE --at SECONDS] [--to SESSION]` (dev-hooks builds only; `make e2e` sets this up)
 - run frozen sessions on an image with `asides simulate-measure <png> <script.json> [--to SESSION]`
-  (`"live"` and `"freeze"` steps for several freezes) (dev-hooks builds), and look at the image it
+  (`"live"` and `"freeze"` steps for several freezes, `"restore"` and `{"again": …}` for
+  follow-ups) (dev-hooks builds), and look at the image it
   adds with `ASIDES_OVERLAY_DUMP`
 - list the sessions (`asides sessions`), start agents of your own in a scratch repo (Diri's
   `dirijor session spawn`, or Terminal and Ghostty through AppleScript from your terminal) and send

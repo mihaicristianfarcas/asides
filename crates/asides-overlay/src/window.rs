@@ -283,7 +283,7 @@ const KEY_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("tolerance_up", "Higher tolerance"),
             ("tolerance_high", "High tolerance, on or off"),
             ("units", "Points or pixels"),
-            ("restore", "The last guides and measurements again"),
+            ("restore", "The last pins, guides and measurements again"),
         ],
     ),
     (
