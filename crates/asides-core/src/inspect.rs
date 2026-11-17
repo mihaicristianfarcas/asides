@@ -294,9 +294,18 @@ pub struct Element {
     pub nearby: Option<String>,
     /// Text selected in it when the screen froze (a typo to fix, a sentence to rewrite).
     pub selected_text: Option<String>,
+    /// The window it's in, as the system knows it (macOS's window number, Windows' handle, X11's
+    /// id), and where that window was, in global points (y down): what `look_again` looks at again.
+    pub window_id: Option<u64>,
+    pub window_frame: Option<PtRect>,
 }
 
 impl Element {
+    /// In window `id`, which is at `frame` (global points).
+    pub fn in_window(self, id: u64, frame: PtRect) -> Element {
+        Element { window_id: Some(id), window_frame: Some(frame), ..self }
+    }
+
     /// Identifies an element from its accessibility node and its ancestors (innermost first).
     pub fn from_nodes(app: Option<String>, window: Option<String>, nodes: &[Node]) -> Element {
         // Text or an image inside a control stands for the control (elements are named by what
@@ -338,6 +347,8 @@ impl Element {
             frame: hit.frame,
             nearby,
             selected_text: nodes.iter().find_map(|n| n.selected_text.clone()).filter(|t| !t.trim().is_empty()),
+            window_id: None,
+            window_frame: None,
         }
     }
 }
@@ -476,7 +487,7 @@ pub struct Earlier {
 }
 
 /// Where a pin was on the screen, kept with its aside (`history::Pin`): a later freeze shows it
-/// again (R).
+/// again (R), and `look_again` captures what's there now.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Spot {
@@ -494,9 +505,12 @@ pub struct Spot {
     pub region: Option<PtRect>,
     /// What it was on (`button "Save"`).
     pub title: String,
-    /// The app and the window it was in.
+    /// The app and the window it was in, and that window as the system knew it and where it was
+    /// (`Element::window_id`).
     pub app: Option<String>,
     pub window: Option<String>,
+    pub window_id: Option<u64>,
+    pub window_frame: Option<PtRect>,
 }
 
 impl Spot {
@@ -521,7 +535,21 @@ impl Spot {
             title: annotation.title(on.scale, units),
             app: element.app,
             window: element.window,
+            window_id: element.window_id,
+            window_frame: element.window_frame,
         }
+    }
+
+    /// The part of the screen to look at again, in global points: what it marked with `padding`
+    /// around it, or that much around a point.
+    pub fn view(&self, padding: f64) -> PtRect {
+        let r = self.region.unwrap_or(PtRect::new(self.at.0, self.at.1, 0.0, 0.0));
+        PtRect::new(
+            self.origin.0 + r.x - padding,
+            self.origin.1 + r.y - padding,
+            r.width + 2.0 * padding,
+            r.height + 2.0 * padding,
+        )
     }
 }
 

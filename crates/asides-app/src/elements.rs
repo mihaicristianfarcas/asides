@@ -46,6 +46,15 @@ pub struct WindowInfo {
     pub title: Option<String>,
     pub bounds: PtRect,
     pub layer: i64,
+    /// Its window number (`CGWindowID`), the same for as long as it's open.
+    pub id: u32,
+}
+
+impl WindowInfo {
+    /// What the system calls it, for finding it again (`asides_core::look`).
+    pub fn id(&self) -> u64 {
+        self.id.into()
+    }
 }
 
 /// The windows on screen now, frontmost first, without this app's or process `without`'s (the
@@ -81,6 +90,7 @@ pub fn windows(without: Option<i32>) -> Vec<WindowInfo> {
             title: text("kCGWindowName"),
             bounds: PtRect::new(x, y, w, h),
             layer: number(get("kCGWindowLayer")).unwrap_or(0.0) as i64,
+            id: number(get("kCGWindowNumber")).unwrap_or(0.0) as u32,
         });
     }
     out
@@ -112,7 +122,8 @@ pub fn request_trust() -> bool {
 pub fn identify(windows: &[WindowInfo], x: f64, y: f64, deep: bool) -> Option<Element> {
     let window = window_at(windows, x, y)?;
     let nodes = if deep && trusted() { element_at(window.pid, x, y) } else { Vec::new() };
-    Some(Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes))
+    let element = Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes);
+    Some(element.in_window(window.id(), window.bounds))
 }
 
 /// Where the user is in the app with process id `pid`: its frontmost window, and with `deep` (and

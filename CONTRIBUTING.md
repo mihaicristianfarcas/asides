@@ -206,6 +206,9 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Measuring**: distances, holds, guides, snapping, tolerance, units, copying, `R`.
 - [ ] **Follow-ups**: after an aside with pins, `R` shows them hollow where they were; pointing at
   one names it, a click pins what's there now (**Follow-up to:** in the aside), `⌫` gives it back.
+- [ ] **Looking again**: `asides look 1` soon after an aside answers with only the pin's window
+  (on a Mac, even covered), the menu bar's eye; refused while asides is open, once the setting's
+  minutes are over, and with Never.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
 - [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart

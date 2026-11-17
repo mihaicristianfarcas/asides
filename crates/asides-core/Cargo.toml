@@ -12,6 +12,8 @@ base64 = "0.22"
 chrono.workspace = true
 libc = "0.2"
 notify = "8"
+# What agents look at again and a clip's frames, as PNGs (`picture.rs`).
+png = "0.18"
 rustc-demangle = "0.1"
 serde.workspace = true
 serde_json.workspace = true

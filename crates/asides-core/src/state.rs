@@ -57,7 +57,27 @@ pub struct AppState {
     /// How far setup got (its step), to go on from there after asides restarts (Screen Recording
     /// can ask for that).
     pub setup_step: Option<String>,
+    /// What agents last looked at again (`asides look`), newest last, for the commands that asked
+    /// (a few: two asked at once both find their answer).
+    pub looked: Vec<Looked>,
     pub updated_ms: u64,
+}
+
+/// A look again at what a pin was on (`look.rs`): the picture, or why there's none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Looked {
+    /// The `req` of the link that asked.
+    pub request: String,
+    pub aside: String,
+    pub pin: u32,
+    /// What the pin was on (`button "Save"`), and the app it's in.
+    pub title: String,
+    pub app: String,
+    /// The picture, a PNG in the aside's folder.
+    pub image: Option<PathBuf>,
+    /// Why asides didn't look, as the agent is told.
+    pub error: Option<String>,
 }
 
 /// What macOS lets asides do, looked at while its window is open (setup shows it).

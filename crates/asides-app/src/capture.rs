@@ -173,6 +173,47 @@ pub fn capture(
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
 }
 
+/// Captures window `window` (its `CGWindowID`) alone, whatever is over it, without its shadow:
+/// its pixels and how many there are to a point. For an agent looking again at what a pin was on
+/// (`asides_core::look`): nothing of the windows around it is in the picture. `done` runs once, on
+/// a background queue.
+pub fn capture_window(window: u32, done: impl Fn(Result<(Frame, f64), String>) + Send + Sync + 'static) {
+    let done = Arc::new(done);
+    let block = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
+        let Some(content) = (unsafe { content.as_ref() }) else {
+            return done(Err(describe(error, "Could not list the windows to look at")));
+        };
+        let Some(found) = unsafe { content.windows() }.iter().find(|w| unsafe { w.windowID() } == window) else {
+            return done(Err("That window isn't on screen now.".into()));
+        };
+        let filter = unsafe { SCContentFilter::initWithDesktopIndependentWindow(SCContentFilter::alloc(), &found) };
+        let (frame, scale) = unsafe { (found.frame(), f64::from(filter.pointPixelScale()).max(1.0)) };
+        let config = unsafe { SCStreamConfiguration::new() };
+        unsafe {
+            config.setWidth((frame.size.width * scale).round() as usize);
+            config.setHeight((frame.size.height * scale).round() as usize);
+            config.setShowsCursor(false);
+            config.setIgnoreShadowsSingleWindow(true);
+            config.setColorSpaceName(kCGColorSpaceSRGB);
+        }
+        let done = done.clone();
+        let handler = RcBlock::new(move |image: *mut CGImage, error: *mut NSError| {
+            done(match unsafe { image.as_ref() } {
+                Some(image) => to_frame(image).map(|frame| (frame, scale)).ok_or_else(|| UNEXPECTED_FORMAT.into()),
+                None => Err(describe(error, "Could not capture the window")),
+            });
+        });
+        unsafe {
+            SCScreenshotManager::captureImageWithFilter_configuration_completionHandler(
+                &filter,
+                &config,
+                Some(&handler),
+            )
+        };
+    });
+    unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
+}
+
 const UNEXPECTED_FORMAT: &str = "The screenshot had an unexpected pixel format.";
 
 /// One `Shot` per display in `ids`: `done` gets them all once the last is in.

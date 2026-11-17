@@ -104,6 +104,16 @@ enum Command {
         #[arg(long)]
         to: Option<String>,
     },
+    /// Look again at what a pin of an aside was on, as it is now: a picture of only the window the
+    /// pin was in, kept with the aside. For an agent to check its fix; asides allows it for a while
+    /// after the aside (look_again_minutes in the settings), and says so in the menu bar.
+    Look {
+        /// The pin's number in the aside.
+        pin: u32,
+        /// The aside (the newest by default).
+        #[arg(default_value = "last")]
+        id: String,
+    },
     /// Download the voice model (the one in the settings, or MODEL: small.en, medium.en,
     /// large-v3-turbo…).
     Download { model: Option<String> },
@@ -201,6 +211,11 @@ fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Some(Command::Send { id, to }) => send_again(&id, to),
+        Some(Command::Look { pin, id }) => {
+            let looked = look(&id, pin)?;
+            println!("{}\n{}", looked.0, looked.1.display());
+            Ok(())
+        }
         Some(Command::Download { model }) => {
             let model = model.unwrap_or_else(|| Config::load(&paths::config_path()).unwrap_or_default().model);
             let request = request_id();
@@ -634,6 +649,30 @@ pub(crate) fn wait_for_ack(request: &str) -> Result<AppState> {
     .context("asides did not respond within 15 s")
 }
 
+/// Asks the app to look again at what pin `pin` of aside `id` was on (`asides_core::look`): what
+/// the picture shows, and where it is; or why asides didn't look.
+pub(crate) fn look(id: &str, pin: u32) -> Result<(String, PathBuf)> {
+    let request = request_id();
+    send(&Link::Look { id: id.into(), pin, request: Some(request.clone()) })?;
+    let path = paths::state_path();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let dir = path.parent().context("no folder for the app's state")?;
+    let looked = asides_core::watch::until(dir, deadline, || {
+        AppState::read(&path).and_then(|state| state.looked.into_iter().find(|l| l.request == request))
+    })
+    .context("asides did not answer within 20 s")?;
+    match (looked.image, looked.error) {
+        (Some(image), None) => Ok((
+            format!(
+                "Pin {} of aside {} ({} in {}), as it is now: only that window, as much as the pin was on.",
+                looked.pin, looked.aside, looked.title, looked.app
+            ),
+            image,
+        )),
+        (_, error) => bail!("{}", error.unwrap_or_else(|| "asides took no picture.".into())),
+    }
+}
+
 /// The published state, if the app that wrote it is still alive.
 pub(crate) fn running_state() -> Option<AppState> {
     let state = AppState::read(&paths::state_path())?;
@@ -656,6 +695,9 @@ mod tests {
         assert!(matches!(parse(&["open"]).unwrap().command, Some(Command::Open)));
         let Some(Command::Send { id, to }) = parse(&["send", "--to", "4242"]).unwrap().command else { panic!() };
         assert_eq!((id.as_str(), to.as_deref()), ("last", Some("4242")));
+        let Some(Command::Look { pin, id }) = parse(&["look", "2"]).unwrap().command else { panic!() };
+        assert_eq!((pin, id.as_str()), (2, "last"));
+        assert!(parse(&["look"]).is_err(), "a pin is needed");
         let Some(Command::History { words, count, .. }) =
             parse(&["history", "save", "button", "-n", "5"]).unwrap().command
         else {

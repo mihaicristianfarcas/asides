@@ -131,6 +131,18 @@ impl Aside {
         write_record(&self.dir, &self.record)
     }
 
+    /// When it last went to a session, or else when it was made (milliseconds since the epoch).
+    pub fn last_sent_ms(&self) -> u64 {
+        self.record
+            .deliveries
+            .iter()
+            .filter(|d| d.error.is_none())
+            .map(|d| d.at_ms)
+            .max()
+            .unwrap_or(0)
+            .max(self.record.created_ms)
+    }
+
     /// How a later aside names this one, for an agent that got it as a message (it has no id
     /// there) or never did: when it was made (the day too, unless that's `now`'s), its first
     /// words, and its folder.
@@ -402,7 +414,7 @@ mod tests {
             Pin { number: 3, color: "#3B82F6".into(), spot: None },
         ];
         let message = "The \"gap\" is too big [1].\n\n### 1. button \"Save\"";
-        let aside = create(tmp.path(), at, message, &[], pins, None).unwrap();
+        let mut aside = create(tmp.path(), at, message, &[], pins, None).unwrap();
         let folder = aside.dir.display().to_string();
         assert_eq!(aside.reference(at), format!("the aside from 14:02, \"The 'gap' is too big.\" ({folder})"));
         let tomorrow = at + chrono::TimeDelta::days(1);
@@ -417,6 +429,13 @@ mod tests {
             (1, (30.0, 20.0), "button \"Save\"")
         );
         assert_eq!(earlier[1][0].aside, again.reference(at));
+        // Last sent: when it was made, until it's typed in somewhere (a failed try doesn't count).
+        let made = aside.record.created_ms;
+        assert_eq!(aside.last_sent_ms(), made);
+        aside.record_delivery(Delivery { at_ms: made + 500, error: Some("no".into()), ..Default::default() }).unwrap();
+        assert_eq!(aside.last_sent_ms(), made);
+        aside.record_delivery(Delivery { at_ms: made + 900, ..Default::default() }).unwrap();
+        assert_eq!(aside.last_sent_ms(), made + 900);
     }
 
     #[test]

@@ -51,6 +51,13 @@ pub struct WindowInfo {
     pub handle: isize,
 }
 
+impl WindowInfo {
+    /// What the system calls it, for finding it again (`asides_core::look`).
+    pub fn id(&self) -> u64 {
+        self.handle as u64
+    }
+}
+
 /// The monitors, for the coordinates.
 fn monitors() -> Vec<Monitor> {
     display::monitors().into_iter().map(|l| l.monitor).collect()
@@ -204,7 +211,8 @@ pub fn request_trust() -> bool {
 pub fn identify(windows: &[WindowInfo], x: f64, y: f64, deep: bool) -> Option<Element> {
     let window = window_at(windows, x, y)?;
     let nodes = if deep { element_at(window.handle, x, y) } else { Vec::new() };
-    Some(Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes))
+    let element = Element::from_nodes(Some(window.app.clone()), window.title.clone(), &nodes);
+    Some(element.in_window(window.id(), window.bounds))
 }
 
 /// Where the user is in the app with process id `pid`: its frontmost window, and with `deep` the

@@ -4,8 +4,8 @@
 
 - **Audio** stays on your computer, in memory until it's transcribed, then discarded (unless you turn on
   keeping it).
-- **asides** are kept in `~/.asides/history` (what was sent, its screenshots, where it went) and
-  deleted after `history_days`.
+- **asides** are kept in `~/.asides/history` (what was sent, its screenshots, where it went, what
+  agents looked at again) and deleted after `history_days`.
 - **The network** is used for two things: downloading the voice model from Hugging Face, when you
   ask, and looking for updates on GitHub every 6 hours (turn off **Update automatically** to look
   only when you ask). Neither sends anything about you or your asides.
@@ -20,7 +20,7 @@ Setup asks for each as you go (General → **Set Up Again** shows them, allowed 
 | Permission | Asked | For |
 |---|---|---|
 | Microphone | the first time you talk | talking |
-| Screen Recording | the first time you freeze the screen | the screenshots |
+| Screen Recording | the first time you freeze the screen | the screenshots, and what agents look at again |
 | Accessibility | the first time asides opens | naming what's under a pin. Without it, pins name the app and window. |
 | Automation | the first time asides types into Terminal or Ghostty | typing the aside in (Diri needs none) |
 | Administrator password | once, for a downloaded copy | linking `asides` into `/usr/local/bin`. Cancel to skip. |

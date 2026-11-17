@@ -67,12 +67,15 @@ use asides_core::history::{self, Aside, Delivery};
 use asides_core::inspect::{self, Earlier, PtRect, Screen};
 use asides_core::install;
 use asides_core::link::Link;
+use asides_core::look;
+use asides_core::measure::Frame;
 use asides_core::models::ModelSpec;
 use asides_core::overlay::Saved;
 use asides_core::paths;
+use asides_core::picture;
 use asides_core::rich::Rich;
 use asides_core::sessions::{self, AgentSession};
-use asides_core::state::{self as app_state, AppState, LoginItem, Permission, Permissions};
+use asides_core::state::{self as app_state, AppState, LoginItem, Looked, Permission, Permissions};
 use asides_core::takes;
 use asides_core::update::{Phase, Status as UpdateStatus, Step, Version};
 use asides_core::wispr::Dictation;
@@ -136,6 +139,9 @@ enum UserEvent {
     CommandLinked(CommandLink),
     /// The screens, frozen.
     Captured(Result<Vec<Capture>, String>),
+    /// What an agent asked to look at again, captured: the pixels, how many to a point, and the
+    /// part of the screen they show (global points); or why not.
+    Looked(Box<Looking>, Result<(Frame, f64, PtRect), String>),
     /// What the overlay (its process id) said.
     Overlay(u32, OverlayMessage),
     /// What the updater found, downloaded or couldn't do.
@@ -205,6 +211,16 @@ struct Finishing {
     /// Wispr Flow dictations made in it while frozen, at the seconds since it opened.
     dictations: Vec<(f32, String)>,
 }
+
+/// A look again under way (`asides look`): who asked, and what's being captured.
+struct Looking {
+    request: String,
+    aside: String,
+    plan: look::Plan,
+}
+
+/// How many looks the state keeps the answers of.
+const LOOKS_KEPT: usize = 8;
 
 /// A moment in the menu bar: a mark between the brackets, and the menu's status line.
 struct Flash {
@@ -279,6 +295,8 @@ struct App {
     finishing: Option<Finishing>,
     /// Wispr Flow dictations made while frozen, at the seconds since asides opened.
     dictations: Vec<(f32, String)>,
+    /// What agents last looked at again, newest last (published for the commands that asked).
+    looked: Vec<Looked>,
     /// The last session's guides and held measurements, which the next can restore.
     last_measure: Saved,
     /// The last aside with pins whose places are known: the next freeze can show them again (R),
@@ -449,6 +467,7 @@ impl App {
             next_take: 1,
             finishing: None,
             dictations: Vec::new(),
+            looked: Vec::new(),
             last_measure: Saved::default(),
             last_pinned: None,
             overlay_tips_seen: previous.overlay_tips_seen,
@@ -638,6 +657,7 @@ impl App {
                 self.screen_permitted = false;
                 self.fail(message);
             }
+            UserEvent::Looked(looking, result) => self.looked(*looking, result),
             UserEvent::Overlay(pid, message) => self.on_overlay(pid, message),
             UserEvent::Update(reply) => self.on_update(reply),
             UserEvent::Permissions(mut permissions, mic, open_at_login) => {
@@ -689,6 +709,7 @@ impl App {
             },
             Link::Login { open, .. } => self.set_open_at_login(open),
             Link::Sessions { .. } => self.ask_for_sessions(),
+            Link::Look { id, pin, request } => self.look_again(&id, pin, request.unwrap_or_default()),
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
                 #[cfg(feature = "dev-hooks")]
@@ -1316,6 +1337,131 @@ impl App {
         }
     }
 
+    /// An agent asks to see what pin `pin` of aside `id` was on, as it is now (`asides look`): only
+    /// what `look::plan` lets it, captured off the main thread. The answer is the state's `looked`.
+    fn look_again(&mut self, id: &str, pin: u32, request: String) {
+        let Some(aside) = history::find(&history::dir(), id) else {
+            return self.not_looked(request, id.into(), pin, format!("There's no aside {id} in the history."));
+        };
+        let refuse = |this: &mut Self, why: String| this.not_looked(request.clone(), aside.id.clone(), pin, why);
+        // Frozen, the screens show asides' own windows.
+        if self.overlay.is_some() {
+            return refuse(
+                self,
+                "asides is open on the screen: nothing can be looked at until it's sent or closed.".into(),
+            );
+        }
+        if !self.screen_permitted && !capture::permitted() {
+            return refuse(self, "asides isn't allowed to see the screen (Screen Recording).".into());
+        }
+        self.screen_permitted = true;
+        let windows: Vec<look::Window> = elements::windows(None)
+            .iter()
+            .map(|w| look::Window { id: w.id(), app: w.app.clone(), title: w.title.clone(), frame: w.bounds })
+            .collect();
+        let (minutes, padding) = (self.config.look_again_minutes, self.config.measure.padding);
+        let plan = match look::plan(&aside, pin, minutes, history::now_ms(), &windows, padding) {
+            Ok(plan) => plan,
+            Err(why) => return refuse(self, why),
+        };
+        let looking = Box::new(Looking { request: request.clone(), aside: aside.id.clone(), plan });
+        if let Err(why) = self.capture_look(looking) {
+            refuse(self, why);
+        }
+    }
+
+    /// Captures what `looking` plans to: the window alone, whatever is over it.
+    #[cfg(target_os = "macos")]
+    fn capture_look(&mut self, looking: Box<Looking>) -> Result<(), String> {
+        let (window, frame) = (looking.plan.window as u32, looking.plan.frame);
+        let pending = Mutex::new((Some(looking), self.proxy.clone()));
+        capture::capture_window(window, move |result| {
+            let mut pending = pending.lock().unwrap();
+            if let Some(looking) = pending.0.take() {
+                let result = result.map(|(pixels, scale)| (pixels, scale, frame));
+                let _ = pending.1.send_event(UserEvent::Looked(looking, result));
+            }
+        });
+        Ok(())
+    }
+
+    /// Captures what `looking` plans to: the screen its window is on, of which only that part is
+    /// kept, so only with nothing over it there (Windows and Linux capture screens, not windows).
+    #[cfg(not(target_os = "macos"))]
+    fn capture_look(&mut self, looking: Box<Looking>) -> Result<(), String> {
+        let looking = Box::new(Looking { plan: looking.plan.clone().uncovered()?, ..*looking });
+        let rect = looking.plan.rect;
+        let (cx, cy) = (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+        let screens = capture::screens(self.mtm);
+        let Some(screen) = screens.iter().find(|s| {
+            cx >= s.origin.0 && cx < s.origin.0 + s.frame.width && cy >= s.origin.1 && cy < s.origin.1 + s.frame.height
+        }) else {
+            return Err("The window the pin was in isn't on a screen now.".into());
+        };
+        let px = |pt: f64| (pt * screen.scale).round() as usize;
+        let displays = vec![(screen.display, px(screen.frame.width), px(screen.frame.height))];
+        let (scale, shown) =
+            (screen.scale, PtRect::new(screen.origin.0, screen.origin.1, screen.frame.width, screen.frame.height));
+        let pending = Mutex::new((Some(looking), self.proxy.clone()));
+        capture::capture(displays, None, move |result| {
+            let mut pending = pending.lock().unwrap();
+            if let Some(looking) = pending.0.take() {
+                let result = result.and_then(|mut captures| match captures.pop() {
+                    Some(capture) => Ok((capture.frame, scale, shown)),
+                    None => Err("Could not capture the screen.".into()),
+                });
+                let _ = pending.1.send_event(UserEvent::Looked(looking, result));
+            }
+        });
+        Ok(())
+    }
+
+    /// What was captured for an agent: the part the plan allows, kept with the aside (`looks/`),
+    /// the menu bar saying so.
+    fn looked(&mut self, looking: Looking, result: Result<(Frame, f64, PtRect), String>) {
+        let Looking { request, aside, plan } = looking;
+        let kept = result.and_then(|(pixels, scale, shown)| {
+            let part = picture::crop(&pixels, plan.within(shown, scale))
+                .ok_or("What the pin was on is off the screen now.")?;
+            let png = picture::png(&picture::within(&part, look::MAX_SIDE));
+            let folder = plan.file.parent().ok_or("no folder for the picture")?;
+            std::fs::create_dir_all(folder)
+                .and_then(|()| std::fs::write(&plan.file, png))
+                .map_err(|err| format!("Could not keep the picture: {err}"))
+        });
+        if let Err(why) = kept {
+            return self.not_looked(request, aside, plan.pin, why);
+        }
+        self.flash(
+            FLASH,
+            Mark::Eye,
+            format!("An agent looked at pin {} of {aside} again ({} in {})", plan.pin, plan.title, plan.app),
+        );
+        self.answer_look(Looked {
+            request,
+            aside,
+            pin: plan.pin,
+            title: plan.title,
+            app: plan.app,
+            image: Some(plan.file),
+            error: None,
+        });
+    }
+
+    /// An agent's look that asides didn't take, and why (said to the agent, and in the log).
+    fn not_looked(&mut self, request: String, aside: String, pin: u32, why: String) {
+        asides_core::log::write(format_args!("an agent asked to look at pin {pin} of {aside} again: {why}"));
+        self.answer_look(Looked { request, aside, pin, error: Some(why), ..Looked::default() });
+    }
+
+    fn answer_look(&mut self, looked: Looked) {
+        self.looked.push(looked);
+        let extra = self.looked.len().saturating_sub(LOOKS_KEPT);
+        self.looked.drain(..extra);
+        self.refresh();
+        self.publish();
+    }
+
     /// The pins of the last aside that had any, by the screen each was on (of `screens`, as they
     /// are now), for R; none once that aside is gone from the history.
     fn earlier_pins(&mut self, screens: &[SpecScreen]) -> Vec<Vec<Earlier>> {
@@ -1933,6 +2079,7 @@ impl App {
             open_at_login: self.open_at_login,
             onboarded: self.onboarded,
             setup_step: self.setup_step.clone(),
+            looked: self.looked.clone(),
             updated_ms: history::now_ms(),
         };
         if let Err(err) = state.write(&paths::state_path()) {
