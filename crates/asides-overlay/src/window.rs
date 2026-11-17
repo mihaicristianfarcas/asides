@@ -3043,10 +3043,16 @@ impl AsidesWindow {
                     format!(
                         "Tab and {s}Tab go through what can be clicked, Space or {r} presses it, and the arrows move \
                          in lists and choices. {c}1 to {c}6 open History, Sessions and each setting, {c}F searches \
-                         History, {c}? this page.",
+                         History, {c}? this page.{menu}",
                         s = keys::SHIFT,
                         r = keys::RETURN,
                         c = keys::COMMAND,
+                        // Only a Mac's menus take shortcuts.
+                        menu = if cfg!(target_os = "macos") {
+                            " In the menu bar's menu, ⌘1 opens History and ⌘, Settings."
+                        } else {
+                            ""
+                        },
                     ),
                     None,
                 ))
