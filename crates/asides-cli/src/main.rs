@@ -110,7 +110,7 @@ enum Command {
     Look {
         /// The pin's number in the aside.
         pin: u32,
-        /// The aside (the newest by default).
+        /// The aside (by default the newest with pins).
         #[arg(default_value = "last")]
         id: String,
     },

@@ -131,6 +131,12 @@ impl Aside {
         write_record(&self.dir, &self.record)
     }
 
+    /// Whether any of its pins kept its place on the screen (`Pin::spot`): R can show them again,
+    /// and an agent look again at what they were on.
+    pub fn has_places(&self) -> bool {
+        self.record.pins.iter().any(|p| p.spot.is_some())
+    }
+
     /// When it last went to a session, or else when it was made (milliseconds since the epoch).
     pub fn last_sent_ms(&self) -> u64 {
         self.record
@@ -344,6 +350,13 @@ pub fn find(history: &Path, id: &str) -> Option<Aside> {
     }
 }
 
+/// The newest aside whose pins kept their places (`Aside::has_places`): the one R shows again, and
+/// the one an agent looks again at unless it names another (an aside since may have no pins: a clip
+/// alone, or only talk).
+pub fn last_pinned(history: &Path) -> Option<Aside> {
+    list(history).into_iter().find(Aside::has_places)
+}
+
 /// Removes asides older than `days` (0 keeps them all); how many went.
 pub fn prune(history: &Path, days: u32, now: SystemTime) -> usize {
     if days == 0 {
@@ -436,6 +449,11 @@ mod tests {
         assert_eq!(aside.last_sent_ms(), made);
         aside.record_delivery(Delivery { at_ms: made + 900, ..Default::default() }).unwrap();
         assert_eq!(aside.last_sent_ms(), made + 900);
+        // An aside with no pins since (a clip alone, or only talk): it's still the last one pinned.
+        let later = at + chrono::TimeDelta::minutes(1);
+        let clip = create(tmp.path(), later, "**Clip:** 9 frames", &[], Vec::new(), None).unwrap();
+        assert_eq!(find(tmp.path(), "last").unwrap().id, clip.id);
+        assert_eq!(last_pinned(tmp.path()).unwrap().id, aside.id);
     }
 
     #[test]
