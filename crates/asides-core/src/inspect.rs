@@ -455,6 +455,74 @@ pub struct Annotation {
     pub target: Option<Element>,
     /// Dragged by its number: where what it's on should go, as an offset from where it is.
     pub moved: Option<(f64, f64)>,
+    /// A follow-up: the pin of an earlier aside it was put back on.
+    pub again: Option<Earlier>,
+}
+
+/// A pin of an aside sent earlier, shown again on a later freeze (R) where it was: clicked, it's a
+/// pin of the new aside, which says what it follows up on.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Earlier {
+    /// Its number in the aside it was in.
+    pub number: u32,
+    /// That aside, as a later one names it: `the aside from 14:02, "The gap under…" (its folder)`.
+    pub aside: String,
+    /// Where its number was, and its area (dragged), in the screen's points.
+    pub at: (f64, f64),
+    pub area: Option<PtRect>,
+    /// What it was on (`button "Save"`).
+    pub title: String,
+}
+
+/// Where a pin was on the screen, kept with its aside (`history::Pin`): a later freeze shows it
+/// again (R).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Spot {
+    /// The display it was on, and which of the screens that was (the main one first).
+    pub display: u32,
+    pub screen: usize,
+    /// The screen's top-left corner in global points (y down), and its pixels per point.
+    pub origin: (f64, f64),
+    pub scale: f64,
+    /// Where its number was, and its area (dragged), in the screen's points.
+    pub at: (f64, f64),
+    pub area: Option<PtRect>,
+    /// What it marked, in the screen's points: its area, its drawing, or the element it was on.
+    /// None for a point on nothing named.
+    pub region: Option<PtRect>,
+    /// What it was on (`button "Save"`).
+    pub title: String,
+    /// The app and the window it was in.
+    pub app: Option<String>,
+    pub window: Option<String>,
+}
+
+impl Spot {
+    /// Where `annotation` is, on a screen at `origin` (`display`, the `screen`th).
+    pub fn of(
+        annotation: &Annotation,
+        display: u32,
+        screen: usize,
+        origin: (f64, f64),
+        on: &Screen,
+        units: Units,
+    ) -> Spot {
+        let element = annotation.element.clone().unwrap_or_default();
+        Spot {
+            display,
+            screen,
+            origin,
+            scale: on.scale,
+            at: annotation.at,
+            area: annotation.area,
+            region: annotation.region(),
+            title: annotation.title(on.scale, units),
+            app: element.app,
+            window: element.window,
+        }
+    }
 }
 
 /// A recording of what the user said about one annotation (`take`, the app's id for it), and its
@@ -678,6 +746,9 @@ impl Inspection {
             if let Some(moved) = annotation.moved {
                 line.push_str(&format!(" (move it {})", moved_by(moved, scale, units)));
             }
+            if let Some(earlier) = &annotation.again {
+                line.push_str(&format!(" (follow-up to pin {} of {})", earlier.number, earlier.aside));
+            }
             if !comment.is_empty() {
                 line.push_str(&format!(": {comment}"));
             }
@@ -685,6 +756,10 @@ impl Inspection {
         }
         let mut lines = vec![format!("### {}. {title}", annotation.number)];
         let mut field = |label: &str, value: String| lines.push(format!("**{label}:** {value}"));
+        // First: what it's said about is what was asked before.
+        if let Some(earlier) = &annotation.again {
+            field("Follow-up to", format!("pin {} of {}", earlier.number, earlier.aside));
+        }
         match (&element.app, &element.window) {
             _ if shared => {}
             (Some(app), Some(window)) if !window.is_empty() => field("App", format!("{app} ({})", quote(window))),

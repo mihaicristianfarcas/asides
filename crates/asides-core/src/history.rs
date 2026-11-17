@@ -14,6 +14,7 @@ use chrono::{DateTime, Local, TimeZone};
 use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentKind;
+use crate::inspect::{Earlier, Spot};
 use crate::markdown::{self, Part};
 
 pub const HOME_VAR: &str = "ASIDES_HOME";
@@ -54,12 +55,14 @@ pub struct Record {
     pub edited_ms: Option<u64>,
 }
 
-/// A pin of an aside: its number, and its color (`#3B82F6`).
+/// A pin of an aside: its number, its color (`#3B82F6`), and where it was on the screen.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Pin {
     pub number: u32,
     pub color: String,
+    /// None in asides made before pins' places were kept.
+    pub spot: Option<Spot>,
 }
 
 /// One sending of an aside to a session.
@@ -126,6 +129,37 @@ impl Aside {
     pub fn record_delivery(&mut self, delivery: Delivery) -> io::Result<()> {
         self.record.deliveries.push(delivery);
         write_record(&self.dir, &self.record)
+    }
+
+    /// How a later aside names this one, for an agent that got it as a message (it has no id
+    /// there) or never did: when it was made (the day too, unless that's `now`'s), its first
+    /// words, and its folder.
+    pub fn reference(&self, now: DateTime<Local>) -> String {
+        let made = self.created();
+        let when = match made.date_naive() == now.date_naive() {
+            true => made.format("%H:%M").to_string(),
+            false => made.format("%Y-%m-%d %H:%M").to_string(),
+        };
+        format!("the aside from {when}, \"{}\" ({})", self.record.title.replace('"', "'"), self.dir.display())
+    }
+
+    /// Its pins as a later freeze shows them again (R), by the screen each was on: `displays` are
+    /// the screens now. A pin whose display is gone has nowhere to show.
+    pub fn earlier(&self, displays: &[u32], now: DateTime<Local>) -> Vec<Vec<Earlier>> {
+        let aside = self.reference(now);
+        let mut earlier = vec![Vec::new(); displays.len()];
+        for pin in &self.record.pins {
+            let Some(spot) = &pin.spot else { continue };
+            let Some(screen) = displays.iter().position(|d| *d == spot.display) else { continue };
+            earlier[screen].push(Earlier {
+                number: pin.number,
+                aside: aside.clone(),
+                at: spot.at,
+                area: spot.area,
+                title: spot.title.clone(),
+            });
+        }
+        earlier
     }
 
     /// Its screenshots on disk, as its message names them (`images/1.png`).
@@ -353,6 +387,36 @@ mod tests {
             find(tmp.path(), "2026-10-18-221530").map(|a| a.record.title),
             Some("The save button is too low.".into())
         );
+    }
+
+    #[test]
+    fn a_later_aside_names_it_and_shows_its_pins_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let at = Local.with_ymd_and_hms(2026, 11, 16, 14, 2, 0).unwrap();
+        let spot =
+            |display: u32, at: (f64, f64)| Spot { display, at, title: "button \"Save\"".into(), ..Spot::default() };
+        let pins = vec![
+            Pin { number: 1, color: "#3B82F6".into(), spot: Some(spot(1, (30.0, 20.0))) },
+            // On a display that's gone since, and one from before pins' places were kept.
+            Pin { number: 2, color: "#3B82F6".into(), spot: Some(spot(7, (10.0, 10.0))) },
+            Pin { number: 3, color: "#3B82F6".into(), spot: None },
+        ];
+        let message = "The \"gap\" is too big [1].\n\n### 1. button \"Save\"";
+        let aside = create(tmp.path(), at, message, &[], pins, None).unwrap();
+        let folder = aside.dir.display().to_string();
+        assert_eq!(aside.reference(at), format!("the aside from 14:02, \"The 'gap' is too big.\" ({folder})"));
+        let tomorrow = at + chrono::TimeDelta::days(1);
+        assert!(aside.reference(tomorrow).starts_with("the aside from 2026-11-16 14:02, "));
+        // Read again, its pins are where they were: the second screen now is the display it was on.
+        let again = find(tmp.path(), &aside.id).unwrap();
+        let earlier = again.earlier(&[4, 1], at);
+        assert_eq!(earlier[0], []);
+        assert_eq!(earlier[1].len(), 1);
+        assert_eq!(
+            (earlier[1][0].number, earlier[1][0].at, earlier[1][0].title.as_str()),
+            (1, (30.0, 20.0), "button \"Save\"")
+        );
+        assert_eq!(earlier[1][0].aside, again.reference(at));
     }
 
     #[test]

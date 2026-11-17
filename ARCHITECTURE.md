@@ -108,8 +108,10 @@ crates/
     link.rs           asides:// links (CLI and window → app)
     state.rs          state.json (app → CLI and window)
     measure.rs        PixelSnap-style measuring: edges, distances, snapping, guides, colors
-    inspect.rs        a session's measurements, pins, drawings, elements, and their Markdown
-    overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore), scripts
+    inspect.rs        a session's measurements, pins, drawings, elements, and their Markdown;
+                      where each pin was (`Spot`), and what it follows up on (`Earlier`)
+    overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore,
+                      follow-ups), scripts
     takes.rs          a session's recordings, joined into one, with their moments
     helper.rs         app ↔ overlay protocol: Spec, Event, Command, Outcome
     keys.rs           the overlay's key chords
@@ -236,7 +238,8 @@ the pill names the session typed into last from its first frame.
    (`elements::identify`).
 3. **Live and back** (`⌃⌥P`): the overlay hands the keyboard back and shows only the pill, a
    non-activating panel (the same one frozen, above the screens). Freezing again captures again, leaving out the overlay's windows
-   (`Session::refrozen`).
+   (`Session::refrozen`). `R` shows the last aside's pins again (`Spec::earlier`, from the places
+   kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).
 5. **Send** (`finish`): the overlay renders each freeze's screenshot, around what's on it
@@ -352,7 +355,7 @@ Break these only on purpose, and update this list.
 
 | Path | Written by | Notes |
 |---|---|---|
-| `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json`, `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
+| `~/.asides/history/<id>/` | worker; main thread for deliveries | `aside.json` (with where each pin was), `message.md`, `images/`, `audio/`; `ASIDES_HOME` moves it |
 | `~/Library/Application Support/asides/config.toml` | app, window, user | reloaded on change |
 | `…/asides/state.json` | app | status, sessions, folders, the pill's place, the last aside, the update, What's New seen, permissions, opening at login, setup |
 | `…/asides/window.json` | window | how wide its sidebar and History's list were dragged, where it was and how big (its display, maximized or full screen) |

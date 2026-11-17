@@ -101,6 +101,10 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
                 session = session.refrozen(screens());
                 (live, frozen_at) = (false, session.clock);
             }
+            Action::Restore => {
+                session.restore(&spec.saved);
+                session.show_earlier(&spec.earlier);
+            }
             _ => {}
         }
         if let Placed::Shot { screen, rect } = session.apply(action)

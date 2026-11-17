@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use asides_core::helper::{Item, Outcome, RESULT, Spec, Target};
+use asides_core::inspect::Spot;
 use asides_core::overlay::{Saved, Session, markdown};
 
 use crate::export::{self, Exporter};
@@ -47,18 +48,23 @@ pub fn items(
         let (header, notes) = markdown(inspection, spec.detail);
         let first = notes.iter().map(|n| n.time).fold(frozen_at, f32::min);
         image(*screen, header, first, &mut items)?;
+        // Where the screen is, for where each pin was on it.
+        let (display, origin) = spec.screens.get(*screen).map_or((0, (0.0, 0.0)), |s| (s.display, s.origin));
         items.extend(notes.into_iter().map(|n| {
             let (annotation, said) = n.annotation.unzip();
-            let color = inspection.annotations.iter().find(|a| Some(a.key) == annotation).map(|a| {
+            let pin = inspection.annotations.iter().find(|a| Some(a.key) == annotation);
+            let color = pin.map(|a| {
                 let (r, g, b, _) = style::annotation_color(a, a.intent, accent);
                 format!("#{:06X}", style::rgb_hex((r, g, b)))
             });
+            let spot = pin.map(|a| Spot::of(a, display, *screen, origin, &inspection.screen, inspection.units));
             Item {
                 time: n.time,
                 text: Some(n.text),
                 annotation,
                 said: said.unwrap_or_default(),
                 color,
+                spot,
                 ..Item::default()
             }
         }));

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agents::AgentKind;
 use crate::config::OverlayKeys;
-use crate::inspect::{Detail, Element, PtRect, Screen, Units};
+use crate::inspect::{Detail, Earlier, Element, PtRect, Screen, Spot, Units};
 use crate::overlay::{Saved, Script};
 
 pub const SPEC: &str = "session.json";
@@ -55,6 +55,8 @@ pub struct Spec {
     pub targets: Targets,
     /// The last session's guides and held measurements, for R.
     pub saved: Saved,
+    /// The pins of the aside sent last, by screen, for R: clicked, they're followed up on.
+    pub earlier: Vec<Vec<Earlier>>,
     /// Show the keys at the start (the first time).
     pub tips: bool,
     /// Play these steps instead of waiting for the user (`asides simulate-measure`).
@@ -325,6 +327,8 @@ pub struct Item {
     pub said: Vec<u64>,
     /// A pin's color on its screenshot (`#3B82F6`), for History.
     pub color: Option<String>,
+    /// Where a pin was on the screen, kept with the aside.
+    pub spot: Option<Spot>,
 }
 
 /// One JSON line.
