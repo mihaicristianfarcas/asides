@@ -221,7 +221,8 @@ type Recorded = (Window, (i16, i16, u16, u16), (i32, i32, i32, i32));
 /// Watches what the window in front shows (not asides' own, nor process `without`'s, the
 /// overlay's): the part of the screen it's on, read from the root window, handed to `shown` on a
 /// thread of its own until the `Watch` is dropped. Another window coming to the front, or this one
-/// changing size, is said first, with where asides' pill is over it.
+/// changing size, is said first, with where asides' pill is over it. With no window in front as it
+/// starts (the desktop), it's the whole monitor under the pointer, to the end.
 pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
     let (stop, stopped) = channel::<()>();
     // Said from the thread, or here if it can't start: `Send`, not `Sync`, so behind a lock.
@@ -240,13 +241,24 @@ pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(Str
             return failed("The window manager doesn't say which window is in front.".into());
         };
         let mut of: Option<Recorded> = None;
+        let listed = |window: Window| crate::elements::windows(without).into_iter().find(|w| w.id == window);
+        let desktop = front_window(&connection, root.root, active).and_then(|(window, _)| listed(window)).is_none();
+        if desktop {
+            let monitor = pointer_monitor(&connection, screen, root.root);
+            let Some(rect) = monitor.map(|m| on_screen((m.left, m.top, m.width, m.height), &root)) else {
+                return failed("Could not find the screen under the pointer.".into());
+            };
+            shown(crate::clip::Shown::Another(None, overlay_rects(&connection, root.root, rect)));
+            of = Some((x11rb::NONE, (0, 0, 0, 0), rect));
+        }
         let mut next = Instant::now();
         loop {
             // Another window in front, or it moved or changed size: where it is, by the window list
             // (which knows a window's shadow isn't it, and asides' windows from the user's).
-            if let Some((window, at)) = front_window(&connection, root.root, active)
+            if !desktop
+                && let Some((window, at)) = front_window(&connection, root.root, active)
                 && of.map(|o| (o.0, o.1)) != Some((window, at))
-                && let Some(found) = crate::elements::windows(without).into_iter().find(|w| w.id == window)
+                && let Some(found) = listed(window)
             {
                 let all: Vec<Monitor> =
                     display::monitors_on(&connection, screen).into_iter().map(|l| l.monitor).collect();
@@ -325,6 +337,17 @@ fn front_window(connection: &impl Connection, root: Window, active: Atom) -> Opt
     let size = connection.get_geometry(window).ok()?.reply().ok()?;
     let corner = connection.translate_coordinates(window, root, 0, 0).ok()?.reply().ok()?;
     Some((window, (corner.dst_x, corner.dst_y, size.width, size.height)))
+}
+
+/// The monitor under the pointer (pixels), or the main one.
+fn pointer_monitor(connection: &impl Connection, screen: usize, root: Window) -> Option<Monitor> {
+    let all: Vec<Monitor> = display::monitors_on(connection, screen).into_iter().map(|l| l.monitor).collect();
+    let pointer = connection.query_pointer(root).ok().and_then(|c| c.reply().ok());
+    let under = pointer.and_then(|p| {
+        let (x, y) = (i32::from(p.root_x), i32::from(p.root_y));
+        all.iter().find(|m| x >= m.left && x < m.left + m.width && y >= m.top && y < m.top + m.height)
+    });
+    under.or_else(|| all.iter().find(|m| m.primary)).or(all.first()).copied()
 }
 
 /// The part of `rect` (left, top, width, height) that's on the screen: the server refuses to read
@@ -608,5 +631,23 @@ mod tests {
             std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
         }
         std::fs::write(dir.join("clip.txt"), made.summary.caption("in pin 1's area")).unwrap();
+    }
+
+    /// Records as the pill's camera would: the window in front, or with none (the desktop), the
+    /// monitor under the pointer, for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP` as
+    /// `records_an_area` does. `--ignored`; on an X11 desktop.
+    #[test]
+    #[ignore = "needs a desktop"]
+    fn records_a_clip() {
+        let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
+        let seconds: f64 = std::env::var("ASIDES_CLIP_SECONDS").map_or(3.0, |s| s.parse().unwrap());
+        let recording = crate::clip::Recording::start(0, None, None, |take| watch(None, take, |why| panic!("{why}")));
+        std::thread::sleep(Duration::from_secs_f64(seconds));
+        let made = recording.finish().expect("no frame came");
+        for (i, png) in made.pngs.iter().enumerate() {
+            std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
+        }
+        let place = made.app.map_or_else(|| "on the screen".to_string(), |app| format!("in {app}"));
+        std::fs::write(dir.join("clip.txt"), made.summary.caption(&place)).unwrap();
     }
 }

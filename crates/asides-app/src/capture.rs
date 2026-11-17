@@ -270,6 +270,9 @@ const AREA_FRAMES_A_SECOND: i32 = 120;
 pub enum Watched {
     /// An app's windows alone (its process): menus, popovers and sheets with them, no other app's.
     App(i32),
+    /// The whole display: whatever shows on it (the desktop, the Dock, the menu bar, every app),
+    /// but the windows of these processes (asides' own: the pill).
+    Screen(Vec<i32>),
     /// A part of the display, in its points from its top-left corner: whatever shows there, but the
     /// windows of these processes (asides' own).
     Area(PtRect, Vec<i32>),
@@ -315,7 +318,7 @@ pub fn watch(
                     )
                 }
             }
-            Watched::Area(_, without) => {
+            Watched::Screen(without) | Watched::Area(_, without) => {
                 let ours = NSArray::from_retained_slice(&apps(without));
                 let alloc = SCContentFilter::alloc();
                 unsafe {
@@ -337,7 +340,7 @@ pub fn watch(
             config.setColorSpaceName(kCGColorSpaceSRGB);
             config.setPixelFormat(kCVPixelFormatType_32BGRA);
             match &watched {
-                Watched::App(_) => config.setMinimumFrameInterval(CMTime::new(1, FRAMES_A_SECOND)),
+                Watched::App(_) | Watched::Screen(_) => config.setMinimumFrameInterval(CMTime::new(1, FRAMES_A_SECOND)),
                 Watched::Area(rect, _) => {
                     let origin = CGPoint { x: rect.x, y: rect.y };
                     config.setSourceRect(CGRect { origin, size: CGSize { width: rect.width, height: rect.height } });
@@ -662,7 +665,8 @@ mod tests {
     }
 
     /// Records a clip of app `$ASIDES_CLIP_APP` (its process id) on the main display, as the pill's
-    /// button does, or with `$ASIDES_CLIP_AREA` (`x,y,width,height`, the display's points) of that
+    /// button does, or without it, of the whole display, as the button does when no app's window is
+    /// in front; or with `$ASIDES_CLIP_AREA` (`x,y,width,height`, the display's points) of that
     /// part of it, as a pin's card's does (at the display's pixels, asides' own windows left out),
     /// for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on) and what's
     /// said after them, `clip.txt`. `--ignored`; needs the Screen Recording permission.
@@ -686,10 +690,13 @@ mod tests {
                 (Watched::Area(rect, vec![std::process::id() as i32]), size, 0, Some(1), "in pin 1's area")
             }
             None => {
-                let app: i32 = std::env::var("ASIDES_CLIP_APP").expect("ASIDES_CLIP_APP").parse().unwrap();
+                let app: Option<i32> = std::env::var("ASIDES_CLIP_APP").ok().map(|app| app.parse().unwrap());
                 let bounds = objc2_core_graphics::CGDisplayBounds(display);
                 let size = (bounds.size.width as usize, bounds.size.height as usize);
-                (Watched::App(app), size, app, None, "in the test's app")
+                match app {
+                    Some(app) => (Watched::App(app), size, app, None, "in the test's app"),
+                    None => (Watched::Screen(vec![std::process::id() as i32]), size, 0, None, "on the screen"),
+                }
             }
         };
         let recording = crate::clip::Recording::start(pid, None, pin, |take| {

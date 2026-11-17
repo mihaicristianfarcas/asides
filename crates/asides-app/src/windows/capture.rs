@@ -120,15 +120,24 @@ pub struct Watch(#[allow(dead_code)] Sender<()>);
 /// Watches what the window in front shows (not asides' own, nor process `without`'s, the
 /// overlay's): the part of the screen it's on, as the desktop composes it (the pill keeps itself
 /// out, `WDA_EXCLUDEFROMCAPTURE`), handed to `shown` on a thread of its own until the `Watch` is
-/// dropped. Another window coming to the front, or this one changing size, is said first.
+/// dropped. Another window coming to the front, or this one changing size, is said first. With the
+/// desktop in front as it starts, it's the whole monitor under the pointer, to the end.
 pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
     let (stop, stopped) = channel::<()>();
     let spawned = std::thread::Builder::new().name("asides-clip".into()).spawn(move || {
         let mut of = None;
+        let screen = crate::elements::desktop_in_front().then(pointer_monitor).flatten();
+        if screen.is_some() {
+            shown(crate::clip::Shown::Another(None, Vec::new()));
+        }
         let mut next = Instant::now();
         loop {
             let all: Vec<Monitor> = monitors().iter().map(|l| l.monitor).collect();
-            if let Some(window) = crate::elements::windows(without).into_iter().find(|w| w.layer == 0) {
+            if let Some(m) = screen {
+                if let Ok(frame) = grab(&m) {
+                    shown(crate::clip::Shown::Frame(frame));
+                }
+            } else if let Some(window) = crate::elements::windows(without).into_iter().find(|w| w.layer == 0) {
                 let (left, top, w, h) = display::rect_to_pixels(&all, window.bounds);
                 if of != Some((window.handle, w, h)) {
                     of = Some((window.handle, w, h));
@@ -181,6 +190,20 @@ pub fn watch_area(area: PtRect, shown: crate::clip::Take, failed: impl Fn(String
         failed(format!("Could not start recording the screen: {err}"));
     }
     Watch(stop)
+}
+
+/// The monitor under the pointer (physical pixels), or the main one.
+fn pointer_monitor() -> Option<Monitor> {
+    let all: Vec<Monitor> = monitors().iter().map(|l| l.monitor).collect();
+    let mut at = windows::Win32::Foundation::POINT::default();
+    // SAFETY: Windows writes the point.
+    let pointer = unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut at) }.is_ok();
+    let under = pointer
+        .then(|| {
+            all.iter().find(|m| at.x >= m.left && at.x < m.left + m.width && at.y >= m.top && at.y < m.top + m.height)
+        })
+        .flatten();
+    under.or_else(|| all.iter().find(|m| m.primary)).or(all.first()).copied()
 }
 
 /// A monitor's pixels, as RGBA.
