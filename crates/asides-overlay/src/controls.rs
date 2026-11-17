@@ -831,11 +831,11 @@ static MONO_FONT: std::sync::OnceLock<SharedString> = std::sync::OnceLock::new()
 /// Once, before a window opens: the fonts, of those this system has (helio's). A Mac's own; on
 /// Windows Segoe UI Variable (Windows 11's), else Segoe UI, and Cascadia Mono, else Consolas; on
 /// Linux the desktop's own, as fontconfig names them, else the likeliest.
-pub fn init_fonts(cx: &App) {
+pub fn init_fonts(text_system: &gpui::TextSystem) {
     if cfg!(target_os = "macos") {
         return;
     }
-    let names: std::collections::HashSet<String> = cx.text_system().all_font_names().into_iter().collect();
+    let names: std::collections::HashSet<String> = text_system.all_font_names().into_iter().collect();
     #[cfg_attr(target_os = "macos", allow(unused_variables))]
     let pick = |candidates: &[&'static str]| -> SharedString {
         candidates.iter().find(|c| names.contains(**c)).copied().unwrap_or(candidates[candidates.len() - 1]).into()

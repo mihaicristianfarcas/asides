@@ -306,10 +306,27 @@ impl TextSystem {
     }
 
     /// The platform's text system, outside any app (only the main thread makes an app): to time
-    /// shaping in a test. macOS only.
-    #[cfg(target_os = "macos")]
+    /// shaping in a test. Panics on Windows without a Direct3D 11 device (DirectWrite's needs one).
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            any(feature = "wayland", feature = "x11")
+        )
+    ))]
     pub fn of_platform() -> Self {
-        Self::new(Arc::new(crate::platform::MacTextSystem::new()))
+        #[cfg(target_os = "macos")]
+        let platform = Arc::new(crate::platform::MacTextSystem::new());
+        #[cfg(target_os = "windows")]
+        let platform = Arc::new(
+            crate::platform::DirectXDevices::new()
+                .and_then(|devices| crate::platform::DirectWriteTextSystem::new(&devices))
+                .expect("DirectWrite's text system"),
+        );
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let platform = Arc::new(crate::platform::CosmicTextSystem::new());
+        Self::new(platform)
     }
 
     /// Shapes one line in one font, outside any window (and its frame's cache of lines), as a
