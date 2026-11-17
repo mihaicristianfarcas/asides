@@ -23,8 +23,10 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 | A pin's camera, or `⌘K` in its card | Record a clip of that pin's part of the screen alone, live: its area as dragged, or its element or drawing with a little room around it, at the screen's full sharpness. A thin red line around it shows what's recorded (it's never in the clip). Its pictures go right after the pin. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still
-works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) for every key. The
-pill, its cards and menus are light or dark as macOS is, like the asides window.
+works). Drag the pill anywhere; it stays there. Point at its `?` (or press `?`) for every key. Point
+at a button for its name, by the pill; what asides tells you (a session chosen, a clip kept, an
+error) shows there too, frozen or live. The pill, its cards and menus are light or dark as macOS is,
+like the asides window.
 
 ## Talking
 

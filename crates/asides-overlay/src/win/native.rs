@@ -227,6 +227,22 @@ pub fn make_outline(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the notes' over the live screen (`ui::NotesView`), at `frame`: above the others but
+/// the pill (`below_pill`), never activated, left out of captures as the pill is, and the clicks go
+/// through it (a layered window, see-through to the mouse, all of it shown). Returns its view.
+pub fn make_notes(window: &Window, frame: PtRect) -> usize {
+    let view = view_pointer(window);
+    let Some(handle) = hwnd(view) else { return 0 };
+    style(handle, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    // SAFETY: plain calls on a window of this process.
+    unsafe {
+        let _ = SetLayeredWindowAttributes(handle, windows::Win32::Foundation::COLORREF(0), 255, LWA_ALPHA);
+        let _ = SetWindowDisplayAffinity(handle, WDA_EXCLUDEFROMCAPTURE);
+    }
+    place(handle, frame, SWP_NOOWNERZORDER);
+    view
+}
+
 /// Draws these windows now, as GPUI would their next frames: GPUI draws on `WM_PAINT`, sent here
 /// even to hidden ones, so they show it when they're shown, not what they showed last.
 pub fn draw_now(views: &[usize]) {

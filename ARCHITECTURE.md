@@ -243,7 +243,10 @@ the pill names the session typed into last from its first frame.
    stamped with its time (`Session::clock`). A new pin asks the app `identify`
    (`elements::identify`).
 3. **Live and back** (`⌃⌥P`): the overlay hands the keyboard back and shows only the pill, a
-   non-activating panel (the same one frozen, above the screens). Freezing again captures again, leaving out the overlay's windows
+   non-activating panel (the same one frozen, above the screens). The notes by it (a toast, a
+   button's name) are drawn on the frozen screens; live, in a window of their own just under the
+   pill's that the clicks go through (`ui::NotesView`, `windows::sync_notes`), the same column
+   (`notes_column`). Freezing again captures again, leaving out the overlay's windows
    (`Session::refrozen`). `R` shows the last aside's pins again (`Spec::earlier`, from the places
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
    Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each

@@ -176,6 +176,10 @@ Run what your change touches, and say in the pull request what you tried.
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves
   it and it stays; `M`, `D`, `S` switch tools. Low on the screen, its list and keys open above it:
   frame by frame, the pill doesn't move and its glass stays blurred.
+- [ ] **Notes by the pill**: frozen and live, pointing at a button shows its name under the pill
+  (above it in the lower half of the screen), on the pill's glass; a toast and an error (a clip that
+  can't start) show there too. Live, clicks just under the pill reach the app there, the notes
+  follow the pill once it's dragged, and never cover it, its list or its keys.
 - [ ] **Mic**: click mutes and unmutes; muted, Space held talks, and each new pin opens its card;
   the setting off opens muted. The card's pencil and ruler pick Draw and Measure.
 - [ ] **Live**: `⌃⌥P` leaves the pill only, unmoved, and the app takes keys and clicks; again
