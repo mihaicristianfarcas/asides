@@ -253,6 +253,12 @@ fn pill_place(screen: &SpecScreen, windowed: Option<PtRect>, at: Option<(f64, f6
 /// The pill's window on `screen` (AppKit's coordinates): the pill at `pill`, and its list (`size`
 /// is both, as drawn) under it, or above it where there's more room there than below; to its right,
 /// or to its left near the right edge; the margin around them. And which ways the list goes.
+///
+/// The window is in whole points, and kept by the corner the pill is drawn in (`ToolbarView`): its
+/// top left, or with the list above or to the left, its bottom or right edge, the same whatever the
+/// list's size. Kept by its top, the list going up as tall as 277.5 points made its window 280:
+/// half a point lower at the bottom, which macOS rounded to a whole one, and the pill dropped a point
+/// as its list opened.
 fn toolbar_frame(
     screen: &SpecScreen,
     windowed: Option<PtRect>,
@@ -265,10 +271,47 @@ fn toolbar_frame(
     let left = pill.x + LIST_WIDTH.max(KEYS_WIDTH) > area.x + area.width;
     let (above, below) = (pill.y - screen.menu_bar.max(area.y), area.y + area.height - pill.y - pill.height);
     let up = below < list && above > below;
-    let x = if left { pill.x + pill.width - w } else { pill.x } - TOOLBAR_MARGIN;
-    let y = if up { pill.y + pill.height - h } else { pill.y } - TOOLBAR_MARGIN;
     let (width, height) = ((w + 2.0 * TOOLBAR_MARGIN).ceil(), (h + 2.0 * TOOLBAR_MARGIN).ceil());
+    let x = match left {
+        true => (pill.x + pill.width + TOOLBAR_MARGIN).ceil() - width,
+        false => (pill.x - TOOLBAR_MARGIN).floor(),
+    };
+    let y = match up {
+        true => (pill.y + pill.height + TOOLBAR_MARGIN).ceil() - height,
+        false => (pill.y - TOOLBAR_MARGIN).floor(),
+    };
     (PtRect::new(f.x + x, f.y + f.height - y - height, width, height), left, up)
+}
+
+/// Where macOS blurs behind the pill and what's with it (`native::set_glass`), in its window `size`
+/// big: `shapes` as last drawn (each with the width it's about to take, its radius and how much of
+/// it shows), in the pill's part of the window drawn then (`drawn`). The window may have grown or
+/// shrunk since: what's drawn keeps its distance from the side it's kept by, as the pill does
+/// (`toolbar_frame`: its right side with the list to the left, its bottom with the list above), and
+/// takes its new width from there. Masked where they were, the glass behind the pill went for a
+/// frame as its list opened above it, the window taller and the pill at its bottom.
+fn glass_in(
+    shapes: Vec<(PtRect, f64, f64, f64)>,
+    drawn: Option<PtRect>,
+    (left, up): (bool, bool),
+    (width, height): (f64, f64),
+) -> Shapes {
+    let m = TOOLBAR_MARGIN;
+    shapes
+        .into_iter()
+        .map(|(r, w, radius, shown)| {
+            let Some(d) = drawn else { return (PtRect { width: w, ..r }, radius, shown) };
+            let x = match left {
+                true => width - m - (d.x + d.width - (r.x + r.width)) - w,
+                false => m + r.x - d.x,
+            };
+            let y = match up {
+                true => height - m - (d.y + d.height - (r.y + r.height)) - r.height,
+                false => m + r.y - d.y,
+            };
+            (PtRect::new(x, y, w, r.height), radius, shown)
+        })
+        .collect()
 }
 
 /// The pill's window: a panel that never takes the keyboard, `frame` big (hidden until `sync`
@@ -875,26 +918,33 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
         };
         let (list, keys) = (o.list.shown(), o.keys_sheet.shown());
         let fades = (list, keys);
-        let shapes: Shapes = o
+        // As drawn, and the pill as wide as it's about to be.
+        let shapes: Vec<(PtRect, f64, f64, f64)> = o
             .pill_bounds
-            .map(|b| (PtRect { width: pill.0, ..rect(b) }, 12.0, 1.0))
+            .map(|b| (rect(b), pill.0, 12.0, 1.0))
             .into_iter()
-            .chain(o.list_bounds.filter(|_| list > 0.0).map(|b| (rect(b), 12.0, list as f64)))
-            .chain(o.keys_bounds.filter(|_| keys > 0.0 && list == 0.0).map(|b| (rect(b), 12.0, keys as f64)))
+            .chain(o.list_bounds.filter(|_| list > 0.0).map(|b| (rect(b), rect(b).width, 12.0, list as f64)))
+            .chain(
+                o.keys_bounds
+                    .filter(|_| keys > 0.0 && list == 0.0)
+                    .map(|b| (rect(b), rect(b).width, 12.0, keys as f64)),
+            )
             .collect();
         let (spec, sides) = (o.spec(), (o.list_left, o.list_up));
+        let drawn = o.toolbar_bounds.map(rect);
         o.toolbar_window.as_ref().map(|t| {
             let screens = spec.screens.clone();
             let place = (o.toolbar_at, o.toolbar_screen, o.pill_rect);
             let moved = (o.moving_toolbar.filter(|_| !o.let_go), o.moving_toolbar.is_some(), fades);
-            (t.view, pill, whole.unwrap_or(pill), shapes, moved, place, screens, spec.windowed, sides)
+            let glass = (shapes, drawn);
+            (t.view, pill, whole.unwrap_or(pill), glass, moved, place, screens, spec.windowed, sides)
         })
     })?;
     let Some((
         view,
         pill,
         whole,
-        shapes,
+        (shapes, drawn),
         (moving, grabbed, fades),
         (mut at, mut index, last),
         screens,
@@ -942,6 +992,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
     } else if !same(f, frame) {
         native::move_to(view, (f.x, f.y));
     }
+    let shapes = glass_in(shapes, drawn.filter(|_| (left, up) == sides), (left, up), (f.width, f.height));
     // The mask is drawn at the window's size: again when it's resized.
     let glass = cx.update(|cx| {
         let last = overlay.read(cx).glass_shapes.as_ref();
@@ -992,6 +1043,45 @@ mod tests {
             place: None,
             menu_bar: 38.0,
         }
+    }
+
+    #[test]
+    fn the_pill_stays_put_as_its_list_opens() {
+        let s = screen();
+        let main = |f: PtRect| 982.0 - f.y - f.height;
+        // Low near the right edge: the list opens above it, to its left, and its window grows that
+        // way, its bottom and right edge where they were, in whole points.
+        let pill = PtRect::new(1100.0, 800.0, 352.5, 36.0);
+        let (closed, left, up) = toolbar_frame(&s, None, pill, (354.5, 38.0));
+        let (open, ..) = toolbar_frame(&s, None, pill, (460.0, 277.5));
+        assert!(left && up);
+        assert_eq!((open.y, open.x + open.width), (closed.y, closed.x + closed.width));
+        // High near the left edge: down and to its right, its top left corner where it was.
+        let pill = PtRect::new(100.0, 60.0, 352.5, 36.0);
+        let (closed, left, up) = toolbar_frame(&s, None, pill, (354.5, 38.0));
+        let (open, ..) = toolbar_frame(&s, None, pill, (460.0, 277.5));
+        assert!(!left && !up);
+        assert_eq!((main(open), open.x), (main(closed), closed.x));
+        for f in [closed, open] {
+            assert_eq!((f.x.fract(), f.y.fract(), f.width.fract(), f.height.fract()), (0.0, 0.0, 0.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn the_glass_follows_the_pill_as_its_window_grows() {
+        // Drawn in a window 356 x 40: the pill alone, a point in. Its list opens above it: the
+        // window grows to 462 x 280, and the pill is drawn at its bottom, a point in.
+        let pill = PtRect::new(1.0, 1.0, 354.0, 38.0);
+        let glass = glass_in(vec![(pill, 354.0, 12.0, 1.0)], Some(pill), (false, true), (462.0, 280.0));
+        assert_eq!(glass, vec![(PtRect::new(1.0, 241.0, 354.0, 38.0), 12.0, 1.0)]);
+        // Near the right edge, kept by its right side: the list (to the left) and the pill, about
+        // to be 20 points wider, end where the window does.
+        let (pill, list) = (PtRect::new(107.0, 1.0, 354.0, 38.0), PtRect::new(1.0, 45.0, 460.0, 200.0));
+        let drawn = PtRect::new(1.0, 1.0, 460.0, 244.0);
+        let shapes = vec![(pill, 374.0, 12.0, 1.0), (list, 460.0, 12.0, 0.5)];
+        let glass = glass_in(shapes, Some(drawn), (true, false), (482.0, 246.0));
+        assert_eq!(glass[0].0, PtRect::new(107.0, 1.0, 374.0, 38.0));
+        assert_eq!(glass[1].0, PtRect::new(21.0, 45.0, 460.0, 200.0));
     }
 
     #[test]
