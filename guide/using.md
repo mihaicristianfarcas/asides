@@ -79,7 +79,7 @@ Measure:
 | `⌘C`, `C`, `⌘⇧C` | Copy the size, the screenshot, or everything as Markdown. |
 | `R` | Bring back the last session's guides and held measurements. |
 
-Anywhere: right-click for a menu (the arrow keys and `⏎` work in it), `⌫` removes what's under the pointer (or the last thing), `X`
+Anywhere: right-click for a menu (the arrow keys and `⏎` work in it), `⌫` removes what's under the pointer (or the last thing), `⇧⌘Z` puts back what it removed, step by step, `X`
 clears everything, `⇧Tab` hides it all, `⌥⏎` sends with the whole screen (even with nothing
 marked).
 

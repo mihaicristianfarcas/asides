@@ -110,8 +110,8 @@ crates/
     measure.rs        PixelSnap-style measuring: edges, distances, snapping, guides, colors
     inspect.rs        a session's measurements, pins, drawings, elements, and their Markdown;
                       where each pin was (`Spot`), and what it follows up on (`Earlier`)
-    overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore,
-                      follow-ups), scripts
+    overlay.rs        the session state machine (tools, holds, guides, pins, shots, undo and redo,
+                      restore and its steps, follow-ups), scripts
     look.rs           what an agent may look at again (`asides look`): a pin's window, for a while
     motion.rs         clips: the frames a recording keeps as the screen changes, and their pictures
     picture.rs        frames cropped, scaled and encoded as PNGs (looks, clips)
