@@ -27,6 +27,9 @@ jobs:
         run: cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # R bringing back a large aside, timed in this system's text system (the test prints it).
+      - name: R's time
+        run: cargo test --workspace --bins restores_a_large_aside_within_a_frame -- --nocapture
       - name: Bundle
         run: make bundle
 
@@ -49,6 +52,9 @@ jobs:
         run: cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # R bringing back a large aside, timed in this system's text system (the test prints it).
+      - name: R's time
+        run: cargo test --workspace --bins restores_a_large_aside_within_a_frame -- --nocapture
       # A debug build: the packaging is what's checked.
       - name: Package
         env:
@@ -86,6 +92,9 @@ jobs:
         run: cargo clippy --workspace --all-targets --features asides-app/dev-hooks -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # R bringing back a large aside, timed in this system's text system (the test prints it).
+      - name: R's time
+        run: cargo test --workspace --bins restores_a_large_aside_within_a_frame -- --nocapture
       # A debug build, its installer uncompressed: the packaging is what's checked.
       - name: Package
         shell: pwsh

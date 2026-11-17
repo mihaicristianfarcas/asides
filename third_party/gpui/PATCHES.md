@@ -39,8 +39,9 @@ depends on 0.2.2's internals).
 
 - `Window::draw_now`: draws and presents a frame at once, as the platform's frame callback would.
 - `TextSystem::layout_line_in` shapes a line outside any window, and `TextSystem::of_platform`
-  (macOS) is the platform's text system outside any app: the overlay's test of R's cost times
-  shaping its labels (an app is made only on the main thread, a test runs on another).
+  is the platform's text system outside any app (CoreText, DirectWrite or cosmic-text): the
+  overlay's test of R's cost times shaping its labels (an app is made only on the main thread, a
+  test runs on another).
 - `DispatchEventResult` is public: `Window::dispatch_event` returns it (0.2.2's private type).
 - Truncated text (`truncate()`) is cut, with its ellipsis (`elements/text.rs`): a layout measured
   without a width (a size it would like) was kept and answered every later measure, so the text ran

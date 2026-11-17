@@ -644,7 +644,7 @@ pub fn run() {
         ]);
         // The settings' fields edit as the card's does.
         crate::input::bind_keys(cx);
-        controls::init_fonts(cx);
+        controls::init_fonts(cx.text_system());
         // The app's commands (`show general`), as they come.
         let (tx, mut commands) = futures::channel::mpsc::unbounded::<String>();
         std::thread::spawn(move || {

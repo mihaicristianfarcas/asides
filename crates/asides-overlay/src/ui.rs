@@ -4385,7 +4385,7 @@ fn visible_frames(screens: &[SpecScreen]) -> Vec<PtRect> {
     screens.iter().map(|s| crate::native::visible_frame(s.frame)).collect()
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use asides_core::inspect::{Earlier, Guide, Run, Screen, Units};
     use asides_core::overlay::Restore;
@@ -4400,6 +4400,9 @@ mod tests {
     /// CoreText measured again: 18 ms on an M-series Mac, more than a frame; 4 ms now, and 11 ms on
     /// CI's slower virtual Macs. The first time, loading the fonts took 0.6 s: a spare overlay
     /// loads them as it waits (`windows::WarmUp`), so the best of a few rounds is what R costs.
+    /// Each system shapes in its own text system (CoreText, DirectWrite, cosmic-text) and the
+    /// overlay's font there; cosmic-text is Rust, built optimized in debug builds too (the
+    /// workspace's `Cargo.toml`), as the other two are the system's. CI prints the time.
     #[test]
     fn restores_a_large_aside_within_a_frame() {
         let screen = Screen { name: None, width: 1512.0, height: 945.0, scale: 2.0 };
@@ -4436,12 +4439,13 @@ mod tests {
         let earlier = vec![pins];
 
         let text_system = gpui::TextSystem::of_platform();
+        crate::controls::init_fonts(&text_system);
         let label = Font {
             weight: FontWeight::SEMIBOLD,
             features: FontFeatures(Arc::new(vec![("tnum".into(), 1)])),
-            ..font(".SystemUIFont")
+            ..font(crate::controls::font())
         };
-        let number = Font { weight: FontWeight::BOLD, ..font(".SystemUIFont") };
+        let number = Font { weight: FontWeight::BOLD, ..font(crate::controls::font()) };
         let mut best = Duration::MAX;
         for _ in 0..10 {
             let mut session =
@@ -4476,6 +4480,7 @@ mod tests {
             assert_eq!((texts.len(), state.earlier.len()), (420, 300));
             best = best.min(start.elapsed());
         }
+        eprintln!("R on 720 labels, in {}: {best:?}", crate::controls::font());
         assert!(best < Duration::from_millis(16), "R took {best:?}, more than a frame (16 ms at 60 Hz)");
     }
 }
