@@ -18,7 +18,7 @@ bottom of the asides window's sidebar, shows how to use asides, with clips of it
 | ↻ or `⌘⌫` | Start over without sending: what you pinned and said goes, and the session goes on (listening, if it was). |
 | `Esc` or × | Close without sending (press twice if there's something to lose). |
 | `⌃⌥P` | Back to the live screen: only the pill stays, your app gets every key and click. Press again to freeze again. One aside holds all its freezes. With asides closed, it opens live. |
-| `R` | Follow up on the last aside: its pins show again where they were, hollow. Click one to pin what's there now; the new pin says which one it follows up on (**Follow-up to:**), so the agent can compare. |
+| `R` | Follow up on the last aside: its pins show again where they were, hollow, with their areas and drawings. Click one's number to pin what's there now (inside its area, a click is a new pin); the new pin says which one it follows up on (**Follow-up to:**), so the agent can compare. |
 | `K` or the pill's camera | Record a clip of what happens next, live (frozen, `K` goes live first). The pill's square stops it, and so do freezing, sending and closing (a minute at most). The aside gets one picture of the moments the app in front changed, numbered and timed: a flash, a stutter, things in the wrong order. |
 
 While frozen, the Dock, the menu bar, `⌘Tab` and Mission Control are held back (Force Quit still

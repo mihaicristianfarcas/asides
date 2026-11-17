@@ -479,9 +479,10 @@ pub struct Earlier {
     pub number: u32,
     /// That aside, as a later one names it: `the aside from 14:02, "The gap under…" (its folder)`.
     pub aside: String,
-    /// Where its number was, and its area (dragged), in the screen's points.
+    /// Where its number was, its area (dragged) and its drawing, in the screen's points.
     pub at: (f64, f64),
     pub area: Option<PtRect>,
+    pub shape: Option<Shape>,
     /// What it was on (`button "Save"`).
     pub title: String,
 }
@@ -497,9 +498,10 @@ pub struct Spot {
     /// The screen's top-left corner in global points (y down), and its pixels per point.
     pub origin: (f64, f64),
     pub scale: f64,
-    /// Where its number was, and its area (dragged), in the screen's points.
+    /// Where its number was, its area (dragged) and its drawing, in the screen's points.
     pub at: (f64, f64),
     pub area: Option<PtRect>,
+    pub shape: Option<Shape>,
     /// What it marked, in the screen's points: its area, its drawing, or the element it was on.
     /// None for a point on nothing named.
     pub region: Option<PtRect>,
@@ -531,6 +533,7 @@ impl Spot {
             scale: on.scale,
             at: annotation.at,
             area: annotation.area,
+            shape: annotation.shape.clone(),
             region: annotation.region(),
             title: annotation.title(on.scale, units),
             app: element.app,

@@ -174,6 +174,7 @@ impl Aside {
                 aside: aside.clone(),
                 at: spot.at,
                 area: spot.area,
+                shape: spot.shape.clone(),
                 title: spot.title.clone(),
             });
         }
@@ -420,8 +421,14 @@ mod tests {
         let at = Local.with_ymd_and_hms(2026, 11, 16, 14, 2, 0).unwrap();
         let spot =
             |display: u32, at: (f64, f64)| Spot { display, at, title: "button \"Save\"".into(), ..Spot::default() };
+        let sketch = crate::inspect::Shape::Sketch { points: vec![(30.0, 20.0), (60.0, 40.0)] };
         let pins = vec![
-            Pin { number: 1, color: "#3B82F6".into(), spot: Some(spot(1, (30.0, 20.0))) },
+            // Drawn: the drawing comes back with it.
+            Pin {
+                number: 1,
+                color: "#3B82F6".into(),
+                spot: Some(Spot { shape: Some(sketch.clone()), ..spot(1, (30.0, 20.0)) }),
+            },
             // On a display that's gone since, and one from before pins' places were kept.
             Pin { number: 2, color: "#3B82F6".into(), spot: Some(spot(7, (10.0, 10.0))) },
             Pin { number: 3, color: "#3B82F6".into(), spot: None },
@@ -442,6 +449,7 @@ mod tests {
             (1, (30.0, 20.0), "button \"Save\"")
         );
         assert_eq!(earlier[1][0].aside, again.reference(at));
+        assert_eq!(earlier[1][0].shape, Some(sketch));
         // Last sent: when it was made, until it's typed in somewhere (a failed try doesn't count).
         let made = aside.record.created_ms;
         assert_eq!(aside.last_sent_ms(), made);

@@ -2285,6 +2285,10 @@ impl Render for ScreenView {
                     prims.push(Prim::Fill(rect(area), Hsla { a: if lit { 0.22 } else { 0.12 }, ..gpui::black() }));
                     prims.push(Prim::Border(rect(area), line, 1.5, true));
                 }
+                // Its drawing, pale: it's drawn again, in this aside's color, once followed up on.
+                if let Some(shape) = &e.shape {
+                    earlier_drawing(&mut prims, shape, lit, &to);
+                }
                 let (mx, my) = to(e.at);
                 markers.push(
                     div()
@@ -2650,6 +2654,36 @@ fn arrow_prims(prims: &mut Vec<Prim>, from: (f64, f64), to: (f64, f64), c: Hsla)
     let base = ((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0);
     prims.push(Prim::Stroke(vec![from, base], style::DRAW_WIDTH, c));
     prims.push(Prim::Polygon(vec![tip, left, right], c));
+}
+
+/// An earlier pin's drawing (R), pale: a white line on a dark band, as its number is drawn, so it
+/// shows on a light page as on a dark one. `to` puts a screen's point in the window.
+fn earlier_drawing(prims: &mut Vec<Prim>, shape: &Shape, lit: bool, to: &impl Fn((f64, f64)) -> (f64, f64)) {
+    let band = Hsla { a: if lit { 0.55 } else { 0.4 }, ..gpui::black() };
+    let line = Hsla { a: if lit { 1.0 } else { 0.85 }, ..gpui::white() };
+    let (wide, thin) = (style::DRAW_WIDTH + 2.0, style::DRAW_WIDTH - 1.0);
+    match shape {
+        Shape::Sketch { points } => {
+            let points: Vec<_> = points.iter().map(|p| to(*p)).collect();
+            prims.push(Prim::Stroke(points.clone(), wide, band));
+            prims.push(Prim::Stroke(points, thin, line));
+        }
+        Shape::Arrow { from, to: end } => {
+            let (from, end) = (to(*from), to(*end));
+            if (end.0 - from.0).hypot(end.1 - from.1) < 2.0 {
+                return;
+            }
+            let [tip, left, right] = style::arrow_head(from, end);
+            let base = ((left.0 + right.0) / 2.0, (left.1 + right.1) / 2.0);
+            // The head's band: the head, half as large again about its middle.
+            let middle = ((tip.0 + left.0 + right.0) / 3.0, (tip.1 + left.1 + right.1) / 3.0);
+            let grown = |p: (f64, f64)| (middle.0 + (p.0 - middle.0) * 1.5, middle.1 + (p.1 - middle.1) * 1.5);
+            prims.push(Prim::Stroke(vec![from, base], wide, band));
+            prims.push(Prim::Polygon(vec![grown(tip), grown(left), grown(right)], band));
+            prims.push(Prim::Stroke(vec![from, base], thin, line));
+            prims.push(Prim::Polygon(vec![tip, left, right], line));
+        }
+    }
 }
 
 // --- The toolbar, the card, the menu, the cheat sheet ---

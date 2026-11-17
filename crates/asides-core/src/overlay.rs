@@ -747,25 +747,25 @@ impl Session {
         shown
     }
 
-    /// The earlier aside's pin under `(x, y)`, if any: its number, or inside its area.
+    /// The earlier aside's pin whose number is under `(x, y)`, if any. Only its number: a click
+    /// inside its area (a large one can cover a window) is a new pin there.
     pub fn earlier_at(&self, screen: usize, x: f64, y: f64) -> Option<usize> {
         let list = &self.screens.get(screen)?.earlier;
         let distance = |e: &Earlier| (e.at.0 - x).hypot(e.at.1 - y);
         (0..list.len())
             .filter(|&i| distance(&list[i]) <= MARKER / 2.0 + 1.0)
             .min_by(|&a, &b| distance(&list[a]).total_cmp(&distance(&list[b])))
-            .or_else(|| list.iter().position(|e| e.area.is_some_and(|r| r.contains(x, y))))
     }
 
     /// Follows up on the earlier aside's pin `index` of `screen`: a pin of this session where it was
-    /// (its area too), which says so.
+    /// (its area or its drawing too), which says so.
     pub fn follow_up(&mut self, screen: usize, index: usize, time: f32) -> Placed {
         let Some(state) = self.screens.get_mut(screen).filter(|s| index < s.earlier.len()) else {
             return Placed::Nothing;
         };
         let earlier = state.earlier.remove(index);
         self.followed.push(earlier.number);
-        match self.annotate(screen, earlier.at, earlier.area, None, time) {
+        match self.annotate(screen, earlier.at, earlier.area, earlier.shape.clone(), time) {
             Placed::Annotation { screen, index } => {
                 self.screens[screen].annotations[index].again = Some(earlier);
                 Placed::Again { screen, index }
@@ -1797,6 +1797,7 @@ mod tests {
             at,
             area,
             title: format!("pin {number}"),
+            shape: None,
         };
         let earlier = vec![vec![
             pin(1, (30.0, 20.0), None),
@@ -1811,16 +1812,22 @@ mod tests {
         assert_eq!(s.screens[0].earlier.iter().map(|e| e.number).collect::<Vec<_>>(), [1, 2]);
         // Shown, they're no part of the aside.
         assert!(s.is_empty() && s.inspections().is_empty());
+        // Its number, not inside its area: an area can be most of a window.
+        let area = PtRect::new(60.0, 10.0, 200.0, 80.0);
+        let wide = vec![vec![pin(2, (60.0, 10.0), Some(area))]];
+        let mut w = session();
+        w.show_earlier(&wide);
+        assert_eq!((w.earlier_at(0, 63.0, 12.0), w.earlier_at(0, 150.0, 60.0)), (Some(0), None));
         assert_eq!(
-            (s.earlier_at(0, 31.0, 21.0), s.earlier_at(0, 70.0, 15.0), s.earlier_at(0, 5.0, 5.0)),
+            (s.earlier_at(0, 31.0, 21.0), s.earlier_at(0, 62.0, 12.0), s.earlier_at(0, 5.0, 5.0)),
             (Some(0), Some(1), None)
         );
 
-        // A new pin first; then a click on the earlier pin 2, inside its area: this aside's pin 2,
-        // on that area.
+        // A new pin first; then a click on the earlier pin 2's number: this aside's pin 2, on that
+        // area.
         s.apply(&Action::Click { screen: 0, at: (90.0, 45.0) });
-        s.mouse_down(0, 70.0, 15.0, false);
-        assert_eq!(s.mouse_up(0, 70.0, 15.0, 4.0), Placed::Again { screen: 0, index: 1 });
+        s.mouse_down(0, 62.0, 12.0, false);
+        assert_eq!(s.mouse_up(0, 62.0, 12.0, 4.0), Placed::Again { screen: 0, index: 1 });
         let a = s.screens[0].annotations[1].clone();
         assert_eq!((a.number, a.area, a.time), (2, Some(PtRect::new(60.0, 10.0, 20.0, 8.0)), 4.0));
         assert_eq!(a.again.as_ref().map(|e| e.number), Some(2));
@@ -1857,6 +1864,15 @@ mod tests {
         assert_eq!(s.screens[0].earlier.len(), 2);
         s.clear();
         assert!(s.screens[0].earlier.is_empty());
+
+        // A drawing comes back drawn, and following up on it draws it again.
+        let sketch = Shape::Sketch { points: vec![(10.0, 40.0), (30.0, 50.0), (12.0, 44.0)] };
+        let drawn = Earlier { shape: Some(sketch.clone()), ..pin(4, (10.0, 40.0), None) };
+        let mut t = session();
+        t.set_tool(Tool::Annotate);
+        assert!(t.show_earlier(&[vec![drawn]]));
+        assert_eq!(t.follow_up_on(4, 1.0), Placed::Again { screen: 0, index: 0 });
+        assert_eq!(t.screens[0].annotations[0].shape, Some(sketch));
     }
 
     #[test]
