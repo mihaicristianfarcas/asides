@@ -93,7 +93,7 @@ impl Render for WarmUp {
             .child(line(12., FontWeight::BOLD))
             // A measurement's label (its figures all as wide) and a pin's number: R can bring back
             // hundreds at once, and the first loaded these fonts.
-            .child(crate::ui::tabular(line(11., FontWeight::SEMIBOLD)))
+            .child(crate::faces::tabular(line(11., FontWeight::SEMIBOLD)))
             .child(line(11., FontWeight::BOLD))
     }
 }

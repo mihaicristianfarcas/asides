@@ -91,7 +91,7 @@ tests and the package. `main` only takes pull requests that pass it.
 | `asides mcp` | JSON-RPC lines into `cargo run -p asides-cli -- mcp` (below), then in an agent |
 | finding sessions | `asides sessions`, or `cargo test -p asides-core discovers -- --ignored --nocapture` |
 | sending | a dev-hooks build (`make install FEATURES=dev-hooks`), an agent of your own in a scratch repo, `asides simulate <wav> --image <png> --to <pid>`; read the agent's transcript |
-| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, at its first size and widths (not `window.json`'s), long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s on a Mac, to watch clips play); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys), `ASIDES_WINDOW_REPLAY=<steps.json>` (a replay's key and mouse steps in the window, captures beside it; it quits after, and sends the app nothing) |
+| the asides window | `ASIDES_WINDOW_CAPTURE=<dir> target/debug/asides-overlay --window` captures every page, dark and light, at its first size and widths (not `window.json`'s), long ones screen by screen (a few seconds on screen; `ASIDES_WINDOW_PAGE` alone, `ASIDES_WINDOW_RECORD=<seconds>` as `.mov`s on a Mac, to watch Help's demonstrations play; `ASIDES_HELP_AT=<ms>` holds them at that moment; `ASIDES_WINDOW_QUIET` leaves the keyboard where it is and captures the window by its number, its glass gray); `HOME` (settings of your own), `ASIDES_HOME` (a history of your own), `ASIDES_WINDOW_PAGE`, `ASIDES_WINDOW_ASIDE`, `ASIDES_WINDOW_APPEARANCE`, `ASIDES_WINDOW_OPEN` (a select's id, opened), `ASIDES_WINDOW_SETUP` (setup's step, with page `setup`), `ASIDES_WINDOW_FOCUS` (a key recording, a field focused, or `edit`: the aside in Edit, for posted keys), `ASIDES_WINDOW_REPLAY=<steps.json>` (a replay's key and mouse steps in the window, captures beside it; it quits after, and sends the app nothing) |
 | the overlay | a replay (below) |
 | the app | `make install`, then use it (it quits and replaces the running asides); dev-hooks builds open setup only with `ASIDES_SETUP=1` |
 
@@ -141,7 +141,6 @@ ASIDES_BENCH=~/bench ASIDES_BENCH_MODELS="small.en=$M/ggml-small.en-q5_1.bin,lar
 | `ASIDES_ICON_DUMP=/tmp/i cargo test -p asides-app icons` | the menu-bar icons (RGBA) |
 | `asides simulate-measure shot.png script.json` | a scripted session on a screenshot (dev-hooks build; actions in `overlay::Action`) |
 | `python3 scripts/make-screenshot.py` | `guide/overlay.png`, the website's pictures come from it (Firefox, Pillow, Screen Recording) |
-| `python3 scripts/make-help.py` | `crates/asides-overlay/help/`, Help's clips: the real overlay on the demo, frame by frame, and `clips.json` (what happens between frames; Firefox, Pillow, Screen Recording). On Windows (at 100%, with nothing else open over the top left), `help-windows/` |
 
 **Replays.** `target/debug/asides-overlay <dir>` runs the real overlay on a session directory:
 `session.json` (`helper::Spec`) with a screen whose `pixels` file is raw RGBA, `windowed` for a
@@ -201,7 +200,7 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **asides window**: History actions; search (`⌘F`, `↓` to the list, `Esc` clears); Edit
   (lines, arrows, `⌘Z`, problems by line, `⌘S`, Discard); Sessions matches `asides sessions`;
   every setting writes `config.toml` and takes effect (a key already in use names its other
-  action); Help's clips play smoothly and loop, keys shown as set; light and dark.
+  action); Help's demonstrations play smoothly and loop, keys shown as set; light and dark.
 - [ ] **Keyboard**: in the window, `Tab` and `⇧Tab` reach every control, the ring only after a key
   (a click hides it), the arrows in the sidebar, lists, selects and segments, `⌘1`–`⌘6`, `⌘⌫` in
   History; frozen, a pin's number opens its card and `Tab` the next, the right-click menu and `W`'s
@@ -339,8 +338,7 @@ the hero alone (`make-og.py`'s `STYLE`): after changing the opening, run `python
 (needs Firefox) and bump `og.png?v=` in `og:image`, which link previews cache.
 
 The checkout desktop in the pictures is `scripts/demo-desktop/index.html`, not served. After
-changing it, or the overlay's look, run `python3 scripts/make-screenshot.py` (the website's pictures)
-and `python3 scripts/make-help.py` (on a Mac, and on Windows for its clips). The page repeats the main
+changing it, or the overlay's look, run `python3 scripts/make-screenshot.py` (the website's pictures). The page repeats the main
 shortcut, requirements and install steps from the README: update both.
 
 ## Reporting bugs

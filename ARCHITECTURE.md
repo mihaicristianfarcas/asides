@@ -142,8 +142,9 @@ crates/
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
     ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
+    faces.rs          how the pill, its list, the keys sheet, cards, pins and labels look (ui.rs and help.rs)
     window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins, Help; setup
-    help.rs           Help's clips: frames of the overlay, the pointer between them, drawn when due
+    help.rs           Help's demonstrations: the overlay's faces on a stage, scripted beats, drawn when due
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
     windows.rs        opening, showing, hiding and moving the windows (the clock, as things happen)
     input.rs          the card's text field, and the area History edits Markdown in
@@ -154,11 +155,9 @@ crates/
     native.rs         AppKit glue: borderless panels, levels, kiosk, focus, drawing
     io.rs             stdin/stdout protocol, spec and pixels
     replay.rs         development: replays AppKit events and captures windows
-    assets.rs         SVG icons, and help/ (embedded by build.rs)
+    assets.rs         SVG icons
     win/              Windows' native.rs (Win32 windows, focus, kiosk hook) and export.rs (tiny-skia)
     lin/              Linux's native.rs (X11 windows, focus, grabs); export.rs is Windows'
-    help/             the clips' frames and clips.json, made by scripts/make-help.py
-    help-windows/     the same, made on Windows (Edge, Windows Terminal, Windows' keys)
   asides-app/      the menu-bar app (asides-app, renamed asides in the bundle)
     main.rs           App: event loop, recording, overlay sessions, sending
     tray.rs, icons.rs the status item, its menu and its icons
@@ -294,7 +293,7 @@ capture its screen, only with nothing over it. The part around the pin is kept i
 ### Setting up
 
 Until `onboarded`, the app opens the window on setup at launch (`--window`, page `setup`). It shows
-how asides works first (the basics' clip, as Help does). Its steps change `config.toml` as the
+how asides works first (the basics played, as Help does). Its steps change `config.toml` as the
 settings do, and ask the app through links: `asides://permission`
 (macOS's prompt; Automation with `AEDeterminePermissionToAutomateTarget`, the app started first),
 `asides://setup` (the step reached, to go on after a restart; `done` ends it), `asides://login`

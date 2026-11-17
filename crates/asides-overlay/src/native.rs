@@ -273,6 +273,11 @@ pub fn hide(pointer: usize) {
 }
 
 /// The window's frame, in AppKit's coordinates.
+/// The window number of the view at `pointer`'s window, for `screencapture -l` (development).
+pub fn window_number(pointer: usize) -> Option<isize> {
+    Some(view(pointer)?.window()?.windowNumber())
+}
+
 pub fn frame(pointer: usize) -> Option<PtRect> {
     let f = view(pointer)?.window()?.frame();
     Some(PtRect::new(f.origin.x, f.origin.y, f.size.width, f.size.height))

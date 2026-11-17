@@ -1,5 +1,4 @@
-//! The pill's and the menus' icons (24 × 24, drawn as masks in the text color), and the Help page's
-//! clips (`help/`).
+//! The pill's and the menus' icons (24 × 24, drawn as masks in the text color).
 
 use std::borrow::Cow;
 
@@ -122,12 +121,15 @@ const ICONS: &[(&str, &str)] = &[
             r#"<circle cx="12" cy="5" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M12 14.5l-3 5.5M12 14.5l3 5.5"/>"#,
         ),
     ),
-    // The Help page's clips: a pointer, as macOS draws it, its edge under it.
+    // Help's demonstrations: a pointer, as macOS draws it, and the crosshair measuring and drawing
+    // show, each over its edge.
     ("pointer", icon(r##"<path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="none"/>"##)),
     (
         "pointer-edge",
         icon(r##"<path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke-width="2.6"/>"##),
     ),
+    ("cross", icon(r#"<path d="M12 2v20M2 12h20" stroke-width="1.2" stroke-linecap="butt"/>"#)),
+    ("cross-edge", icon(r#"<path d="M12 1.5v21M1.5 12h21" stroke-width="3.2"/>"#)),
     // asides' logo, `[a]`, as the website and the menu bar draw it (its 22-point grid, centered).
     (
         "logo",
@@ -137,22 +139,10 @@ const ICONS: &[(&str, &str)] = &[
     ),
 ];
 
-mod help {
-    include!(concat!(env!("OUT_DIR"), "/help.rs"));
-}
-
-/// A file of the Help page's clips (`help/`), by name.
-pub fn help_file(name: &str) -> Option<&'static [u8]> {
-    help::FILES.iter().find(|(n, _)| *n == name).map(|(_, bytes)| *bytes)
-}
-
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
-        if let Some(name) = path.strip_prefix("help/") {
-            return Ok(help_file(name).map(Cow::Borrowed));
-        }
         let name = path.strip_prefix("icons/").and_then(|p| p.strip_suffix(".svg"));
         Ok(ICONS.iter().find(|(n, _)| Some(*n) == name).map(|(_, body)| {
             let svg = format!(

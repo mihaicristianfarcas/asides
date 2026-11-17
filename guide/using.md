@@ -4,7 +4,7 @@ The first time asides opens, setup shows how it works, then asks where new sessi
 (Terminal, Ghostty or Diri, and the agent), how much each pin says, what macOS must allow, the
 voice model, the shortcuts, and whether asides opens at login. Skip it for the defaults: asides
 asks for each permission and the model when it first needs them, and doesn't open at login. General → **Set Up Again** goes through it again. **Help**, at the
-bottom of the asides window's sidebar, shows how to use asides, with clips of it.
+bottom of the asides window's sidebar, shows how to use asides, each part played out with the pill and its pieces.
 
 ## Freeze, pin, talk, send
 
@@ -128,7 +128,7 @@ widen it (double-click it for its first width); the window opens again where you
 - **Sessions**: the agent sessions asides can send to, and where new ones open.
 - **General**, **Keys** (the shortcuts, and the frozen screen's keys), **Voice**, **Pins**: every
   [setting](settings.md). Click a shortcut or a key, then press the new one.
-- **Help** (`⌘?`): how to use asides, step by step, with clips of it.
+- **Help** (`⌘?`): how to use asides, step by step, each part played out with the pill and its pieces.
 
 The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds,
 naming pins and copying each aside (once it's sent or saved) on or off, and opens History or
