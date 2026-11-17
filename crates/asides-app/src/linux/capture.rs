@@ -10,14 +10,18 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::AsFd;
-use std::time::Duration;
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use asides_core::display::{self, Monitor, monitors};
 use asides_core::inspect::PtRect;
-use asides_core::measure::Frame;
+use asides_core::measure::{Frame, Rect};
 use asides_core::portal::{self, Answer};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ConfigureWindowAux, ConnectionExt as _, ImageFormat, Window};
+use x11rb::protocol::xproto::{
+    Atom, AtomEnum, ConfigureWindowAux, ConnectionExt as _, ImageFormat, MapState, Screen, Window,
+};
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use super::system::MainThread;
@@ -196,11 +200,142 @@ fn from_x11(displays: &[u32]) -> Result<Vec<Capture>, String> {
     if captures.is_empty() { Err(error.unwrap_or_default()) } else { Ok(captures) }
 }
 
+/// On X11, what the window in front shows can be recorded (`watch`); a Wayland desktop shows the
+/// screen to its compositor alone, a picture at a time.
+pub fn watches() -> bool {
+    !on_wayland()
+}
+
+/// How often a clip looks at the window in front. A timer because nothing here says when the screen
+/// changes: the X server hands over what the root window shows when asked (the Damage extension
+/// would say, but not what a compositing window manager draws on its own).
+const LOOK_EVERY: Duration = Duration::from_millis(100);
+
+/// The window in front, watched: dropped, it's watched no more (its thread ends as this closes).
+pub struct Watch(#[allow(dead_code)] Sender<()>);
+
+/// A window recorded: the window manager's, where the server said it was then (its corner on the
+/// screen and its size, its shadow with it), and the part of the screen that's read for it (pixels).
+type Recorded = (Window, (i16, i16, u16, u16), (i32, i32, i32, i32));
+
+/// Watches what the window in front shows (not asides' own, nor process `without`'s, the
+/// overlay's): the part of the screen it's on, read from the root window, handed to `shown` on a
+/// thread of its own until the `Watch` is dropped. Another window coming to the front, or this one
+/// changing size, is said first, with where asides' pill is over it.
+pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
+    let (stop, stopped) = channel::<()>();
+    // Said from the thread, or here if it can't start: `Send`, not `Sync`, so behind a lock.
+    let failed = Arc::new(Mutex::new(failed));
+    let failing = failed.clone();
+    let spawned = std::thread::Builder::new().name("asides-clip".into()).spawn(move || {
+        let failed = |why: String| (*failing.lock().unwrap())(why);
+        let Ok((connection, screen)) = x11rb::connect(None) else {
+            return failed("Could not reach the X server to record the screen.".into());
+        };
+        let Some(root) = connection.setup().roots.get(screen).cloned() else {
+            return failed("The X server has no such screen.".into());
+        };
+        let active = connection.intern_atom(false, b"_NET_ACTIVE_WINDOW").ok().and_then(|c| c.reply().ok());
+        let Some(active) = active.map(|r| r.atom) else {
+            return failed("The window manager doesn't say which window is in front.".into());
+        };
+        let mut of: Option<Recorded> = None;
+        let mut next = Instant::now();
+        loop {
+            // Another window in front, or it moved or changed size: where it is, by the window list
+            // (which knows a window's shadow isn't it, and asides' windows from the user's).
+            if let Some((window, at)) = front_window(&connection, root.root, active)
+                && of.map(|o| (o.0, o.1)) != Some((window, at))
+                && let Some(found) = crate::elements::windows(without).into_iter().find(|w| w.id == window)
+            {
+                let all: Vec<Monitor> =
+                    display::monitors_on(&connection, screen).into_iter().map(|l| l.monitor).collect();
+                let rect = on_screen(display::rect_to_pixels(&all, found.bounds), &root);
+                if of.map(|o| (o.0, o.2.2, o.2.3)) != Some((window, rect.2, rect.3)) {
+                    let ours = overlay_rects(&connection, root.root, rect);
+                    shown(crate::clip::Shown::Another(Some(found.app), ours));
+                }
+                of = Some((window, at, rect));
+            }
+            if let Some((_, _, rect)) = of
+                && let Ok(frame) = grab_rect(&connection, root.root, rect)
+            {
+                shown(crate::clip::Shown::Frame(frame));
+            }
+            // Until the next look is due, or the clip ends (the channel closes).
+            next = (next + LOOK_EVERY).max(Instant::now());
+            let wait = next.saturating_duration_since(Instant::now());
+            if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                break;
+            }
+        }
+    });
+    if let Err(err) = spawned {
+        (*failed.lock().unwrap())(format!("Could not start recording the screen: {err}"));
+    }
+    Watch(stop)
+}
+
+/// The window in front, as the window manager says, and where the server has it: its corner on
+/// the screen and its size.
+fn front_window(connection: &impl Connection, root: Window, active: Atom) -> Option<(Window, (i16, i16, u16, u16))> {
+    let reply = connection.get_property(false, root, active, AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()?;
+    let window = reply.value32()?.next().filter(|&w| w != 0)?;
+    let size = connection.get_geometry(window).ok()?.reply().ok()?;
+    let corner = connection.translate_coordinates(window, root, 0, 0).ok()?.reply().ok()?;
+    Some((window, (corner.dst_x, corner.dst_y, size.width, size.height)))
+}
+
+/// The part of `rect` (left, top, width, height) that's on the screen: the server refuses to read
+/// past it.
+fn on_screen((x, y, w, h): (i32, i32, i32, i32), root: &Screen) -> (i32, i32, i32, i32) {
+    let (left, top) = (x.max(0), y.max(0));
+    let right = (x + w).min(i32::from(root.width_in_pixels));
+    let bottom = (y + h).min(i32::from(root.height_in_pixels));
+    (left, top, (right - left).max(0), (bottom - top).max(0))
+}
+
+/// asides' own windows over `rect` of the screen (the pill), as rectangles in it: they can't be
+/// left out of what the root window shows, so a clip leaves them as they first were.
+fn overlay_rects(connection: &impl Connection, root: Window, rect: (i32, i32, i32, i32)) -> Vec<Rect> {
+    let find = || -> Result<Vec<Rect>, Box<dyn std::error::Error>> {
+        let mark = connection.intern_atom(false, b"_ASIDES_OVERLAY")?.reply()?.atom;
+        let mut found = Vec::new();
+        for window in connection.query_tree(root)?.reply()?.children {
+            let marked = connection.get_property(false, window, mark, AtomEnum::ANY, 0, 1)?.reply();
+            if !marked.is_ok_and(|p| p.value_len > 0) {
+                continue;
+            }
+            let shown = connection.get_window_attributes(window)?.reply();
+            if !shown.is_ok_and(|a| a.map_state == MapState::VIEWABLE) {
+                continue;
+            }
+            let Ok(place) = connection.get_geometry(window)?.reply() else { continue };
+            let (x, y) = (i32::from(place.x) - rect.0, i32::from(place.y) - rect.1);
+            let (left, top) = (x.max(0), y.max(0));
+            let (right, bottom) = ((x + i32::from(place.width)).min(rect.2), (y + i32::from(place.height)).min(rect.3));
+            if right > left && bottom > top {
+                found.push(Rect::new(left as u32, top as u32, (right - left) as u32, (bottom - top) as u32));
+            }
+        }
+        Ok(found)
+    };
+    find().unwrap_or_default()
+}
+
 /// A monitor's pixels, as RGBA.
 fn grab(connection: &impl Connection, root: Window, monitor: &Monitor) -> Result<Frame, String> {
-    let (w, h) = (monitor.width as u16, monitor.height as u16);
+    grab_rect(connection, root, (monitor.left, monitor.top, monitor.width, monitor.height))
+}
+
+/// A part of the screen's pixels (left, top, width, height), as RGBA.
+fn grab_rect(connection: &impl Connection, root: Window, (x, y, w, h): (i32, i32, i32, i32)) -> Result<Frame, String> {
+    if w <= 0 || h <= 0 {
+        return Err("Nothing of it is on the screen.".into());
+    }
+    let (w, h) = (w as u16, h as u16);
     let image = connection
-        .get_image(ImageFormat::Z_PIXMAP, root, monitor.left as i16, monitor.top as i16, w, h, !0)
+        .get_image(ImageFormat::Z_PIXMAP, root, x as i16, y as i16, w, h, !0)
         .map_err(|err| format!("Could not capture the screen: {err}"))?
         .reply()
         .map_err(|err| format!("Could not capture the screen: {err}"))?;

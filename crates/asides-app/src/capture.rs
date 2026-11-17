@@ -1,23 +1,32 @@
 //! Freezing the screen for asides: one screenshot per display, taken with ScreenCaptureKit, in sRGB
-//! (so colors read like CSS colors). Needs the Screen Recording permission.
+//! (so colors read like CSS colors). Needs the Screen Recording permission. And watching what an
+//! app shows as it changes, for a clip (`watch`).
 
 use std::sync::{Arc, Mutex};
 
 use asides_core::inspect::PtRect;
 use asides_core::measure::Frame;
 use block2::RcBlock;
-use objc2::AnyThread;
-use objc2::runtime::AnyClass;
+use dispatch2::{DispatchQueue, DispatchQueueAttr};
+use objc2::rc::Retained;
+use objc2::runtime::{AnyClass, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_app_kit::{NSBitmapImageRep, NSColorRenderingIntent, NSColorSpace};
 use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGDataProvider, CGDisplayBounds, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGPreflightScreenCaptureAccess,
     CGRequestScreenCaptureAccess, kCGColorSpaceSRGB,
 };
+use objc2_core_media::{CMSampleBuffer, CMTime};
+use objc2_core_video::{
+    CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow, CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType,
+    CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    kCVPixelFormatType_32BGRA,
+};
 use objc2_foundation::{NSArray, NSError};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCScreenshotConfiguration, SCScreenshotDynamicRange, SCScreenshotManager, SCScreenshotOutput,
-    SCShareableContent, SCStreamConfiguration, SCWindow,
+    SCShareableContent, SCStream, SCStreamConfiguration, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
 /// A display as AppKit and CoreGraphics know it.
@@ -212,6 +221,182 @@ pub fn capture_window(window: u32, done: impl Fn(Result<(Frame, f64), String>) +
         };
     });
     unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
+}
+
+/// A Mac says what an app shows as it changes (`watch`): clips can be recorded.
+pub fn watches() -> bool {
+    true
+}
+
+/// What an app shows on a display, watched: dropped, it's watched no more.
+pub struct Watch(Arc<Mutex<Watching>>);
+
+/// The stream, once it runs, with what takes its frames; or that it's no longer wanted.
+#[derive(Default)]
+struct Watching {
+    stream: Option<(Retained<SCStream>, Retained<FrameOutput>)>,
+    stopped: bool,
+}
+
+// SAFETY: a stream is made, started and stopped from any thread (ScreenCaptureKit's own callbacks
+// come on its queues), and what takes its frames is only kept alive here.
+unsafe impl Send for Watching {}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let mut watching = self.0.lock().unwrap();
+        watching.stopped = true;
+        let Some((stream, output)) = watching.stream.take() else { return };
+        // What takes its frames lives until the stream has stopped handing them over.
+        let (held, kept) = (stream.clone(), Mutex::new(Some(Held(output))));
+        let stopped = RcBlock::new(move |_: *mut NSError| drop(kept.lock().unwrap().take()));
+        unsafe { held.stopCaptureWithCompletionHandler(Some(&stopped)) };
+    }
+}
+
+/// A frame output on its way to being let go, from whichever queue the stream stops on.
+struct Held(#[allow(dead_code)] Retained<FrameOutput>);
+
+// SAFETY: only dropped there; its callback is `Send + Sync`.
+unsafe impl Send for Held {}
+
+/// Frames a second, at most: every frame a 60 Hz screen shows (a flash can be one).
+const FRAMES_A_SECOND: i32 = 60;
+
+/// Watches what app `app` (its process) shows on `display`, its windows alone (menus, popovers and
+/// sheets with them; no other app's, nor the pointer), `width` × `height` pixels, in sRGB: each
+/// frame it shows goes to `frame`, on a queue of the stream's own, until the `Watch` is dropped.
+/// Nothing comes while nothing changes. `failed` says why it couldn't start, or stopped.
+pub fn watch(
+    display: u32,
+    app: i32,
+    (width, height): (usize, usize),
+    frame: impl Fn(Frame) + Send + Sync + 'static,
+    failed: impl Fn(String) + Send + Sync + 'static,
+) -> Watch {
+    let watching = Arc::new(Mutex::new(Watching::default()));
+    let (state, frame) = (watching.clone(), Mutex::new(Some(Box::new(frame) as Box<dyn Fn(Frame) + Send + Sync>)));
+    let failed = Arc::new(failed);
+    let block = RcBlock::new(move |content: *mut SCShareableContent, error: *mut NSError| {
+        let Some(content) = (unsafe { content.as_ref() }) else {
+            return failed(describe(error, "Could not list what's on the screen"));
+        };
+        let Some(shown) = unsafe { content.displays() }.iter().find(|d| unsafe { d.displayID() } == display) else {
+            return failed("That screen is gone.".into());
+        };
+        let Some(running) = unsafe { content.applications() }.iter().find(|a| unsafe { a.processID() } == app) else {
+            return failed("The app in front shows no window to record.".into());
+        };
+        let Some(frame) = frame.lock().unwrap().take() else { return };
+        let filter = unsafe {
+            SCContentFilter::initWithDisplay_includingApplications_exceptingWindows(
+                SCContentFilter::alloc(),
+                &shown,
+                &NSArray::from_retained_slice(&[running]),
+                &NSArray::new(),
+            )
+        };
+        let config = unsafe { SCStreamConfiguration::new() };
+        unsafe {
+            config.setWidth(width);
+            config.setHeight(height);
+            config.setShowsCursor(false);
+            config.setColorSpaceName(kCGColorSpaceSRGB);
+            config.setPixelFormat(kCVPixelFormatType_32BGRA);
+            config.setMinimumFrameInterval(CMTime::new(1, FRAMES_A_SECOND));
+        }
+        let output = FrameOutput::new(frame);
+        let stream =
+            unsafe { SCStream::initWithFilter_configuration_delegate(SCStream::alloc(), &filter, &config, None) };
+        let queue = DispatchQueue::new("asides.clip", DispatchQueueAttr::SERIAL);
+        let added = unsafe {
+            stream.addStreamOutput_type_sampleHandlerQueue_error(
+                ProtocolObject::from_ref(&*output),
+                SCStreamOutputType::Screen,
+                Some(&queue),
+            )
+        };
+        if let Err(error) = added {
+            return failed(format!("Could not record the screen: {}", error.localizedDescription()));
+        }
+        // Dropped meanwhile: it never starts.
+        let mut watching = state.lock().unwrap();
+        if watching.stopped {
+            return;
+        }
+        let failed = failed.clone();
+        let started = RcBlock::new(move |error: *mut NSError| {
+            if !error.is_null() {
+                failed(describe(error, "Could not record the screen"));
+            }
+        });
+        unsafe { stream.startCaptureWithCompletionHandler(Some(&started)) };
+        watching.stream = Some((stream, output));
+    });
+    unsafe { SCShareableContent::getShareableContentWithCompletionHandler(&block) };
+    Watch(watching)
+}
+
+/// What takes a stream's frames.
+struct Taker {
+    frame: Box<dyn Fn(Frame) + Send + Sync>,
+}
+
+define_class!(
+    // SAFETY: `NSObject` asks nothing of its subclasses, and `FrameOutput` has no `Drop`.
+    #[unsafe(super(NSObject))]
+    #[name = "AsidesFrameOutput"]
+    #[ivars = Taker]
+    struct FrameOutput;
+
+    unsafe impl NSObjectProtocol for FrameOutput {}
+
+    unsafe impl SCStreamOutput for FrameOutput {
+        #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
+        fn stream_did_output(&self, _stream: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
+            // A sample without pixels says the screen didn't change.
+            if kind == SCStreamOutputType::Screen
+                && let Some(frame) = pixels(sample)
+            {
+                (self.ivars().frame)(frame);
+            }
+        }
+    }
+);
+
+impl FrameOutput {
+    fn new(frame: Box<dyn Fn(Frame) + Send + Sync>) -> Retained<FrameOutput> {
+        let this = FrameOutput::alloc().set_ivars(Taker { frame });
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+/// A sample's pixels (BGRA, as `watch` asks for them) as a frame.
+fn pixels(sample: &CMSampleBuffer) -> Option<Frame> {
+    let buffer = unsafe { sample.image_buffer() }?;
+    if CVPixelBufferGetPixelFormatType(&buffer) != kCVPixelFormatType_32BGRA {
+        return None;
+    }
+    if unsafe { CVPixelBufferLockBaseAddress(&buffer, CVPixelBufferLockFlags::ReadOnly) } != 0 {
+        return None;
+    }
+    let (width, height) = (CVPixelBufferGetWidth(&buffer), CVPixelBufferGetHeight(&buffer));
+    let (row, base) = (CVPixelBufferGetBytesPerRow(&buffer), CVPixelBufferGetBaseAddress(&buffer) as *const u8);
+    let frame = (!base.is_null() && row >= width * 4)
+        .then(|| {
+            let mut rgba = vec![0; width * height * 4];
+            for (y, line) in rgba.chunks_exact_mut(width * 4).enumerate() {
+                // SAFETY: locked, the buffer has `height` rows of `row` bytes from `base`.
+                let from = unsafe { std::slice::from_raw_parts(base.add(y * row), width * 4) };
+                for (&[b, g, r, _], to) in from.as_chunks::<4>().0.iter().zip(line.as_chunks_mut::<4>().0) {
+                    *to = [r, g, b, 255];
+                }
+            }
+            Frame::new(width as u32, height as u32, rgba)
+        })
+        .flatten();
+    unsafe { CVPixelBufferUnlockBaseAddress(&buffer, CVPixelBufferLockFlags::ReadOnly) };
+    frame
 }
 
 const UNEXPECTED_FORMAT: &str = "The screenshot had an unexpected pixel format.";
@@ -434,5 +619,26 @@ mod tests {
         let captures = rx.recv().unwrap().unwrap();
         let f = &captures[0].frame;
         std::fs::write(dir.join(format!("freeze-{}x{}.rgba", f.width, f.height)), &f.rgba).unwrap();
+    }
+
+    /// Records a clip of app `$ASIDES_CLIP_APP` (its process id) on the main display, as the pill's
+    /// button does, for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip.png` and what's
+    /// said after it, `clip.txt`. `--ignored`; needs the Screen Recording permission.
+    #[test]
+    #[ignore]
+    fn records_a_clip() {
+        let dir = std::path::PathBuf::from(std::env::var("ASIDES_CAPTURE_DUMP").expect("ASIDES_CAPTURE_DUMP"));
+        let app: i32 = std::env::var("ASIDES_CLIP_APP").expect("ASIDES_CLIP_APP").parse().unwrap();
+        let seconds: f64 = std::env::var("ASIDES_CLIP_SECONDS").map_or(3.0, |s| s.parse().unwrap());
+        let display = objc2_core_graphics::CGMainDisplayID();
+        let bounds = objc2_core_graphics::CGDisplayBounds(display);
+        let size = (bounds.size.width as usize, bounds.size.height as usize);
+        let recording = crate::clip::Recording::start(app, Some("the test's app".into()), |take| {
+            watch(display, app, size, move |frame| take(crate::clip::Shown::Frame(frame)), |why| panic!("{why}"))
+        });
+        std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
+        let made = recording.finish().expect("no frame came");
+        std::fs::write(dir.join("clip.png"), &made.png).unwrap();
+        std::fs::write(dir.join("clip.txt"), &made.caption).unwrap();
     }
 }

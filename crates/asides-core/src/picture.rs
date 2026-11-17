@@ -1,6 +1,6 @@
 //! Pictures made from frames without drawing anything: a part of one, a smaller copy, a PNG.
-//! What `look_again` shows an agent is cut and encoded here; the images asides draws on (pins,
-//! measurements) are the overlay's (`export.rs`).
+//! What `look_again` shows an agent and the frames of a clip are cut and encoded here; the images
+//! asides draws on (pins, measurements) are the overlay's (`export.rs`).
 
 use crate::measure::{Frame, Rect};
 

@@ -7,6 +7,9 @@
 //! Monitors are numbered as `EnumDisplayMonitors` lists them, which is GPUI's display id on
 //! Windows: the overlay finds each screen's monitor by it.
 
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
+use std::time::{Duration, Instant};
+
 use asides_core::display::{self, Monitor, monitors};
 use asides_core::inspect::PtRect;
 use asides_core::measure::Frame;
@@ -101,9 +104,61 @@ pub fn capture(
     }
 }
 
+/// Windows shows what the window in front shows (`watch`): clips can be recorded.
+pub fn watches() -> bool {
+    true
+}
+
+/// How often a clip looks at the window in front. A timer because nothing here says when the screen
+/// changes: GDI copies what it shows when asked, and the API that does say (desktop duplication)
+/// needs a Direct3D device, which a PC without a GPU, or one reached over Remote Desktop, hasn't.
+const LOOK_EVERY: Duration = Duration::from_millis(100);
+
+/// The window in front, watched: dropped, it's watched no more (its thread ends as this closes).
+pub struct Watch(#[allow(dead_code)] Sender<()>);
+
+/// Watches what the window in front shows (not asides' own, nor process `without`'s, the
+/// overlay's): the part of the screen it's on, as the desktop composes it (the pill keeps itself
+/// out, `WDA_EXCLUDEFROMCAPTURE`), handed to `shown` on a thread of its own until the `Watch` is
+/// dropped. Another window coming to the front, or this one changing size, is said first.
+pub fn watch(without: Option<i32>, shown: crate::clip::Take, failed: impl Fn(String) + Send + 'static) -> Watch {
+    let (stop, stopped) = channel::<()>();
+    let spawned = std::thread::Builder::new().name("asides-clip".into()).spawn(move || {
+        let mut of = None;
+        let mut next = Instant::now();
+        loop {
+            let all: Vec<Monitor> = monitors().iter().map(|l| l.monitor).collect();
+            if let Some(window) = crate::elements::windows(without).into_iter().find(|w| w.layer == 0) {
+                let (left, top, w, h) = display::rect_to_pixels(&all, window.bounds);
+                if of != Some((window.handle, w, h)) {
+                    of = Some((window.handle, w, h));
+                    shown(crate::clip::Shown::Another(Some(window.app), Vec::new()));
+                }
+                if let Ok(frame) = grab_rect(left, top, w, h) {
+                    shown(crate::clip::Shown::Frame(frame));
+                }
+            }
+            // Until the next look is due, or the clip ends (the channel closes).
+            next = (next + LOOK_EVERY).max(Instant::now());
+            let wait = next.saturating_duration_since(Instant::now());
+            if !matches!(stopped.recv_timeout(wait), Err(RecvTimeoutError::Timeout)) {
+                break;
+            }
+        }
+    });
+    if let Err(err) = spawned {
+        failed(format!("Could not start recording the screen: {err}"));
+    }
+    Watch(stop)
+}
+
 /// A monitor's pixels, as RGBA.
 fn grab(monitor: &Monitor) -> Result<Frame, String> {
-    let (w, h) = (monitor.width, monitor.height);
+    grab_rect(monitor.left, monitor.top, monitor.width, monitor.height)
+}
+
+/// A part of the desktop's pixels (`w` × `h` from `left`, `top`, physical pixels), as RGBA.
+fn grab_rect(left: i32, top: i32, w: i32, h: i32) -> Result<Frame, String> {
     if w <= 0 || h <= 0 {
         return Err("The screen has no size.".into());
     }
@@ -129,8 +184,7 @@ fn grab(monitor: &Monitor) -> Result<Frame, String> {
         let result = match bitmap {
             Ok(bitmap) if !bits.is_null() => {
                 let previous = SelectObject(memory, bitmap.into());
-                let copied =
-                    BitBlt(memory, 0, 0, w, h, Some(screen), monitor.left, monitor.top, SRCCOPY | CAPTUREBLT).is_ok();
+                let copied = BitBlt(memory, 0, 0, w, h, Some(screen), left, top, SRCCOPY | CAPTUREBLT).is_ok();
                 let frame = copied
                     .then(|| {
                         let bgra = std::slice::from_raw_parts(bits as *const u8, (w * h * 4) as usize);

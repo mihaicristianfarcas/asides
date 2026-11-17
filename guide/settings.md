@@ -65,6 +65,7 @@ done = "enter"
 done_whole_screen = "alt+enter"
 restart = "cmd+backspace"
 live = ""
+clip = "k"
 close = "escape"
 ```
 

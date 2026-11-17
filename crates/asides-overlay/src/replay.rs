@@ -18,7 +18,8 @@
 //! `{"transcribing": true}` that what was said about it is being transcribed, and `{"said": "…"}`
 //! that it was, as the app would. `"toolbar": true` sends a step to the pill's window (in its points),
 //! `{"toggle": true}` is ⌃⌥P (live, or frozen again) and `{"frozen": true}` answers a freeze with
-//! the spec's screens, as the app would. `{"stall": 3000}` holds the main thread that long (the
+//! the spec's screens, as the app would; `{"clip": 2}` says a clip is 2 s into being recorded, and
+//! `{"clip_over": true}` that it ended. `{"stall": 3000}` holds the main thread that long (the
 //! watchdog's to notice: `native::watch_main_thread`). A capture is
 //! of where a screen's window is, as it shows (the pill above it; live, what's on screen there), or
 //! of the pill's window alone (`"toolbar": true`, or opened live).
@@ -75,6 +76,9 @@ struct Step {
     toggle: bool,
     /// The app froze the screens (the spec's).
     frozen: bool,
+    /// The app says a clip is being recorded, this many seconds in; and that it ended.
+    clip: Option<f32>,
+    clip_over: bool,
     /// Milliseconds the main thread is held, as if stuck.
     stall: Option<u64>,
     capture: Option<String>,
@@ -194,6 +198,10 @@ fn after(overlay: &Entity<Overlay>, step: &Step, cx: &mut App) {
     if step.frozen {
         let screens = overlay.read(cx).spec().screens.clone();
         overlay.update(cx, |o, cx| o.apply_command(Command::Frozen { screens }, cx));
+    }
+    if step.clip.is_some() || step.clip_over {
+        let seconds = step.clip.filter(|_| !step.clip_over);
+        overlay.update(cx, |o, cx| o.apply_command(Command::Clip { seconds }, cx));
     }
     if let Some(element) = &step.answer {
         overlay.update(cx, |o, cx| o.answer_all(element.clone(), cx));

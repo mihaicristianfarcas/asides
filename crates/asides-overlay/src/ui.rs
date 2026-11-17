@@ -100,6 +100,7 @@ enum Cmd {
     DoneWhole,
     Restart,
     Live,
+    Clip,
     Close,
 }
 
@@ -141,6 +142,7 @@ impl Keys {
                 (p(&k.done), Cmd::Done),
                 (p(&k.restart), Cmd::Restart),
                 (p(&k.live), Cmd::Live),
+                (p(&k.clip), Cmd::Clip),
                 (p(&k.close), Cmd::Close),
             ],
             talk: p(&k.talk),
@@ -339,6 +341,10 @@ pub struct Overlay {
     pub live: bool,
     /// The app was asked to freeze the screens, and the tool to pick then.
     freezing: Option<Option<Tool>>,
+    /// A clip is being recorded (seconds so far, and when the app said so), and one asked for while
+    /// frozen: it starts once the live screen shows.
+    clip: Option<(f32, Instant)>,
+    clip_wanted: bool,
     /// The pill's window, frozen and live, and the screen it's on.
     pub toolbar_window: Option<ScreenWindow>,
     pub toolbar_screen: usize,
@@ -481,6 +487,8 @@ impl Overlay {
             done: false,
             live: spec.live,
             freezing: None,
+            clip: None,
+            clip_wanted: false,
             toolbar_window: None,
             toolbar_screen: 0,
             shown: None,
@@ -537,6 +545,39 @@ impl Overlay {
             io::emit(&Event::Freeze);
         }
         self.freezing = Some(tool.or(self.freezing.flatten()));
+        // The app ends a clip as the screens freeze.
+        self.clip_wanted = false;
+    }
+
+    /// The pill's record button, or its key: a clip of what the app in front shows from now on
+    /// (frozen, the screen goes live first), or the end of the one being recorded.
+    fn clip(&mut self, cx: &mut Context<Self>) {
+        if !self.spec.clips || self.done {
+            return;
+        }
+        if self.clip.is_some() || self.clip_wanted {
+            self.clip_wanted = false;
+            return io::emit(&Event::Clip { on: false });
+        }
+        if self.live && self.shown == Some(true) {
+            return io::emit(&Event::Clip { on: true });
+        }
+        // Once the frozen screens are gone and the user's app is in front again (`live_shown`):
+        // their leaving isn't what happened.
+        self.clip_wanted = true;
+        self.go_live(cx);
+    }
+
+    /// The live screen shows, the frozen ones gone: a clip asked for while frozen starts.
+    pub fn live_shown(&mut self) {
+        if std::mem::take(&mut self.clip_wanted) {
+            io::emit(&Event::Clip { on: true });
+        }
+    }
+
+    /// A clip is being recorded, or about to be.
+    fn recording_clip(&self) -> bool {
+        self.clip.is_some() || self.clip_wanted
     }
 
     /// The screens, frozen: the work goes on on them, numbered on from the last freeze.
@@ -1517,6 +1558,7 @@ impl Overlay {
             Cmd::Done => self.finish(false, window, cx),
             Cmd::DoneWhole => self.finish(true, window, cx),
             Cmd::Live => self.go_live(cx),
+            Cmd::Clip => self.clip(cx),
             Cmd::Close => self.cancel(cx),
         }
     }
@@ -1848,6 +1890,13 @@ impl Overlay {
                 self.spec.model = model;
                 if ready {
                     self.toast("The voice model is ready: talk away");
+                }
+            }
+            Command::Clip { seconds } => {
+                let (was, now) = (self.clip.is_some(), seconds.is_some());
+                self.clip = seconds.map(|s| (s, Instant::now()));
+                if was && !now && !self.done && self.live {
+                    self.toast("The clip is in the aside");
                 }
             }
             Command::ToggleFreeze if self.live => self.freeze(None),
@@ -2767,28 +2816,29 @@ pub fn toolbar(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyElem
                 .child(inside)
         };
     let name = |name: Option<SharedString>| div().max_w(px(240.)).truncate().children(name);
-    let first = group(vec![
-        help_button,
-        mic_button(overlay, o),
-        button(
-            "target",
-            match o.keys.label(Cmd::Sessions) {
-                list if list.is_empty() => format!("Where it goes ({} switches)", o.keys.label(Cmd::Target)),
-                list => format!("Where it goes ({} switches, {list} lists)", o.keys.label(Cmd::Target)),
-            },
-            target,
-            slot(
-                o.label.width(scale),
-                o.label.shown(),
-                (0., None),
-                (name(o.label.shows().cloned()), o.label.fading_in()),
-                o.label.was().map(|(was, shown)| (name(Some(was.clone())), shown)),
-                |o, width| o.label.measured(width),
-            )
-            .into_any_element(),
-            Box::new(|o, _, _| o.click_list()),
-        ),
-    ]);
+    let mut first = vec![help_button, mic_button(overlay, o)];
+    if o.spec.clips {
+        first.push(clip_button(overlay, o));
+    }
+    first.push(button(
+        "target",
+        match o.keys.label(Cmd::Sessions) {
+            list if list.is_empty() => format!("Where it goes ({} switches)", o.keys.label(Cmd::Target)),
+            list => format!("Where it goes ({} switches, {list} lists)", o.keys.label(Cmd::Target)),
+        },
+        target,
+        slot(
+            o.label.width(scale),
+            o.label.shown(),
+            (0., None),
+            (name(o.label.shows().cloned()), o.label.fading_in()),
+            o.label.was().map(|(was, shown)| (name(Some(was.clone())), shown)),
+            |o, width| o.label.measured(width),
+        )
+        .into_any_element(),
+        Box::new(|o, _, _| o.click_list()),
+    ));
+    let first = group(first);
     // A tool's icon and name: in its button, and fading out for another.
     let face = |tool: Tool| {
         div()
@@ -2921,6 +2971,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 ("Next session", k(Cmd::Target)),
                 (&where_it_goes, k(Cmd::Sessions)),
                 ("Live or frozen", o.spec.freeze_shortcut.clone()),
+                ("Record a clip, live", k(Cmd::Clip)),
                 ("Send", format!("{} {}", k(Cmd::Done), o.spec.record_shortcut)),
                 ("Start over", k(Cmd::Restart)),
                 ("Close", k(Cmd::Close)),
@@ -3468,6 +3519,46 @@ fn mic_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             )
         })
         .child(icon(if listening { "mic" } else { "mic-off" }, ink))
+        .into_any_element()
+}
+
+/// The pill's record button: a clip of what happens next on the live screen. Red while it records,
+/// with the square that stops it.
+fn clip_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
+    let recording = o.recording_clip();
+    let (press, tip) = (overlay.clone(), overlay.clone());
+    let name: SharedString = match (recording, o.live) {
+        (true, _) => "Recording a clip (click to stop)".into(),
+        (false, true) => "Record a clip of what happens next".into(),
+        (false, false) => with_key("Record a clip of what happens next, live", o.keys.label(Cmd::Clip)).into(),
+    };
+    let (red, t) = (color(style::RECORDING_SOFT, 1.0), o.theme);
+    // Recording, over the red: white on dark glass, the ink on light (as the microphone).
+    let ink = match recording {
+        true if t.dark => gpui::white(),
+        true => t.primary,
+        false => Emphasis::Plain.ink(t),
+    };
+    div()
+        .id("clip")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(28.))
+        .rounded(px(8.))
+        .when(o.moving_toolbar.is_none(), |d| d.cursor_pointer())
+        .when(recording, |d| d.bg(red.opacity(0.32)))
+        .when(!recording && o.moving_toolbar.is_none(), |d| d.hover(|s| s.bg(t.hover)))
+        .on_hover(move |hovered, _, cx| tip.update(cx, |o, cx| o.show_hint("clip", name.clone(), *hovered, cx)))
+        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+            cx.stop_propagation();
+            press.update(cx, |o, cx| {
+                o.hint = None;
+                o.clip(cx);
+                cx.notify();
+            });
+        })
+        .child(icon(if recording { "clip-stop" } else { "clip" }, ink))
         .into_any_element()
 }
 

@@ -66,6 +66,12 @@ const ICONS: &[(&str, &str)] = &[
     ("fold", icon(r#"<path d="M14.5 6.5 9 12l5.5 5.5"/>"#)),
     ("unfold", icon(r#"<path d="M9.5 6.5 15 12l-5.5 5.5"/>"#)),
     ("live", icon(r#"<path d="M8 5.5v13L18.5 12z"/>"#)),
+    // A clip: a film camera, and the square that stops one being recorded.
+    (
+        "clip",
+        icon(r#"<rect x="3" y="6.5" width="12.5" height="11" rx="2"/><path d="M15.5 10.6 21 7.8v8.4l-5.5-2.8"/>"#),
+    ),
+    ("clip-stop", icon(r##"<rect x="6" y="6" width="12" height="12" rx="2.4" fill="#000" stroke="none"/>"##)),
     ("pause", icon(r#"<path d="M9 6v12M15 6v12"/>"#)),
     (
         "mic-off",

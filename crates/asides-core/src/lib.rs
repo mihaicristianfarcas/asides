@@ -16,6 +16,7 @@ pub mod look;
 pub mod markdown;
 pub mod measure;
 pub mod models;
+pub mod motion;
 pub mod overlay;
 pub mod paths;
 pub mod picture;
