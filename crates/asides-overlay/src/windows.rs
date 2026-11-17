@@ -729,7 +729,10 @@ pub fn ask_folder(overlay: &Entity<Overlay>, cx: &mut AsyncApp) {
                 o.folder_chosen(dir);
                 #[cfg(target_os = "linux")]
                 if native::no_folder_picker() {
-                    o.notice("This desktop offers no folder picker (asides log says why)");
+                    o.notice(format!(
+                        "This desktop offers no {} picker (asides log says why)",
+                        asides_core::paths::DIRECTORY
+                    ));
                 }
                 cx.notify();
                 let key = pointer_screen(&o.spec().screens).unwrap_or(0);

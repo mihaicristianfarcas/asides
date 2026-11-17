@@ -444,7 +444,8 @@ pub fn choose_folder(start: Option<&Path>, done: impl FnOnce(Option<PathBuf>) + 
     panel.setAllowsMultipleSelection(false);
     panel.setCanCreateDirectories(true);
     panel.setPrompt(Some(&NSString::from_str("Start Here")));
-    panel.setMessage(Some(&NSString::from_str("The folder the new session starts in")));
+    let message = format!("The {} the new session starts in", asides_core::paths::DIRECTORY);
+    panel.setMessage(Some(&NSString::from_str(&message)));
     if let Some(start) = start {
         panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(&start.to_string_lossy()))));
     }

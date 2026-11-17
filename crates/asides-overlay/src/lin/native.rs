@@ -640,7 +640,7 @@ fn pick_folder(start: Option<&Path>) -> Option<PathBuf> {
                 bytes.push(0);
                 options.insert("current_folder", Value::from(Array::from(bytes)));
             }
-            ("", "The folder the new session starts in", options)
+            ("", format!("The {} the new session starts in", asides_core::paths::DIRECTORY), options)
         },
         wait,
     );
@@ -648,7 +648,7 @@ fn pick_folder(start: Option<&Path>) -> Option<PathBuf> {
         Ok(results) => results,
         Err(err) => {
             if err != "declined" {
-                eprintln!("asides-overlay: no folder picker: {err}");
+                eprintln!("asides-overlay: no {} picker: {err}", asides_core::paths::DIRECTORY);
                 NO_PICKER.store(true, Ordering::Relaxed);
             }
             return None;

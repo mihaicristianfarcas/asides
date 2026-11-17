@@ -338,7 +338,7 @@ impl Running {
             return Err("this is a test build".into());
         }
         let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let dir = exe.parent().ok_or("asides has no folder")?.to_path_buf();
+        let dir = exe.parent().ok_or_else(|| format!("asides has no {}", paths::DIRECTORY))?.to_path_buf();
         if !crate::system::installed_in(&dir) {
             return Err("this copy wasn't installed by asides' installer: install each new release".into());
         }
@@ -567,7 +567,7 @@ fn system_version() -> Version {
 /// before downloading anything.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn writable(bundle: &Path) -> Result<(), String> {
-    let folder = bundle.parent().ok_or("asides has no folder")?;
+    let folder = bundle.parent().ok_or_else(|| format!("asides has no {}", paths::DIRECTORY))?;
     let probe = folder.join(format!(".asides-update-{}", std::process::id()));
     match File::create(&probe) {
         Ok(_) => {
@@ -674,7 +674,7 @@ fn check_zip(path: &Path) -> Result<(), String> {
     for i in 0..archive.len() {
         let entry = archive.by_index_raw(i).map_err(|err| err.to_string())?;
         if entry.enclosed_name().is_none() || entry.is_symlink() {
-            return Err(format!("it holds {:?}, which could land outside its folder", entry.name()));
+            return Err(format!("it holds {:?}, which could land outside its {}", entry.name(), paths::DIRECTORY));
         }
         unpacked = unpacked.saturating_add(entry.size());
         if unpacked > MAX_UNPACKED {

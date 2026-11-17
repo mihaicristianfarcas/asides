@@ -49,7 +49,7 @@ through them slowly enough to read), or point at the name for the list (click it
 
 - **Sessions**: every agent running in a terminal, by the title its agent gave it. Those in apps
   asides can't type into (Warp, iTerm, VS Code…) are dimmed.
-- **New session in…**: an agent and a folder (a recent project, or **Choose Folder…**). Sending
+- **New session in…**: an agent and a directory (a recent project, or **Choose Directory…**). Sending
   starts the agent there, in Terminal, Ghostty or Diri (Settings), with the aside as its first
   message.
 - **History only**: keep it, send it later.
@@ -196,6 +196,7 @@ asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with t
 | | |
 |---|---|
 | Keys | `⌃` and `⌘` are `Ctrl`, `⌥` is `Alt`: `Ctrl+Alt+Space` opens and sends, `Ctrl+Alt+P` goes live. The pill's `?` and Keys show Windows' names. |
+| Words | A directory is a folder, as Windows says: **Choose Folder…** in the pill's list. |
 | Where it lives | `[a]` in the notification area (Windows may tuck it under `^`). The asides window is in the taskbar while it's open. |
 | Sessions | Agents in Windows Terminal, VS Code's terminal or any console: asides types into their console, as you would. New sessions open in Windows Terminal, or a console window of their own. |
 | Frozen | The Windows key, `Alt+Tab`, `Alt+Esc` and `Ctrl+Esc` are held back; `Ctrl+Alt+Del` still works. |

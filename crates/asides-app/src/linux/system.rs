@@ -512,7 +512,9 @@ pub fn command_to_link() -> Option<PathBuf> {
 
 /// `~/.local/bin/asides` → the command beside the app.
 pub fn link_command(cli: &Path) -> CommandLink {
-    let Some(home) = std::env::home_dir() else { return CommandLink::Failed("no home folder".into()) };
+    let Some(home) = std::env::home_dir() else {
+        return CommandLink::Failed(format!("no home {}", asides_core::paths::DIRECTORY));
+    };
     let bin = home.join(".local/bin");
     let done = std::fs::create_dir_all(&bin).and_then(|()| std::os::unix::fs::symlink(cli, bin.join("asides")));
     match done {

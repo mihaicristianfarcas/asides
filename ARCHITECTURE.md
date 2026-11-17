@@ -127,7 +127,8 @@ crates/
     models.rs         Whisper model catalog (sizes, SHA-256)
     resample.rs       resampling to 16 kHz
     update.rs         updating asides: the feed, versions, the status shown, release notes
-    paths.rs          bundle ID, URL scheme, paths
+    paths.rs          bundle ID, URL scheme, paths, the word users read for a directory (folder
+                      only on Windows)
     sessions_windows.rs  Windows: sessions from processes' memory, their consoles, their last input
     sessions_linux.rs Linux: sessions from /proc, their terminals
     portal.rs         Linux: asking an XDG desktop portal, and waiting for its answer
