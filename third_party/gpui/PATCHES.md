@@ -24,6 +24,14 @@ depends on 0.2.2's internals).
   says so (asked for `Server`, the window went without a frame and `window_decorations` said
   `Server`).
 
+## macOS (`src/platform/mac/metal_renderer.rs`)
+
+- Before a frame is presented with a Core Animation transaction (`displayLayer:`, which the overlay
+  calls as it resizes a window and draws it in one), the last frame presented on its own (the
+  display link's) is waited for. Still on the GPU, it sometimes showed after the transaction's
+  frame, at its old size stretched over the window's new one: the pill smeared over its keys sheet
+  for a frame as it opened.
+
 ## All
 
 - `Window::draw_now`: draws and presents a frame at once, as the platform's frame callback would.

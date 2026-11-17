@@ -318,6 +318,27 @@ pub fn move_to(pointer: usize, (x, y): (f64, f64)) {
     }
 }
 
+/// Keeps what the pill's window shows at the corner the pill is kept by (`windows::toolbar_frame`:
+/// its bottom with the list above, its right side with the list to the left), whatever the
+/// window's size. GPUI's layer stretched a picture of the old size over the new one: drawn just
+/// before the window grew (the keys sheet's first frame is slow), it sometimes reached the screen
+/// after, and the pill smeared over the whole sheet for a frame. Kept at its corner, a picture of
+/// the old size shows the pill where it is.
+pub fn keep_corner(pointer: usize, (left, up): (bool, bool)) {
+    let Some(v) = view(pointer) else { return };
+    let layer: *mut AnyObject = unsafe { msg_send![v, layer] };
+    let Some(layer) = (unsafe { layer.as_ref() }) else { return };
+    // Gravity's top and bottom are the layer's: the screen's unless its geometry is flipped.
+    let flipped: bool = unsafe { msg_send![layer, isGeometryFlipped] };
+    let gravity = match (up != flipped, left) {
+        (true, false) => "bottomLeft",
+        (true, true) => "bottomRight",
+        (false, false) => "topLeft",
+        (false, true) => "topRight",
+    };
+    let _: () = unsafe { msg_send![layer, setContentsGravity: &*NSString::from_str(gravity)] };
+}
+
 /// Moves and resizes the window, without drawing it: `draw_now` draws it, once.
 pub fn set_frame(pointer: usize, frame: PtRect) {
     if let Some(window) = view(pointer).and_then(|v| v.window()) {

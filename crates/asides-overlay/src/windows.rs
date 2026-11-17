@@ -1034,6 +1034,7 @@ fn follow_toolbar(overlay: &Entity<Overlay>, cx: &mut AsyncApp, width: Option<f6
     };
     let resized = (f.width - frame.width).abs() >= 0.5 || (f.height - frame.height).abs() >= 0.5;
     if resized {
+        native::keep_corner(view, (left, up));
         native::set_frame(view, f);
     } else if !same(f, frame) {
         native::move_to(view, (f.x, f.y));

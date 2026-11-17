@@ -100,6 +100,9 @@ pub(crate) struct MetalRenderer {
     device: metal::Device,
     layer: metal::MetalLayer,
     presents_with_transaction: bool,
+    /// The last frame presented on its own (not with a transaction), until a frame is presented
+    /// with one (`set_presents_with_transaction`).
+    last_presented: Option<metal::CommandBuffer>,
     command_queue: CommandQueue,
     paths_rasterization_pipeline_state: metal::RenderPipelineState,
     path_sprites_pipeline_state: metal::RenderPipelineState,
@@ -258,6 +261,7 @@ impl MetalRenderer {
             device,
             layer,
             presents_with_transaction: false,
+            last_presented: None,
             command_queue,
             paths_rasterization_pipeline_state,
             path_sprites_pipeline_state,
@@ -290,6 +294,13 @@ impl MetalRenderer {
     }
 
     pub fn set_presents_with_transaction(&mut self, presents_with_transaction: bool) {
+        // A frame presented on its own still on the GPU would show after this one, presented with
+        // the transaction: over a window resized in it, the old frame stretched over the new size.
+        if presents_with_transaction {
+            if let Some(last) = self.last_presented.take() {
+                last.wait_until_completed();
+            }
+        }
         self.presents_with_transaction = presents_with_transaction;
         self.layer
             .set_presents_with_transaction(presents_with_transaction);
@@ -392,6 +403,7 @@ impl MetalRenderer {
                     } else {
                         command_buffer.present_drawable(drawable);
                         command_buffer.commit();
+                        self.last_presented = Some(command_buffer.to_owned());
                     }
                     return;
                 }

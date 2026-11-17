@@ -175,7 +175,8 @@ Run what your change touches, and say in the pull request what you tried.
   name opens its list (it closes as the pointer leaves), showing sessions (unreachable dimmed), New
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves
   it and it stays; `M`, `D`, `S` switch tools. Low on the screen, its list and keys open above it:
-  frame by frame, the pill doesn't move and its glass stays blurred.
+  frame by frame, the pill doesn't move, its glass stays blurred, and nothing smears (the keys'
+  first opening live).
 - [ ] **Notes by the pill**: frozen and live, pointing at a button shows its name under the pill
   (above it in the lower half of the screen), on the pill's glass; a toast and an error (a clip that
   can't start) show there too. Live, clicks just under the pill reach the app there, the notes

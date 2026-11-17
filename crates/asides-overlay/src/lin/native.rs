@@ -491,6 +491,9 @@ pub fn move_to(pointer: usize, (x, y): (f64, f64)) {
     set_frame(pointer, PtRect::new(x, y, f.width, f.height));
 }
 
+/// macOS keeps a picture of the window's old size at the pill's corner; nothing does here.
+pub fn keep_corner(_pointer: usize, _sides: (bool, bool)) {}
+
 /// Moves and resizes the window.
 pub fn set_frame(pointer: usize, frame: PtRect) {
     let Some(server) = server() else { return };
