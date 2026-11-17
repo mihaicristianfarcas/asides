@@ -16,8 +16,9 @@
 //! Annotations and measurements carry when they were made, so they can sit among what the user
 //! said.
 //!
-//! The pins of the aside sent last can be shown again where they were (R, `show_earlier`): a click
-//! on one with Annotate makes it a pin of this session that says what it follows up on.
+//! The pins of the aside sent last can be shown again where they were (R, `press_restore`): a
+//! click on one with Annotate makes it a pin of this session that says what it follows up on. R
+//! again hides those not followed up on, and again shows them ([`Restored`]).
 
 use std::sync::{Arc, Mutex, Weak};
 
@@ -251,6 +252,33 @@ impl Added {
     }
 }
 
+/// What R has done on a freeze. The first press brings back the last session's guides and held
+/// measurements and shows the last aside's pins; the next hides those pins (the ones not followed
+/// up on), the next shows them again, and so on: nothing piles up.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Restored {
+    #[default]
+    Nothing,
+    /// Brought back, the last aside's pins showing.
+    Shown,
+    /// Brought back, the last aside's pins hidden.
+    Hidden,
+}
+
+/// What a press of R did, for the overlay to say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restore {
+    /// Nothing to bring back, hide or show.
+    Nothing,
+    /// The first press: the last aside's pins showed, the last session's guides and measurements
+    /// came back.
+    Back { pins: bool, measured: bool },
+    /// The last aside's pins went: this many.
+    Hid(usize),
+    /// They showed again: this many.
+    Showed(usize),
+}
+
 /// Guides and held measurements, kept from one session to restore in the next (R).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -301,6 +329,8 @@ pub struct Session {
     /// The earlier aside's pins followed up on in this session (their numbers there), on any freeze
     /// of it: they aren't shown again.
     followed: Vec<u32>,
+    /// What R has done on this freeze.
+    pub restored: Restored,
 }
 
 impl Session {
@@ -326,6 +356,7 @@ impl Session {
             next_number: 1,
             next_key: 1,
             followed: Vec::new(),
+            restored: Restored::Nothing,
         }
     }
 
@@ -734,6 +765,43 @@ impl Session {
         Placed::Annotation { screen, index }
     }
 
+    /// R: the next of its steps ([`Restored`]), with the last session's guides and measurements
+    /// (`saved`) and the last aside's pins (`earlier`, by screen).
+    pub fn press_restore(&mut self, saved: &Saved, earlier: &[Vec<Earlier>]) -> Restore {
+        let showing = |s: &Session| s.screens.iter().map(|state| state.earlier.len()).sum::<usize>();
+        match self.restored {
+            Restored::Nothing => {
+                let measured = self.restore(saved);
+                let pins = self.show_earlier(earlier);
+                if !(measured || pins) {
+                    return Restore::Nothing;
+                }
+                self.restored = Restored::Shown;
+                Restore::Back { pins, measured }
+            }
+            Restored::Shown => {
+                let shown = showing(self);
+                if shown == 0 {
+                    return Restore::Nothing;
+                }
+                for state in &mut self.screens {
+                    state.earlier.clear();
+                }
+                self.restored = Restored::Hidden;
+                Restore::Hid(shown)
+            }
+            Restored::Hidden => {
+                self.show_earlier(earlier);
+                let shown = showing(self);
+                if shown == 0 {
+                    return Restore::Nothing;
+                }
+                self.restored = Restored::Shown;
+                Restore::Showed(shown)
+            }
+        }
+    }
+
     /// Shows the pins of the aside sent last again, on the screens they were on (R): those not
     /// shown already, nor followed up on in this session. Whether any showed.
     pub fn show_earlier(&mut self, earlier: &[Vec<Earlier>]) -> bool {
@@ -802,11 +870,14 @@ impl Session {
         }
     }
 
-    /// An annotation that followed up on an earlier pin is going: that pin shows again.
+    /// An annotation that followed up on an earlier pin is going: that pin shows again, unless R
+    /// hid the last aside's pins (R shows it with them).
     fn give_back(&mut self, screen: usize, annotation: Annotation) {
         if let Some(earlier) = annotation.again {
             self.followed.retain(|n| *n != earlier.number);
-            self.screens[screen].earlier.push(earlier);
+            if self.restored != Restored::Hidden {
+                self.screens[screen].earlier.push(earlier);
+            }
         }
     }
 
@@ -1124,6 +1195,7 @@ impl Session {
         self.added.clear();
         self.followed.clear();
         self.next_number = self.first_number;
+        self.restored = Restored::Nothing;
     }
 
     pub fn raise_tolerance(&mut self) {
@@ -1410,7 +1482,8 @@ pub enum Action {
     /// A pin's card's camera: a clip of what really shows in pin `number`'s area starts (live).
     #[serde(rename = "clip_of")]
     ClipOf(u32),
-    /// R: the last session's guides and held measurements, and the last aside's pins, again.
+    /// R: the last session's guides and held measurements, and the last aside's pins, again; again,
+    /// those pins go; again, they're back (`Session::press_restore`).
     Restore,
     /// A click on the earlier aside's pin `number` (after `restore`): a follow-up on it.
     Again {
@@ -1938,6 +2011,39 @@ mod tests {
         assert!(t.show_earlier(&[vec![drawn]]));
         assert_eq!(t.follow_up_on(4, 1.0), Placed::Again { screen: 0, index: 0 });
         assert_eq!(t.screens[0].annotations[0].shape, Some(sketch));
+    }
+
+    #[test]
+    fn r_brings_back_then_hides_and_shows_the_last_pins() {
+        let pin = |number: u32, at: (f64, f64)| Earlier { number, at, ..Earlier::default() };
+        let earlier = vec![vec![pin(1, (30.0, 20.0)), pin(2, (60.0, 10.0)), pin(3, (80.0, 40.0))]];
+        let saved = Saved { guides: vec![vec![Guide { axis: Axis::X, position: 35.0 }]], held: vec![] };
+        let numbers = |s: &Session| s.screens[0].earlier.iter().map(|e| e.number).collect::<Vec<_>>();
+        let mut s = session();
+        s.set_tool(Tool::Annotate);
+        // Nothing to bring back: nothing happens, and nothing changes.
+        assert_eq!(s.press_restore(&Saved::default(), &[]), Restore::Nothing);
+        assert_eq!(s.restored, Restored::Nothing);
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Back { pins: true, measured: true });
+        assert_eq!((numbers(&s), s.screens[0].guides.len()), (vec![1, 2, 3], 1));
+        // One adopted: it stays as this aside's pin when the others go.
+        assert_eq!(s.follow_up_on(2, 1.0), Placed::Again { screen: 0, index: 0 });
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Hid(2));
+        assert_eq!((numbers(&s), s.screens[0].annotations.len()), (vec![], 1));
+        // The guide stays too: only the last aside's pins go, and they come back without piling up.
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Showed(2));
+        assert_eq!((numbers(&s), s.screens[0].guides.len()), (vec![1, 3], 1));
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Hid(2));
+        // Hidden, a follow-up taken back doesn't bring its pin back alone; R brings it with the rest.
+        assert!(s.undo());
+        assert_eq!(numbers(&s), Vec::<u32>::new());
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Showed(3));
+        // X clears it all: R starts over. So does a new freeze.
+        s.clear();
+        assert_eq!(s.press_restore(&saved, &earlier), Restore::Back { pins: true, measured: true });
+        let mut next = s.refrozen(session().screens);
+        assert_eq!(next.restored, Restored::Nothing);
+        assert_eq!(next.press_restore(&saved, &earlier), Restore::Back { pins: true, measured: true });
     }
 
     #[test]

@@ -101,10 +101,7 @@ fn headless(dir: &Path, spec: &Spec, frames: Vec<Frame>, script: &Script) -> any
                 session = session.refrozen(screens());
                 (live, frozen_at) = (false, session.clock);
             }
-            Action::Restore => {
-                session.restore(&spec.saved);
-                session.show_earlier(&spec.earlier);
-            }
+            Action::Restore => drop(session.press_restore(&spec.saved, &spec.earlier)),
             // The app records the real screen, whatever image the script plays on.
             Action::Clip(on) if live && spec.clips => io::emit(&Event::Clip { on: *on, area: None }),
             Action::ClipOf(number) if live && spec.clips => {
