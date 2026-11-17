@@ -3446,7 +3446,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
                 .items_center()
                 .gap(px(8.))
                 .child(icon("plus", tertiary))
-                .child("Choose Folder…")
+                .child(format!("Choose {}…", asides_core::paths::DIRECTORY_TITLE))
                 .into_any_element(),
             (!o.folder_panel).then_some(Pick::ChooseFolder),
         ));

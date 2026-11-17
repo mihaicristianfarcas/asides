@@ -1642,7 +1642,7 @@ impl App {
             let part = picture::crop(&pixels, plan.within(shown, scale))
                 .ok_or("What the pin was on is off the screen now.")?;
             let png = picture::png(&picture::within(&part, look::MAX_SIDE));
-            let folder = plan.file.parent().ok_or("no folder for the picture")?;
+            let folder = plan.file.parent().ok_or_else(|| format!("no {} for the picture", paths::DIRECTORY))?;
             std::fs::create_dir_all(folder)
                 .and_then(|()| std::fs::write(&plan.file, png))
                 .map_err(|err| format!("Could not keep the picture: {err}"))

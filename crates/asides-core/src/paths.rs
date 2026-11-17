@@ -4,6 +4,13 @@ pub const APP_NAME: &str = "asides";
 pub const BUNDLE_ID: &str = "io.github.mihaicristianfarcas.asides";
 pub const URL_SCHEME: &str = "asides";
 
+/// What users read for a directory, in their system's word: a folder on Windows, a directory on
+/// macOS and Linux. Only for what they read (the overlay, the asides window, the CLI, errors);
+/// code and comments say what they like.
+pub const DIRECTORY: &str = if cfg!(windows) { "folder" } else { "directory" };
+/// [`DIRECTORY`] in a title or on a button (`Choose Directory…`).
+pub const DIRECTORY_TITLE: &str = if cfg!(windows) { "Folder" } else { "Directory" };
+
 /// `~/Library/Application Support/asides`; on Windows `%LOCALAPPDATA%\asides` (the voice models
 /// are large: not in the roaming profile); on Linux `~/.local/share/asides` (`$XDG_DATA_HOME`).
 pub fn support_dir() -> PathBuf {
@@ -123,5 +130,12 @@ mod tests {
         let shop = home.join("code").join("shop");
         assert_eq!(tilde(&shop), format!("~{0}code{0}shop", std::path::MAIN_SEPARATOR));
         assert_eq!(tilde(Path::new("/tmp/x")), "/tmp/x");
+    }
+
+    #[test]
+    fn says_directory_as_the_system_does() {
+        let (word, title) = if cfg!(windows) { ("folder", "Folder") } else { ("directory", "Directory") };
+        assert_eq!((DIRECTORY, DIRECTORY_TITLE), (word, title));
+        assert_eq!(format!("Choose {DIRECTORY_TITLE}…"), format!("Choose {title}…"));
     }
 }

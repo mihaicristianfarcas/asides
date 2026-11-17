@@ -2441,7 +2441,7 @@ impl AsidesWindow {
             destinations.push(Destination::New(dir.clone()));
         }
         let choose_folder = destinations.len();
-        let choice = Choice::new("Choose Folder…").detail("A new session somewhere else");
+        let choice = Choice::new(format!("Choose {}…", paths::DIRECTORY_TITLE)).detail("A new session somewhere else");
         choices.push(if folders.is_empty() && !reachable.is_empty() { choice.separated() } else { choice });
         let chosen = self
             .send_to
@@ -2993,8 +2993,9 @@ impl AsidesWindow {
                     format!(
                         "To the agent session you typed into last: Claude Code, Codex, OpenCode and more, in \
                          {AGENT_TERMINALS}. {next} picks the next one. Point at its name for the list \
-                         ({sessions} opens it for the arrows and ⏎): a new session in a folder, or History only, \
-                         to send it later."
+                         ({sessions} opens it for the arrows and ⏎): a new session in a {dir}, or History only, \
+                         to send it later.",
+                        dir = paths::DIRECTORY,
                     ),
                     Some(target),
                 ))

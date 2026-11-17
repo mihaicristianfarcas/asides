@@ -9,11 +9,11 @@ send`.
 **It went to the wrong session.** It goes to the session you typed into last. Press `Tab` on the
 frozen screen, or click the session's name on the pill, to pick another before sending.
 
-**Two agents in one folder in Ghostty.** Ghostty only tells asides each terminal's folder, so it
+**Two agents in one directory in Ghostty.** Ghostty only tells asides each terminal's directory, so it
 types into the first. Diri and Terminal tell them apart.
 
 **A new session waits at "Do you trust this folder?"** That's your agent asking, the first time
-it runs in a folder. Answer it and the aside follows.
+it runs in a directory. Answer it and the aside follows.
 
 **asides can't see the screen.** Allow it in System Settings → Privacy & Security → Screen &
 System Audio Recording, then quit and reopen asides.
@@ -36,7 +36,7 @@ shortcuts whose only modifiers are Option, or Option and Shift.
 
 **"Updates are off."** The reason follows: a copy built from source (not notarized), one that
 isn't in an app, or on Windows one that isn't signed or didn't come from the installer, doesn't
-update itself. "asides can't write to …" means its folder isn't yours: download the new version from
+update itself. "asides can't write to …" means its directory isn't yours: download the new version from
 the website.
 
 **An update didn't install.** What happened is in `install.log`, in
@@ -77,7 +77,7 @@ it quits, and the log says so.
 **No `[a]` on GNOME.** GNOME has no status icons without the AppIndicator extension (Ubuntu's comes
 with it). Everything else still works.
 
-**Choose Folder… says there's no folder picker.** It's your desktop's file chooser portal: install
+**Choose Directory… says there's no directory picker.** It's your desktop's file chooser portal: install
 `xdg-desktop-portal-gtk`, or on GNOME its Files app (`nautilus`).
 
 **Pins only name the app, or only a point.** Turn on your desktop's accessibility (screen reader or

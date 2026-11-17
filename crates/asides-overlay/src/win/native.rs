@@ -592,7 +592,8 @@ fn pick_folder(start: Option<&Path>) -> Option<PathBuf> {
         let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let options = dialog.GetOptions().ok()?;
         dialog.SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).ok()?;
-        let _ = dialog.SetTitle(&HSTRING::from("The folder the new session starts in"));
+        let title = format!("The {} the new session starts in", asides_core::paths::DIRECTORY);
+        let _ = dialog.SetTitle(&HSTRING::from(title));
         let _ = dialog.SetOkButtonLabel(&HSTRING::from("Start Here"));
         if let Some(start) = start
             && let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(start.as_os_str()), None)

@@ -642,7 +642,7 @@ fn own_app() -> Option<PathBuf> {
 pub(crate) fn wait_for_ack(request: &str) -> Result<AppState> {
     let path = paths::state_path();
     let deadline = Instant::now() + Duration::from_secs(15);
-    let dir = path.parent().context("no folder for the app's state")?;
+    let dir = path.parent().with_context(|| format!("no {} for the app's state", paths::DIRECTORY))?;
     asides_core::watch::until(dir, deadline, || {
         AppState::read(&path).filter(|state| state.last_request.as_deref() == Some(request))
     })
@@ -656,7 +656,7 @@ pub(crate) fn look(id: &str, pin: u32) -> Result<(String, PathBuf)> {
     send(&Link::Look { id: id.into(), pin, request: Some(request.clone()) })?;
     let path = paths::state_path();
     let deadline = Instant::now() + Duration::from_secs(20);
-    let dir = path.parent().context("no folder for the app's state")?;
+    let dir = path.parent().with_context(|| format!("no {} for the app's state", paths::DIRECTORY))?;
     let looked = asides_core::watch::until(dir, deadline, || {
         AppState::read(&path).and_then(|state| state.looked.into_iter().find(|l| l.request == request))
     })
