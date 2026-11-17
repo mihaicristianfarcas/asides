@@ -166,6 +166,8 @@ pub struct OverlayKeys {
     pub copy_image: String,
     pub copy_markdown: String,
     pub undo: String,
+    /// Put back what Undo took back.
+    pub redo: String,
     pub clear: String,
     /// Hide what's drawn on the frozen screen while it's held.
     pub hide: String,
@@ -213,6 +215,7 @@ impl Default for OverlayKeys {
             copy_image: k("c"),
             copy_markdown: k("cmd+shift+c"),
             undo: k("backspace, cmd+z"),
+            redo: k("cmd+shift+z"),
             clear: k("x"),
             hide: k("shift+tab"),
             restore: k("r"),
@@ -233,7 +236,7 @@ impl Default for OverlayKeys {
 
 impl OverlayKeys {
     /// Every action's name in the settings, in the order they're declared.
-    pub const NAMES: [&str; 30] = [
+    pub const NAMES: [&str; 31] = [
         "measure",
         "annotate",
         "draw",
@@ -250,6 +253,7 @@ impl OverlayKeys {
         "copy_image",
         "copy_markdown",
         "undo",
+        "redo",
         "clear",
         "hide",
         "restore",
@@ -285,6 +289,7 @@ impl OverlayKeys {
             "copy_image" => &self.copy_image,
             "copy_markdown" => &self.copy_markdown,
             "undo" => &self.undo,
+            "redo" => &self.redo,
             "clear" => &self.clear,
             "hide" => &self.hide,
             "restore" => &self.restore,
@@ -321,6 +326,7 @@ impl OverlayKeys {
             "copy_image" => &mut self.copy_image,
             "copy_markdown" => &mut self.copy_markdown,
             "undo" => &mut self.undo,
+            "redo" => &mut self.redo,
             "clear" => &mut self.clear,
             "hide" => &mut self.hide,
             "restore" => &mut self.restore,

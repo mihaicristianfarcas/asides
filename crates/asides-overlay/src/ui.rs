@@ -93,6 +93,7 @@ enum Cmd {
     CopyImage,
     CopyMarkdown,
     Undo,
+    Redo,
     Clear,
     Hide,
     Restore,
@@ -135,6 +136,7 @@ impl Keys {
                 (p(&k.copy_dimensions), Cmd::CopyDims),
                 (p(&k.copy_image), Cmd::CopyImage),
                 (p(&k.undo), Cmd::Undo),
+                (p(&k.redo), Cmd::Redo),
                 (p(&k.clear), Cmd::Clear),
                 (p(&k.hide), Cmd::Hide),
                 (p(&k.restore), Cmd::Restore),
@@ -1633,13 +1635,25 @@ impl Overlay {
             Cmd::Undo => match s.cursor {
                 Some((screen, x, y)) if s.marker_at(screen, x, y).is_some() => {
                     let index = s.marker_at(screen, x, y).unwrap_or_default();
-                    s.remove_annotation(screen, index);
+                    s.undo_annotation(screen, index);
                 }
                 Some((screen, x, y)) if s.tool == Tool::Measure && s.held_at(screen, x, y).is_some() => {
                     let index = s.held_at(screen, x, y).unwrap_or_default();
-                    s.remove_held(screen, index);
+                    s.undo_held(screen, index);
                 }
                 _ => drop(s.undo()),
+            },
+            // What Undo took back, back as it was; named again if what it's on wasn't known yet.
+            Cmd::Redo => match s.redo() {
+                Some(Placed::Annotation { screen, index })
+                    if s.screens[screen].annotations[index].element.is_none() =>
+                {
+                    self.look_up(screen, index)
+                }
+                Some(Placed::Moved { screen, index }) if s.screens[screen].annotations[index].target.is_none() => {
+                    self.look_up_move(screen, index)
+                }
+                _ => {}
             },
             Cmd::Clear => {
                 s.clear();
@@ -3125,6 +3139,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
             "Editing",
             vec![
                 ("Undo", k(Cmd::Undo)),
+                ("Redo", k(Cmd::Redo)),
                 ("Clear", k(Cmd::Clear)),
                 ("Hide everything", k(Cmd::Hide)),
                 ("Copy as Markdown", k(Cmd::CopyMarkdown)),

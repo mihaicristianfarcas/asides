@@ -290,7 +290,10 @@ const KEY_GROUPS: &[(&str, &[(&str, &str)])] = &[
         "Copying",
         &[("copy_dimensions", "The dimensions"), ("copy_image", "The image"), ("copy_markdown", "As Markdown")],
     ),
-    ("Editing", &[("undo", "Undo"), ("clear", "Clear everything"), ("hide", "Hide everything, or show it")]),
+    (
+        "Editing",
+        &[("undo", "Undo"), ("redo", "Redo"), ("clear", "Clear everything"), ("hide", "Hide everything, or show it")],
+    ),
     (
         "The aside",
         &[
@@ -2887,8 +2890,8 @@ impl AsidesWindow {
         let live = pretty_shortcut(&self.config.shortcuts.freeze);
         let k = |name: &str| self.key_label(name);
         let (measure, draw, shot, annotate) = (k("measure"), k("draw"), k("shot"), k("annotate"));
-        let (next, keys, undo, clear, talk, done, close) =
-            (k("target"), k("help"), k("undo"), k("clear"), k("talk"), k("done"), k("close"));
+        let (next, keys, undo, redo, clear, talk, done, close) =
+            (k("target"), k("help"), k("undo"), k("redo"), k("clear"), k("talk"), k("done"), k("close"));
         let (mic, sessions, restart) = (k("mic"), k("sessions"), k("restart"));
         let kept = match self.config.history_days {
             0 => "Every aside is kept in History, sent or not".to_string(),
@@ -3029,8 +3032,8 @@ impl AsidesWindow {
                     "Every key",
                     format!(
                         "Point at the pill's ? (or press {keys}) for every key. {undo} takes back what's under the \
-                         pointer, {clear} clears everything, and a right-click has more (the arrows and {ret} \
-                         pick there). Change any of them under Keys.",
+                         pointer (or the last thing), {redo} puts it back, {clear} clears everything, and a \
+                         right-click has more (the arrows and {ret} pick there). Change any of them under Keys.",
                         ret = keys::RETURN,
                     ),
                     Some(sheet),

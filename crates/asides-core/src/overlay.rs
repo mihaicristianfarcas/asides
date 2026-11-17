@@ -242,6 +242,54 @@ enum Added {
     Moved(usize, Option<(f64, f64)>, Option<Intent>),
 }
 
+/// The undo steps as they were before something was taken away (Undo on it), for Redo to put back.
+type Steps = Vec<(usize, Added)>;
+
+/// Something Undo took back, for Redo to put back as it was. Undo goes back step by step; Redo
+/// forward again, until anything new is done (R and X too): then there's nothing to redo.
+#[derive(Debug, Clone, PartialEq)]
+enum Undone {
+    Held {
+        screen: usize,
+        index: usize,
+        measurement: Measurement,
+        time: f32,
+    },
+    Guide {
+        screen: usize,
+        index: usize,
+        guide: Guide,
+    },
+    Annotation {
+        screen: usize,
+        index: usize,
+        annotation: Box<Annotation>,
+    },
+    /// A move taken back: the annotation as it was moved.
+    Moved {
+        screen: usize,
+        index: usize,
+        moved: Option<(f64, f64)>,
+        intent: Option<Intent>,
+        target: Option<Box<Element>>,
+    },
+    /// Undo on a pin's number, or on a held measurement: it, whenever it was added, and the steps
+    /// to undo as they were.
+    RemovedAnnotation {
+        screen: usize,
+        index: usize,
+        annotation: Box<Annotation>,
+        added: Steps,
+    },
+    RemovedHeld {
+        screen: usize,
+        index: usize,
+        measurement: Measurement,
+        time: f32,
+        added: Steps,
+    },
+}
+
 impl Added {
     /// The annotation it's about.
     fn annotation(&mut self) -> Option<&mut usize> {
@@ -320,6 +368,8 @@ pub struct Session {
     /// Seconds into the session as of what the user last did: what's added is stamped with it.
     pub clock: f32,
     added: Vec<(usize, Added)>,
+    /// What Undo took back, the last first: Redo puts it back.
+    undone: Vec<Undone>,
     /// The number this freeze's first pin takes: an earlier freeze's pins (in the same aside) keep
     /// theirs, whatever goes on this one.
     first_number: u32,
@@ -352,6 +402,7 @@ impl Session {
             shots: Vec::new(),
             clock: 0.0,
             added: Vec::new(),
+            undone: Vec::new(),
             first_number: 1,
             next_number: 1,
             next_key: 1,
@@ -652,6 +703,7 @@ impl Session {
     }
 
     fn hold(&mut self, screen: usize, m: Measurement) -> Placed {
+        self.undone.clear();
         let state = &mut self.screens[screen];
         state.held.push(m);
         state.held_times.push(self.clock);
@@ -751,6 +803,7 @@ impl Session {
             Some(r) => (r.x, r.y),
             None => at,
         };
+        self.undone.clear();
         let key = self.next_key;
         let annotation = Annotation { number: self.next_number, key, at, area, shape, time, ..Annotation::default() };
         self.next_number += 1;
@@ -768,6 +821,7 @@ impl Session {
     /// R: the next of its steps ([`Restored`]), with the last session's guides and measurements
     /// (`saved`) and the last aside's pins (`earlier`, by screen).
     pub fn press_restore(&mut self, saved: &Saved, earlier: &[Vec<Earlier>]) -> Restore {
+        self.undone.clear();
         let showing = |s: &Session| s.screens.iter().map(|state| state.earlier.len()).sum::<usize>();
         match self.restored {
             Restored::Nothing => {
@@ -872,13 +926,36 @@ impl Session {
 
     /// An annotation that followed up on an earlier pin is going: that pin shows again, unless R
     /// hid the last aside's pins (R shows it with them).
-    fn give_back(&mut self, screen: usize, annotation: Annotation) {
-        if let Some(earlier) = annotation.again {
+    fn give_back(&mut self, screen: usize, annotation: &Annotation) {
+        if let Some(earlier) = &annotation.again {
             self.followed.retain(|n| *n != earlier.number);
             if self.restored != Restored::Hidden {
-                self.screens[screen].earlier.push(earlier);
+                self.screens[screen].earlier.push(earlier.clone());
             }
         }
+    }
+
+    /// An annotation taken back comes back, at `index` (where it goes): what it followed up on is
+    /// taken again.
+    fn put_back(&mut self, screen: usize, index: usize, annotation: Annotation) -> usize {
+        if let Some(earlier) = &annotation.again {
+            self.screens[screen].earlier.retain(|e| e.number != earlier.number);
+            self.followed.push(earlier.number);
+        }
+        let list = &mut self.screens[screen].annotations;
+        let index = index.min(list.len());
+        list.insert(index, annotation);
+        self.renumber();
+        index
+    }
+
+    /// A held measurement taken back comes back, at `index` (where it goes).
+    fn put_back_held(&mut self, screen: usize, index: usize, measurement: Measurement, time: f32) -> usize {
+        let state = &mut self.screens[screen];
+        let index = index.min(state.held.len());
+        state.held.insert(index, measurement);
+        state.held_times.insert(index, time);
+        index
     }
 
     /// Moves what annotation `index` is on by `offset` (its number dragged there): a change, unless
@@ -887,6 +964,7 @@ impl Session {
         let Some(a) = self.screens.get_mut(screen).and_then(|s| s.annotations.get_mut(index)) else {
             return Placed::Nothing;
         };
+        self.undone.clear();
         self.added.push((screen, Added::Moved(index, a.moved, a.intent)));
         a.moved = Some(offset);
         a.intent = a.intent.or(Some(Intent::Change));
@@ -1041,6 +1119,7 @@ impl Session {
         };
         state.guides.push(Guide { axis, position });
         self.added.push((screen, Added::Guide(state.guides.len() - 1)));
+        self.undone.clear();
         true
     }
 
@@ -1050,6 +1129,7 @@ impl Session {
         else {
             return false;
         };
+        self.undone.clear();
         let state = &mut self.screens[screen];
         let limit = if state.guides[i].axis == Axis::X { state.screen.width } else { state.screen.height };
         state.guides[i].position = (state.guides[i].position + points).clamp(0.0, limit);
@@ -1058,6 +1138,7 @@ impl Session {
 
     /// Puts back guides and held measurements from an earlier session, on the screens they were on.
     pub fn restore(&mut self, saved: &Saved) -> bool {
+        self.undone.clear();
         let mut restored = false;
         for (screen, list) in saved.guides.iter().enumerate() {
             let Some(state) = self.screens.get_mut(screen) else { continue };
@@ -1102,62 +1183,157 @@ impl Session {
         crate::markdown::join_blocks(blocks)
     }
 
-    /// Removes the last thing added.
+    /// Removes the last thing added (Redo puts it back).
     pub fn undo(&mut self) -> bool {
         let Some((screen, added)) = self.added.pop() else { return false };
         let state = &mut self.screens[screen];
-        match added {
-            Added::Held(i) if i < state.held.len() => {
-                state.held.remove(i);
-                state.held_times.remove(i);
+        let undone = match added {
+            Added::Held(index) if index < state.held.len() => Some(Undone::Held {
+                screen,
+                index,
+                measurement: state.held.remove(index),
+                time: state.held_times.remove(index),
+            }),
+            Added::Guide(index) if index < state.guides.len() => {
+                Some(Undone::Guide { screen, index, guide: state.guides.remove(index) })
             }
-            Added::Guide(i) if i < state.guides.len() => drop(state.guides.remove(i)),
-            Added::Annotation(i) if i < state.annotations.len() => {
-                let annotation = state.annotations.remove(i);
-                self.give_back(screen, annotation);
+            Added::Annotation(index) if index < state.annotations.len() => {
+                let annotation = state.annotations.remove(index);
+                self.give_back(screen, &annotation);
                 self.renumber();
+                Some(Undone::Annotation { screen, index, annotation: Box::new(annotation) })
             }
-            Added::Moved(i, moved, intent) if i < state.annotations.len() => {
-                let a = &mut state.annotations[i];
-                (a.moved, a.intent, a.target) = (moved, intent, None);
+            Added::Moved(index, moved, intent) if index < state.annotations.len() => {
+                let a = &mut state.annotations[index];
+                let (moved, intent, target) = (
+                    std::mem::replace(&mut a.moved, moved),
+                    std::mem::replace(&mut a.intent, intent),
+                    a.target.take().map(Box::new),
+                );
+                Some(Undone::Moved { screen, index, moved, intent, target })
             }
-            _ => {}
-        }
+            _ => None,
+        };
+        self.undone.extend(undone);
         true
     }
 
-    pub fn remove_annotation(&mut self, screen: usize, index: usize) {
-        if self.screens.get(screen).is_some_and(|s| index < s.annotations.len()) {
-            let annotation = self.screens[screen].annotations.remove(index);
-            self.give_back(screen, annotation);
-            self.added.retain_mut(|(s, a)| !(*s == screen && a.annotation().is_some_and(|i| *i == index)));
-            for (s, a) in &mut self.added {
-                if let Some(i) = a.annotation()
-                    && *s == screen
-                    && *i > index
-                {
-                    *i -= 1;
-                }
+    /// Puts back what Undo took back last, as it was: what it is, for the overlay to name what it's
+    /// on again if that wasn't known yet (a pin, or where it was moved to); `None` with nothing to
+    /// redo.
+    pub fn redo(&mut self) -> Option<Placed> {
+        let undone = self.undone.pop()?;
+        Some(match undone {
+            Undone::Held { screen, index, measurement, time } => {
+                let index = self.put_back_held(screen, index, measurement, time);
+                self.added.push((screen, Added::Held(index)));
+                Placed::Measurement { screen }
             }
-            self.renumber();
+            Undone::Guide { screen, index, guide } => {
+                let guides = &mut self.screens[screen].guides;
+                let index = index.min(guides.len());
+                guides.insert(index, guide);
+                self.added.push((screen, Added::Guide(index)));
+                Placed::Nothing
+            }
+            Undone::Annotation { screen, index, annotation } => {
+                let index = self.put_back(screen, index, *annotation);
+                self.added.push((screen, Added::Annotation(index)));
+                Placed::Annotation { screen, index }
+            }
+            Undone::Moved { screen, index, moved, intent, target } => {
+                let Some(a) = self.screens[screen].annotations.get_mut(index) else { return Some(Placed::Nothing) };
+                self.added.push((screen, Added::Moved(index, a.moved, a.intent)));
+                (a.moved, a.intent, a.target) = (moved, intent, target.map(|t| *t));
+                Placed::Moved { screen, index }
+            }
+            Undone::RemovedAnnotation { screen, index, annotation, added } => {
+                let index = self.put_back(screen, index, *annotation);
+                self.added = added;
+                Placed::Annotation { screen, index }
+            }
+            Undone::RemovedHeld { screen, index, measurement, time, added } => {
+                self.put_back_held(screen, index, measurement, time);
+                self.added = added;
+                Placed::Measurement { screen }
+            }
+        })
+    }
+
+    /// Whether Redo has something to put back.
+    pub fn can_redo(&self) -> bool {
+        !self.undone.is_empty()
+    }
+
+    /// Undo on a pin's number: that pin goes, whenever it was put down (Redo puts it back).
+    pub fn undo_annotation(&mut self, screen: usize, index: usize) {
+        if let Some((annotation, added)) = self.take_annotation(screen, index) {
+            self.undone.push(Undone::RemovedAnnotation { screen, index, annotation: Box::new(annotation), added });
+        }
+    }
+
+    /// Undo on a held measurement: it goes (Redo puts it back).
+    pub fn undo_held(&mut self, screen: usize, index: usize) {
+        if let Some((measurement, time, added)) = self.take_held(screen, index) {
+            self.undone.push(Undone::RemovedHeld { screen, index, measurement, time, added });
+        }
+    }
+
+    /// Removes an annotation (its menu's Remove): something new done, so nothing's left to redo.
+    pub fn remove_annotation(&mut self, screen: usize, index: usize) {
+        if self.take_annotation(screen, index).is_some() {
+            self.undone.clear();
         }
     }
 
     /// Removes a held measurement (right-click on it).
     pub fn remove_held(&mut self, screen: usize, index: usize) {
-        if self.screens.get(screen).is_some_and(|s| index < s.held.len()) {
-            self.screens[screen].held.remove(index);
-            self.screens[screen].held_times.remove(index);
-            self.added.retain(|&(s, a)| !(s == screen && a == Added::Held(index)));
-            for (s, a) in &mut self.added {
-                if let Added::Held(i) = a
-                    && *s == screen
-                    && *i > index
-                {
-                    *i -= 1;
-                }
+        if self.take_held(screen, index).is_some() {
+            self.undone.clear();
+        }
+    }
+
+    /// Takes annotation `index` of `screen` away, with the steps that added or moved it: it, and the
+    /// steps as they were.
+    fn take_annotation(&mut self, screen: usize, index: usize) -> Option<(Annotation, Steps)> {
+        if !self.screens.get(screen).is_some_and(|s| index < s.annotations.len()) {
+            return None;
+        }
+        let before = self.added.clone();
+        let annotation = self.screens[screen].annotations.remove(index);
+        self.give_back(screen, &annotation);
+        self.added.retain_mut(|(s, a)| !(*s == screen && a.annotation().is_some_and(|i| *i == index)));
+        for (s, a) in &mut self.added {
+            if let Some(i) = a.annotation()
+                && *s == screen
+                && *i > index
+            {
+                *i -= 1;
             }
         }
+        self.renumber();
+        Some((annotation, before))
+    }
+
+    /// Takes held measurement `index` of `screen` away: it, when it was made, and the steps as they
+    /// were.
+    fn take_held(&mut self, screen: usize, index: usize) -> Option<(Measurement, f32, Steps)> {
+        if !self.screens.get(screen).is_some_and(|s| index < s.held.len()) {
+            return None;
+        }
+        let before = self.added.clone();
+        let measurement = self.screens[screen].held.remove(index);
+        let time = self.screens[screen].held_times.remove(index);
+        self.added.retain(|&(s, a)| !(s == screen && a == Added::Held(index)));
+        for (s, a) in &mut self.added {
+            if let Added::Held(i) = a
+                && *s == screen
+                && *i > index
+            {
+                *i -= 1;
+            }
+        }
+        Some((measurement, time, before))
     }
 
     /// Annotations stay numbered 1, 2, 3… in the order they were put down (their keys' order), on
@@ -1193,6 +1369,7 @@ impl Session {
         }
         self.shots.clear();
         self.added.clear();
+        self.undone.clear();
         self.followed.clear();
         self.next_number = self.first_number;
         self.restored = Restored::Nothing;
@@ -1270,6 +1447,8 @@ impl Session {
             Action::Units(units) => self.units = *units,
             // The player waits; the session's clock moves on.
             Action::Wait(seconds) => self.clock += *seconds as f32,
+            Action::Undo => drop(self.undo()),
+            Action::Redo => return self.redo().unwrap_or(Placed::Nothing),
             // The player goes back to the live screen, or freezes it again; and brings back what the
             // last session left (it has the session's spec).
             Action::Live | Action::Freeze | Action::Restore | Action::Clip(_) | Action::ClipOf(_) => {}
@@ -1482,6 +1661,10 @@ pub enum Action {
     /// A pin's card's camera: a clip of what really shows in pin `number`'s area starts (live).
     #[serde(rename = "clip_of")]
     ClipOf(u32),
+    /// ⌘Z (or ⌫) with nothing under the pointer: the last thing added goes.
+    Undo,
+    /// ⇧⌘Z: what Undo took back comes back.
+    Redo,
     /// R: the last session's guides and held measurements, and the last aside's pins, again; again,
     /// those pins go; again, they're back (`Session::press_restore`).
     Restore,
@@ -2011,6 +2194,80 @@ mod tests {
         assert!(t.show_earlier(&[vec![drawn]]));
         assert_eq!(t.follow_up_on(4, 1.0), Placed::Again { screen: 0, index: 0 });
         assert_eq!(t.screens[0].annotations[0].shape, Some(sketch));
+    }
+
+    #[test]
+    fn redo_puts_back_what_undo_took_back() {
+        let mut s = session();
+        s.set_tool(Tool::Annotate);
+        for at in [(25.0, 20.0), (70.0, 30.0), (90.0, 45.0)] {
+            s.apply(&Action::Click { screen: 0, at });
+        }
+        let named = Element { name: Some("button \"Pay\"".into()), ..Element::default() };
+        s.set_element(0, 1, Part::Element, named);
+        s.apply(&Action::Hold { screen: 0, axis: Axis::X, at: (5.0, 20.0) });
+        s.add_guide_at(0, Axis::Y, 3.0, 33.0);
+        // Pin 2 dragged by its number.
+        s.mouse_down(0, 70.0, 30.0, false);
+        s.move_to(0, 80.0, 40.0);
+        assert_eq!(s.mouse_up(0, 80.0, 40.0, 1.0), Placed::Moved { screen: 0, index: 1 });
+        s.set_element(0, 1, Part::Target, Element { name: Some("footer".into()), ..Element::default() });
+        let all = s.screens[0].clone();
+        let pins = |s: &Session| s.screens[0].annotations.iter().map(|a| (a.number, a.key)).collect::<Vec<_>>();
+        // Undo, step by step: the move, the guide, the distance, pin 3; Redo, forward again.
+        for _ in 0..4 {
+            assert!(s.undo());
+        }
+        assert_eq!((pins(&s), s.screens[0].guides.len(), s.screens[0].held.len()), (vec![(1, 1), (2, 2)], 0, 0));
+        assert_eq!(s.screens[0].annotations[1].moved, None);
+        assert_eq!(s.redo(), Some(Placed::Annotation { screen: 0, index: 2 }));
+        assert_eq!(s.redo(), Some(Placed::Measurement { screen: 0 }));
+        assert_eq!(s.redo(), Some(Placed::Nothing));
+        assert_eq!(s.redo(), Some(Placed::Moved { screen: 0, index: 1 }));
+        assert_eq!(s.redo(), None);
+        assert_eq!(s.screens[0].annotations, all.annotations);
+        assert_eq!((&s.screens[0].held, &s.screens[0].guides), (&all.held, &all.guides));
+        // Undo on pin 1's number takes it, whenever it was put down: back, it's pin 1 again, and
+        // Undo goes on as before (the move first).
+        s.undo_annotation(0, 0);
+        assert_eq!(pins(&s), [(1, 2), (2, 3)]);
+        assert_eq!(s.redo(), Some(Placed::Annotation { screen: 0, index: 0 }));
+        assert_eq!(s.screens[0].annotations, all.annotations);
+        assert!(s.undo());
+        assert_eq!(s.screens[0].annotations[1].moved, None);
+        assert!(s.redo().is_some());
+        // So with a held measurement.
+        s.undo_held(0, 0);
+        assert!(s.screens[0].held.is_empty());
+        assert_eq!(s.redo(), Some(Placed::Measurement { screen: 0 }));
+        assert_eq!(s.screens[0].held, all.held);
+        // Something new done: nothing to redo.
+        s.undo();
+        s.apply(&Action::Click { screen: 0, at: (10.0, 45.0) });
+        assert_eq!(s.redo(), None);
+        // Nor after R, X, or a removal from the menu.
+        s.undo();
+        s.press_restore(&Saved::default(), &[]);
+        assert!(!s.can_redo());
+        s.undo();
+        s.remove_annotation(0, 0);
+        assert!(!s.can_redo());
+        s.undo();
+        s.clear();
+        assert!(!s.can_redo());
+
+        // A follow-up undone gives its pin back; redone, takes it again.
+        let earlier = vec![vec![Earlier { number: 7, at: (30.0, 20.0), ..Earlier::default() }]];
+        s.press_restore(&Saved::default(), &earlier);
+        s.follow_up_on(7, 2.0);
+        s.undo();
+        assert_eq!(s.screens[0].earlier.len(), 1);
+        assert_eq!(s.redo(), Some(Placed::Annotation { screen: 0, index: 0 }));
+        assert!(s.screens[0].earlier.is_empty());
+        assert_eq!(s.screens[0].annotations[0].again.as_ref().map(|e| e.number), Some(7));
+        // As a script says it.
+        let script: Vec<Action> = serde_json::from_str(r#"["undo", "redo"]"#).unwrap();
+        assert_eq!(script, [Action::Undo, Action::Redo]);
     }
 
     #[test]
