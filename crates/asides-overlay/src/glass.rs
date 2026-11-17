@@ -4,6 +4,7 @@
 //! menus) has a still picture behind it: the overlay blurs a small copy of it once ([`Backdrop`])
 //! and draws the part under each surface ([`frozen`]).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use asides_core::measure::Frame;
@@ -11,8 +12,51 @@ use gpui::{Bounds, Corners, Entity, IntoElement, Pixels, RenderImage, Styled, ca
 
 use crate::ui::Overlay;
 
-/// The parts of the frozen screens' copies drawn under surfaces (by screen and part), as images.
-pub type Pieces = Vec<((usize, [u32; 4]), Arc<RenderImage>)>;
+/// The parts of the frozen screens' copies drawn under surfaces (by screen and part), as images,
+/// each made once and kept while it's drawn: a screen with many labels (an aside restored with R)
+/// draws them all every frame, and kept only the last 32, it made each label's again, and sent it
+/// to the GPU, on every frame.
+#[derive(Default)]
+pub struct Pieces {
+    /// Each piece, and the frame of its screen it was last drawn in.
+    kept: HashMap<(usize, [u32; 4]), (Arc<RenderImage>, u64)>,
+    /// The frame each screen is drawing.
+    frames: Vec<u64>,
+    /// How many were made.
+    #[cfg(test)]
+    made: usize,
+}
+
+impl Pieces {
+    /// The piece of `backdrop` (screen `screen`'s) covering `cover` (`Backdrop::cover`).
+    pub fn get(&mut self, screen: usize, backdrop: &Backdrop, cover: [u32; 4]) -> Arc<RenderImage> {
+        let frame = self.frames.get(screen).copied().unwrap_or_default();
+        #[cfg(test)]
+        {
+            self.made += usize::from(!self.kept.contains_key(&(screen, cover)));
+        }
+        let (image, drawn) = self.kept.entry((screen, cover)).or_insert_with(|| (backdrop.crop(cover), frame));
+        *drawn = frame;
+        image.clone()
+    }
+
+    /// Screen `screen` starts drawing a frame: the pieces its last frame didn't draw go, to drop
+    /// from the windows once the next frame is drawn (`windows::drop_stale`).
+    pub fn next_frame(&mut self, screen: usize) -> Vec<Arc<RenderImage>> {
+        if self.frames.len() <= screen {
+            self.frames.resize(screen + 1, 0);
+        }
+        let last = self.frames[screen];
+        self.frames[screen] += 1;
+        let gone: Vec<_> = self.kept.keys().filter(|k| k.0 == screen && self.kept[k].1 < last).copied().collect();
+        gone.into_iter().filter_map(|k| self.kept.remove(&k)).map(|(image, _)| image).collect()
+    }
+
+    /// Every piece goes (the screens froze again).
+    pub fn clear(&mut self) -> Vec<Arc<RenderImage>> {
+        self.kept.drain().map(|(_, (image, _))| image).collect()
+    }
+}
 
 /// Screen pixels per pixel of the blurred copy (at 2×, 8 points).
 const STEP: u32 = 16;
@@ -136,5 +180,40 @@ mod tests {
         assert!(blue(0) < 10 && blue(19) > 245, "{} {}", blue(0), blue(19));
         assert!(blue(9) > 40 && blue(9) < 215, "{}", blue(9));
         assert_eq!(b.cover([20.0, 20.0, 100.0, 60.0]), [1, 1, 7, 4]);
+    }
+
+    #[test]
+    fn keeps_each_piece_while_its_drawn() {
+        let backdrop = Backdrop::of(&Frame::filled(3200, 2000, 0x808080));
+        let mut pieces = Pieces::default();
+        // Many labels, drawn frame after frame: each piece is made once.
+        let labels: Vec<[u32; 4]> = (0..600)
+            .map(|i| {
+                backdrop.cover([
+                    (i % 30) as f64 * 100.0,
+                    (i / 30) as f64 * 90.0,
+                    (i % 30) as f64 * 100.0 + 80.0,
+                    (i / 30) as f64 * 90.0 + 30.0,
+                ])
+            })
+            .collect();
+        let distinct = labels.iter().collect::<std::collections::HashSet<_>>().len();
+        for _ in 0..3 {
+            assert!(pieces.next_frame(0).is_empty());
+            for &cover in &labels {
+                pieces.get(0, &backdrop, cover);
+            }
+        }
+        assert_eq!(pieces.made, distinct);
+        // One not drawn in a frame goes as the next starts; another screen's stay.
+        pieces.next_frame(1);
+        pieces.get(1, &backdrop, labels[0]);
+        pieces.next_frame(0);
+        for &cover in &labels[1..] {
+            pieces.get(0, &backdrop, cover);
+        }
+        assert_eq!(pieces.next_frame(0).len(), 1);
+        assert!(pieces.next_frame(1).is_empty());
+        assert_eq!(pieces.clear().len(), distinct);
     }
 }

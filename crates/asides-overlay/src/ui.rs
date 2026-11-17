@@ -453,7 +453,7 @@ impl Overlay {
             theme,
             images,
             backdrops,
-            glass: Vec::new(),
+            glass: glass::Pieces::default(),
             frames,
             exporter: None,
             windows: Vec::new(),
@@ -659,7 +659,7 @@ impl Overlay {
         let images = frames.iter().map(|f| render_image(f)).collect();
         self.stale_images.extend(std::mem::replace(&mut self.images, images));
         self.backdrops = frames.iter().map(|f| Arc::new(glass::Backdrop::of(f))).collect();
-        self.stale_images.extend(self.glass.drain(..).map(|(_, image)| image));
+        self.stale_images.extend(self.glass.clear());
         self.frames = frames;
         self.exporter = None;
         // Over the live screen still: the Dock is where the user keeps it.
@@ -973,19 +973,14 @@ impl Overlay {
         let p = |v: Pixels| f32::from(v) as f64;
         let (left, top) = (p(bounds.origin.x) + ox, p(bounds.origin.y) + oy);
         let (right, bottom) = (left + p(bounds.size.width), top + p(bounds.size.height));
-        let key = (screen, backdrop.cover([left * scale, top * scale, right * scale, bottom * scale]));
-        if let Some((_, image)) = self.glass.iter().find(|(k, _)| *k == key) {
-            return Some(image.clone());
-        }
-        let image = backdrop.crop(key.1);
-        // Surfaces at once (labels, a card, the keys, a menu): older parts go once the next frame
-        // is drawn (`windows::drop_stale`).
-        if self.glass.len() >= 32 {
-            let (_, old) = self.glass.remove(0);
-            self.stale_images.push(old);
-        }
-        self.glass.push((key, image.clone()));
-        Some(image)
+        let cover = backdrop.cover([left * scale, top * scale, right * scale, bottom * scale]);
+        Some(self.glass.get(screen, &backdrop, cover))
+    }
+
+    /// Screen `screen` starts drawing a frame: the glass its last one didn't draw goes.
+    pub fn glass_frame(&mut self, screen: usize) {
+        let gone = self.glass.next_frame(screen);
+        self.stale_images.extend(gone);
     }
 
     pub fn start(&mut self) {
@@ -2176,7 +2171,7 @@ fn pill(
     text: impl Into<SharedString>,
     (x, y): (f64, f64),
 ) -> AnyElement {
-    let mut label = frozen_glass(overlay, t, screen, offset, 5.)
+    let label = frozen_glass(overlay, t, screen, offset, 5.)
         .min_w(px(LABEL_MIN_WIDTH))
         .flex()
         .justify_center()
@@ -2185,8 +2180,6 @@ fn pill(
         .text_color(t.primary)
         .text_size(px(11.))
         .font_weight(FontWeight::SEMIBOLD);
-    label.text_style().get_or_insert_with(Default::default).font_features =
-        Some(gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
     div()
         .absolute()
         .left(px(x as f32 - 150.))
@@ -2196,8 +2189,15 @@ fn pill(
         .flex()
         .justify_center()
         .items_center()
-        .child(label.child(text.into()))
+        .child(tabular(label).child(text.into()))
         .into_any_element()
+}
+
+/// Text with its figures all as wide (a label's digits don't jump as they change).
+pub fn tabular(mut text: Div) -> Div {
+    text.text_style().get_or_insert_with(Default::default).font_features =
+        Some(gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
+    text
 }
 
 /// The narrowest a label gets: a few digits and a unit.
@@ -2229,6 +2229,8 @@ impl Render for ScreenView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let screen = self.screen;
         let overlay = self.overlay.clone();
+        // The glass this frame draws is kept; what the last one didn't draw goes.
+        self.overlay.update(cx, |o, _| o.glass_frame(screen));
         let o = self.overlay.read(cx);
         let t = o.theme;
         let state = &o.session.screens[screen];
@@ -4381,4 +4383,99 @@ fn pointer(spec: &Spec) -> Option<(usize, f64, f64)> {
 /// The part of each screen the Dock and the menu bar leave (see `Overlay::visible`).
 fn visible_frames(screens: &[SpecScreen]) -> Vec<PtRect> {
     screens.iter().map(|s| crate::native::visible_frame(s.frame)).collect()
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use asides_core::inspect::{Earlier, Guide, Run, Screen, Units};
+    use asides_core::overlay::Restore;
+    use gpui::{Font, FontFeatures, font};
+
+    use super::*;
+    use crate::glass::{Backdrop, Pieces};
+
+    /// R on a large aside, 300 pins and 300 measurements with 20 guides (720 labels): bringing it
+    /// back, and what its first frame does for each label (shaping its text in the overlay's
+    /// fonts, and its glass), fit in a frame. Each line shaped made its own copy of its font, which
+    /// CoreText measured again: 18 ms on an M-series Mac, more than a frame; 4 ms now, and 11 ms on
+    /// CI's slower virtual Macs. The first time, loading the fonts took 0.6 s: a spare overlay
+    /// loads them as it waits (`windows::WarmUp`), so the best of a few rounds is what R costs.
+    #[test]
+    fn restores_a_large_aside_within_a_frame() {
+        let screen = Screen { name: None, width: 1512.0, height: 945.0, scale: 2.0 };
+        let n = |points: f64| num(points, 2.0, Units::Pt);
+        let frame = Frame::filled(3024, 1890, 0xf6f7f9);
+        let backdrop = Backdrop::of(&frame);
+        let at = |i: usize| (40.0 + (i * 37 % 1400) as f64, 60.0 + (i * 53 % 840) as f64);
+        let held: Vec<Measurement> = (0..300)
+            .map(|i| {
+                let (x, y) = at(i);
+                let run = |a: f64, b: f64| Run { start: a, end: b, open_start: false, open_end: false };
+                match i % 3 {
+                    0 => Measurement::Distance {
+                        x,
+                        y,
+                        across: run(x - 40.0, x + i as f64),
+                        down: run(y - 20.0, y + 30.0),
+                    },
+                    _ => Measurement::Area { rect: PtRect::new(x, y, 20.0 + i as f64 / 3.0, 16.0), snapped: true },
+                }
+            })
+            .collect();
+        let guides =
+            (0..20).map(|i| Guide { axis: [Axis::X, Axis::Y][i % 2], position: 30.0 + i as f64 * 41.0 }).collect();
+        let saved = Saved { guides: vec![guides], held: vec![held] };
+        let pins = (1..=300)
+            .map(|n| {
+                let (x, y) = at(n as usize + 7);
+                let area = (n % 2 == 0).then(|| PtRect::new(x, y, 80.0, 30.0));
+                let moved = (n % 3 == 0).then_some((60.0, 20.0));
+                Earlier { number: n, at: (x, y), area, region: area, moved, ..Earlier::default() }
+            })
+            .collect();
+        let earlier = vec![pins];
+
+        let text_system = gpui::TextSystem::of_platform();
+        let label = Font {
+            weight: FontWeight::SEMIBOLD,
+            features: FontFeatures(Arc::new(vec![("tnum".into(), 1)])),
+            ..font(".SystemUIFont")
+        };
+        let number = Font { weight: FontWeight::BOLD, ..font(".SystemUIFont") };
+        let mut best = Duration::MAX;
+        for _ in 0..10 {
+            let mut session =
+                Session::new(vec![Session::screen(screen.clone(), frame.clone())], Tolerance::DEFAULT, Units::Pt);
+            let mut glass = Pieces::default();
+            glass.next_frame(0);
+            let start = Instant::now();
+            assert_eq!(session.press_restore(&saved, &earlier), Restore::Back { pins: true, measured: true });
+            let state = &session.screens[0];
+            let mut texts = Vec::new();
+            for m in &state.held {
+                match m {
+                    Measurement::Distance { across, down, .. } => {
+                        texts.push((n(across.len()), m.bounds()));
+                        texts.push((n(down.len()), m.bounds()));
+                    }
+                    Measurement::Area { rect, .. } => {
+                        texts.push((format!("{} × {}", n(rect.width), n(rect.height)), *rect))
+                    }
+                }
+            }
+            for g in &state.guides {
+                texts.push((n(g.position), PtRect::new(g.position, 14.0, 44.0, 20.0)));
+            }
+            for (text, r) in &texts {
+                text_system.layout_line_in(text, &label, px(11.));
+                glass.get(0, &backdrop, backdrop.cover([r.x * 2.0, r.y * 2.0, r.x * 2.0 + 88.0, r.y * 2.0 + 40.0]));
+            }
+            for e in &state.earlier {
+                text_system.layout_line_in(&e.number.to_string(), &number, px(11.));
+            }
+            assert_eq!((texts.len(), state.earlier.len()), (420, 300));
+            best = best.min(start.elapsed());
+        }
+        assert!(best < Duration::from_millis(16), "R took {best:?}, more than a frame (16 ms at 60 Hz)");
+    }
 }
