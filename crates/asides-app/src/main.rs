@@ -61,8 +61,8 @@ use asides_core::agents::{self, AgentKind};
 use asides_core::config::Config;
 use asides_core::deliver;
 use asides_core::helper::{
-    Command as OverlayCommand, Event as OverlayEvent, Folder, ModelInfo, Outcome as OverlayOutcome, Spec, SpecScreen,
-    Target, TargetSession, Targets,
+    ClipArea, Command as OverlayCommand, Event as OverlayEvent, Folder, ModelInfo, Outcome as OverlayOutcome, Spec,
+    SpecScreen, Target, TargetSession, Targets,
 };
 use asides_core::history::{self, Aside, Delivery};
 use asides_core::inspect::{self, Earlier, PtRect, Screen};
@@ -1366,8 +1366,9 @@ impl App {
         }
     }
 
-    /// The pill's record button: a clip of what the app in front shows from now on.
-    fn start_clip(&mut self) {
+    /// The pill's record button: a clip of what the app in front shows from now on; or a pin's
+    /// card's, of what shows in its area.
+    fn start_clip(&mut self, area: Option<ClipArea>) {
         if self.clip.is_some() || self.overlay.is_none() {
             return;
         }
@@ -1376,7 +1377,7 @@ impl App {
             return self.screen_not_permitted();
         }
         self.screen_permitted = true;
-        match self.record_front() {
+        match area.map_or_else(|| self.record_front(), |area| self.record_area(area)) {
             Ok(recording) => self.clip = Some(recording),
             Err(why) => self.fail(why),
         }
@@ -1408,8 +1409,34 @@ impl App {
         let failed = move |why| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
         };
-        Ok(clip::Recording::start(front, Some(window.app.clone()), |take| {
-            capture::watch(screen.display, front, size, move |frame| take(clip::Shown::Frame(frame)), failed)
+        Ok(clip::Recording::start(front, Some(window.app.clone()), None, |take| {
+            let watched = capture::Watched::App(front);
+            capture::watch(screen.display, watched, size, move |frame| take(clip::Shown::Frame(frame)), failed)
+        }))
+    }
+
+    /// Starts recording what shows in a pin's area (asides' own windows left out), at the screen's
+    /// pixels (smaller only past `motion::SIDE`).
+    #[cfg(target_os = "macos")]
+    fn record_area(&self, area: ClipArea) -> Result<clip::Recording, String> {
+        let screens = capture::screens(self.mtm);
+        // A simulated screen (`asides simulate-measure`) is the main one.
+        let simulated = (area.display == 0).then(|| screens.first()).flatten();
+        let screen =
+            screens.iter().find(|s| s.display == area.display).or(simulated).ok_or("That pin's screen is gone.")?;
+        let rect = area_on(area.rect, screen.origin, (screen.frame.width, screen.frame.height))
+            .ok_or("That pin's area isn't on its screen any more.")?;
+        let scale = screen.scale.min(f64::from(asides_core::motion::SIDE) / rect.width.max(rect.height));
+        let size = (((rect.width * scale).round() as usize).max(1), ((rect.height * scale).round() as usize).max(1));
+        let without =
+            std::iter::once(std::process::id() as i32).chain(self.overlay.as_ref().map(|o| o.pid())).collect();
+        let proxy = Mutex::new(self.proxy.clone());
+        let failed = move |why| {
+            let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
+        };
+        Ok(clip::Recording::start(0, None, Some(area.annotation), |take| {
+            let watched = capture::Watched::Area(rect, without);
+            capture::watch(screen.display, watched, size, move |frame| take(clip::Shown::Frame(frame)), failed)
         }))
     }
 
@@ -1421,7 +1448,17 @@ impl App {
         let failed = move |why| {
             let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
         };
-        Ok(clip::Recording::start(0, None, |take| capture::watch(without, take, failed)))
+        Ok(clip::Recording::start(0, None, None, |take| capture::watch(without, take, failed)))
+    }
+
+    /// Starts recording what shows in a pin's area (asides' own windows left out).
+    #[cfg(not(target_os = "macos"))]
+    fn record_area(&self, area: ClipArea) -> Result<clip::Recording, String> {
+        let proxy = Mutex::new(self.proxy.clone());
+        let failed = move |why| {
+            let _ = proxy.lock().unwrap().send_event(UserEvent::ClipFailed(why));
+        };
+        Ok(clip::Recording::start(0, None, Some(area.annotation), |take| capture::watch_area(area.rect, take, failed)))
     }
 
     /// Another app came to the front while a clip records (macOS says so): the clip is of that one
@@ -1431,7 +1468,7 @@ impl App {
         let asides = [Some(std::process::id() as i32), self.overlay.as_ref().map(|o| o.pid())];
         if system::frontmost_app().is_some_and(|front| front != pid && !asides.contains(&Some(front))) {
             self.clip = None;
-            self.start_clip();
+            self.start_clip(None);
         }
     }
 
@@ -1746,8 +1783,8 @@ impl App {
                 self.stop_clip(true);
                 self.capture_screens();
             }
-            OverlayMessage::Event(OverlayEvent::Clip { on: true }) => self.start_clip(),
-            OverlayMessage::Event(OverlayEvent::Clip { on: false }) => self.stop_clip(true),
+            OverlayMessage::Event(OverlayEvent::Clip { on: true, area }) => self.start_clip(area),
+            OverlayMessage::Event(OverlayEvent::Clip { on: false, .. }) => self.stop_clip(true),
             OverlayMessage::Event(OverlayEvent::Live) => {
                 // The overlay gives the keyboard back to the app the user was in.
                 overlay.frozen = false;
@@ -1906,10 +1943,11 @@ impl App {
             return;
         }
         let Some(mut f) = self.finishing.take() else { return };
-        // Each clip where it was recorded, its pictures images of the aside, then said what they show.
+        // Each clip where it was recorded, or right after the pin whose area it's of (named by its
+        // number as sent); its pictures images of the aside, then said what they show.
         for (_, made) in self.clips.extract_if(.., |c| c.0 == f.clips) {
-            let time = overlay::seconds_between(f.origin, made.started);
-            let place = made.app.as_deref().map_or_else(|| "on the screen".to_string(), |app| format!("in {app}"));
+            let recorded = overlay::seconds_between(f.origin, made.started);
+            let (time, place) = clip_place(&f.outcome.items, made.pin, made.app.as_deref(), recorded);
             let (count, mut caption) = (made.pngs.len(), Some(made.summary.caption(&place)));
             for (i, png) in made.pngs.into_iter().enumerate() {
                 f.outcome.items.push(asides_core::helper::Item {
@@ -2776,4 +2814,61 @@ fn asides_today(id: &str) -> u32 {
 /// The time of day at `instant`.
 fn wall_clock(instant: Instant) -> DateTime<Local> {
     Local::now() - chrono::TimeDelta::from_std(instant.elapsed()).unwrap_or_default()
+}
+
+/// Where a clip goes among a session's `items` (seconds into it), and what it's of, said after it:
+/// right after the pin whose area it is (`pin`, an annotation's key), by its number; recorded
+/// (`recorded`) of an app, or of a pin since taken away, where it was recorded.
+fn clip_place(
+    items: &[asides_core::helper::Item],
+    pin: Option<u32>,
+    app: Option<&str>,
+    recorded: f32,
+) -> (f32, String) {
+    let Some(key) = pin else {
+        return (recorded, app.map_or_else(|| "on the screen".to_string(), |app| format!("in {app}")));
+    };
+    let found = items
+        .iter()
+        .find(|i| i.annotation == Some(key))
+        .and_then(|item| Some((item.time, item.text.as_deref().and_then(asides_core::markdown::pin_number)?)));
+    match found {
+        Some((time, number)) => (time + CLIP_AFTER_PIN, format!("in pin {number}'s area")),
+        None => (recorded, "in a part of the screen".to_string()),
+    }
+}
+
+/// How long after its pin a clip of the pin's area goes: right after it, before what came next.
+const CLIP_AFTER_PIN: f32 = 0.01;
+
+/// A pin's area (global points) in its screen's points from its top-left corner (`origin`), the part
+/// on the screen (`size`); `None` when too little of it is.
+#[cfg(target_os = "macos")]
+fn area_on(area: PtRect, origin: (f64, f64), size: (f64, f64)) -> Option<PtRect> {
+    let (left, top) = ((area.x - origin.0).max(0.0), (area.y - origin.1).max(0.0));
+    let (right, bottom) = ((area.x - origin.0 + area.width).min(size.0), (area.y - origin.1 + area.height).min(size.1));
+    (right - left >= 1.0 && bottom - top >= 1.0).then(|| PtRect::new(left, top, right - left, bottom - top))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use asides_core::helper::Item;
+
+    #[test]
+    fn a_clip_goes_after_its_pin_named_by_its_number() {
+        let pin = |time: f32, key: u32, text: &str| Item {
+            time,
+            text: Some(text.into()),
+            annotation: Some(key),
+            ..Item::default()
+        };
+        let items = [pin(1.0, 7, "### 1. button \"Save\""), pin(4.0, 9, "### 2. area")];
+        assert_eq!(clip_place(&items, Some(9), None, 12.0), (4.0 + CLIP_AFTER_PIN, "in pin 2's area".into()));
+        // Its pin taken away: where it was recorded.
+        assert_eq!(clip_place(&items, Some(3), None, 12.0), (12.0, "in a part of the screen".into()));
+        // Of an app, or the window in front.
+        assert_eq!(clip_place(&items, None, Some("Safari"), 12.0), (12.0, "in Safari".into()));
+        assert_eq!(clip_place(&items, None, None, 12.0), (12.0, "on the screen".into()));
+    }
 }

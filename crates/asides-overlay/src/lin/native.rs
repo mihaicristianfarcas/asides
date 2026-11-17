@@ -190,6 +190,16 @@ pub fn make_toolbar(window: &Window, frame: PtRect) -> (isize, usize) {
     (view as isize, view)
 }
 
+/// Makes `window` a strip of the outline around a pin's area while a clip of it records, at `frame`.
+/// Returns its id.
+pub fn make_outline(window: &Window, frame: PtRect) -> usize {
+    let view = view_pointer(window);
+    if view != 0 {
+        adopt(view, frame);
+    }
+    view
+}
+
 /// Draws these windows now, as GPUI would their next frames, off the screen or not: they show it
 /// when they're shown, not what they showed last.
 pub fn draw_now(views: &[usize], cx: &mut App) {

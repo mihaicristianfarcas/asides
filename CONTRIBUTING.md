@@ -213,6 +213,9 @@ Run what your change touches, and say in the pull request what you tried.
   flash, then its square: the aside's pictures show each screen it settled on, the animation and
   the flash (said to be one), numbered and timed, with readable text; `K` frozen goes live and records; freezing,
   sending and closing end it; another app coming to the front starts it over on that one.
+- [ ] **A pin's clip**: a pin's camera (or `⌘K` in its card) goes live with a thin red line just
+  around its area (an element's or a drawing's with a little room); the aside's pictures show only
+  that area, sharp, right after the pin, never the line; freezing ends it, and the line goes.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
 - [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart

@@ -1173,7 +1173,7 @@ impl Session {
             Action::Wait(seconds) => self.clock += *seconds as f32,
             // The player goes back to the live screen, or freezes it again; and brings back what the
             // last session left (it has the session's spec).
-            Action::Live | Action::Freeze | Action::Restore | Action::Clip(_) => {}
+            Action::Live | Action::Freeze | Action::Restore | Action::Clip(_) | Action::ClipOf(_) => {}
             Action::Again { number, comment, intent } => {
                 let placed = self.follow_up_on(*number, self.clock);
                 if let Placed::Again { screen, index } = placed {
@@ -1380,6 +1380,9 @@ pub enum Action {
     Freeze,
     /// The pill's record button: a clip of what the app in front really shows starts (live), or ends.
     Clip(bool),
+    /// A pin's card's camera: a clip of what really shows in pin `number`'s area starts (live).
+    #[serde(rename = "clip_of")]
+    ClipOf(u32),
     /// R: the last session's guides and held measurements, and the last aside's pins, again.
     Restore,
     /// A click on the earlier aside's pin `number` (after `restore`): a follow-up on it.
@@ -1975,12 +1978,15 @@ mod tests {
                 {"drag": {"from": [10, 5], "to": [70, 40]}}, {"guide": {"axis": "y", "at": [5, 14]}},
                 {"annotate": {"at": [25, 20], "comment": "Hi", "intent": "question"}},
                 {"hold": {"axis": "x", "at": [5, 20]}}, {"draw": {"points": [[1, 1], [9, 9]], "arrow": true}},
-                {"wait": 1.5}, "live", "freeze", {"clip": true}]"#,
+                {"wait": 1.5}, "live", "freeze", {"clip": true}, {"clip_of": 2}]"#,
         )
         .unwrap();
         assert_eq!(script[0], Action::Tool(Tool::Annotate));
         assert_eq!(script[4], Action::Drag { screen: 0, from: (10.0, 5.0), to: (70.0, 40.0), snap: true });
-        assert_eq!(script[9..], [Action::Wait(1.5), Action::Live, Action::Freeze, Action::Clip(true)]);
+        assert_eq!(
+            script[9..],
+            [Action::Wait(1.5), Action::Live, Action::Freeze, Action::Clip(true), Action::ClipOf(2)]
+        );
         let parsed = Script::parse(r#"{"actions": [{"tool": "measure"}]}"#).unwrap();
         assert_eq!((parsed.scale, parsed.actions), (1.0, vec![Action::Tool(Tool::Measure)]));
         assert!(Script::parse(r#"{"scale": 0, "actions": []}"#).is_err());

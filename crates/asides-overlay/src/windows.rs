@@ -397,6 +397,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     if left && let Some(toolbar) = toolbar {
         pointer_moved(toolbar, cx);
     }
+    sync_outline(overlay, cx)?;
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
         // Frozen again while still giving way: the system comes back to the overlay.
@@ -407,6 +408,93 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         },
         (false, true) => show_live(overlay, cx),
         (false, false) => show_frozen(overlay, cx),
+    }
+}
+
+/// How thick the outline around a pin's area is while a clip of it records.
+const OUTLINE: f64 = 3.0;
+
+/// The outline's strips around `area` (AppKit's coordinates), just outside it (a clip of the area
+/// never shows them, wherever a capture can't leave asides' windows out): bottom, top, left, right.
+fn strips(area: PtRect) -> [PtRect; 4] {
+    let (r, b) = (area, OUTLINE);
+    [
+        PtRect::new(r.x - b, r.y - b, r.width + 2.0 * b, b),
+        PtRect::new(r.x - b, r.y + r.height, r.width + 2.0 * b, b),
+        PtRect::new(r.x - b, r.y, b, r.height),
+        PtRect::new(r.x + r.width, r.y, b, r.height),
+    ]
+}
+
+/// A strip of the outline: the recording's color.
+struct OutlineStrip;
+
+impl Render for OutlineStrip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().bg(gpui::rgb(crate::style::RECORDING_SOFT))
+    }
+}
+
+/// The outline around a pin's area while a clip of it records, live (`Overlay::outline_wanted`),
+/// shown there; hidden otherwise. Its strips open the first time, hidden.
+fn sync_outline(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let (wanted, at, open) = cx.update(|cx| {
+        let o = overlay.read(cx);
+        (o.outline_wanted(), o.outline_at, o.outline.len())
+    })?;
+    if wanted == at {
+        return Ok(());
+    }
+    if wanted.is_some() && open == 0 {
+        cx.update(|cx| open_outline(overlay, cx))?;
+    }
+    let views = cx.update(|cx| overlay.read(cx).outline.clone())?;
+    match wanted {
+        Some(area) => {
+            for (&view, frame) in views.iter().zip(strips(area)) {
+                native::set_frame(view, frame);
+            }
+            draw_now(&views, cx);
+            for &view in &views {
+                native::show(view, false);
+            }
+        }
+        None => views.iter().for_each(|&view| native::hide(view)),
+    }
+    cx.update(|cx| overlay.update(cx, |o, _| o.outline_at = wanted))
+}
+
+/// Opens the outline's four strips, hidden (`native::make_outline`).
+fn open_outline(overlay: &Entity<Overlay>, cx: &mut App) {
+    let frame = PtRect::new(0.0, 0.0, OUTLINE, OUTLINE);
+    for _ in 0..4 {
+        let o = overlay.clone();
+        let opened = cx.open_window(outline_options(frame), move |w, cx| {
+            let view = native::make_outline(w, frame);
+            o.update(cx, |o, _| o.outline.push(view));
+            cx.new(|_| OutlineStrip)
+        });
+        if let Err(err) = opened {
+            eprintln!("asides-overlay: no outline window: {err:#}");
+        }
+    }
+}
+
+fn outline_options(frame: PtRect) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+            point(px(0.), px(0.)),
+            size(px(frame.width as f32), px(frame.height as f32)),
+        ))),
+        titlebar: None,
+        focus: false,
+        show: false,
+        kind: WindowKind::PopUp,
+        is_movable: false,
+        is_resizable: false,
+        is_minimizable: false,
+        window_background: WindowBackgroundAppearance::Transparent,
+        ..Default::default()
     }
 }
 

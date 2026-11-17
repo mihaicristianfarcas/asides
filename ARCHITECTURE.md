@@ -169,7 +169,7 @@ crates/
     clipboard.rs      pasting screenshots, restoring the pasteboard; an aside copied (text, HTML,
                       RTFD, and each screenshot as an item of its own)
     capture.rs        ScreenCaptureKit screenshots in sRGB; one window alone (looks); an app's
-                      frames as they change (clips); Screen Recording
+                      frames, or a part of a screen's, as they change (clips); Screen Recording
     clip.rs           a clip being recorded: frames into motion.rs's recorder, put together off
                       the main thread
     overlay.rs        driving asides-overlay; the standby process
@@ -248,6 +248,9 @@ the pill names the session typed into last from its first frame.
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
    Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each
    frame the app in front shows as it changes (`capture::watch`); `motion::Recorder` keeps a few.
+   A pin's card's camera records only the pin's part of the screen (`ClipArea::of`; on a Mac
+   `Watched::Area`, at the screen's pixels, elsewhere `capture::watch_area`), outlined just outside
+   while it records (`windows::sync_outline`); its pictures go right after the pin.
    Freezing, sending or closing ends it, and its pictures (`motion::pictures`) join the aside.
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).

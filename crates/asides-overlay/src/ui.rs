@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use asides_core::agents::AgentKind;
 use asides_core::config::OverlayKeys;
-use asides_core::helper::{Command, Event, Item, Spec, SpecScreen, Target};
+use asides_core::helper::{ClipArea, Command, Event, Item, Spec, SpecScreen, Target};
 use asides_core::inspect::{Annotation, Axis, Element, Intent, Measurement, PtRect, Said, Severity, Shape, num};
 use asides_core::keys::{self, Chord, Mods};
 use asides_core::measure::{Frame, Tolerance};
@@ -52,6 +52,8 @@ const TARGET_REPEAT: Duration = Duration::from_millis(240);
 const CARD_WIDTH: f64 = 440.0;
 /// The card's trash button and the gap before it.
 const TRASH_WIDTH: f64 = 34.0;
+/// How much wider a card is with its camera (a clip of its pin's area).
+const CAMERA_WIDTH: f64 = 29.0;
 /// The card opens above its annotation when there's less than this below it.
 const CARD_ROOM: f64 = 240.0;
 const MENU_WIDTH: f64 = 260.0;
@@ -174,6 +176,7 @@ enum MenuItem {
     Cmd(Cmd),
     Tool(Tool),
     RemoveAnnotation(usize),
+    ClipOf(usize),
     RemoveHeld(usize),
     AnnotateHeld(usize),
     AnnotateHere,
@@ -342,9 +345,14 @@ pub struct Overlay {
     /// The app was asked to freeze the screens, and the tool to pick then.
     freezing: Option<Option<Tool>>,
     /// A clip is being recorded (seconds so far, and when the app said so), and one asked for while
-    /// frozen: it starts once the live screen shows.
+    /// frozen: it starts once the live screen shows. Of a pin's area (its card's camera), which.
     clip: Option<(f32, Instant)>,
     clip_wanted: bool,
+    clip_area: Option<ClipArea>,
+    /// The outline's strips around a pin's area while a clip of it records (their views), and the
+    /// area they're around now (`windows::sync_outline`).
+    pub outline: Vec<usize>,
+    pub outline_at: Option<PtRect>,
     /// The pill's window, frozen and live, and the screen it's on.
     pub toolbar_window: Option<ScreenWindow>,
     pub toolbar_screen: usize,
@@ -489,6 +497,9 @@ impl Overlay {
             freezing: None,
             clip: None,
             clip_wanted: false,
+            clip_area: None,
+            outline: Vec::new(),
+            outline_at: None,
             toolbar_window: None,
             toolbar_screen: 0,
             shown: None,
@@ -547,6 +558,9 @@ impl Overlay {
         self.freezing = Some(tool.or(self.freezing.flatten()));
         // The app ends a clip as the screens freeze.
         self.clip_wanted = false;
+        if self.clip.is_none() {
+            self.clip_area = None;
+        }
     }
 
     /// The pill's record button, or its key: a clip of what the app in front shows from now on
@@ -557,10 +571,11 @@ impl Overlay {
         }
         if self.clip.is_some() || self.clip_wanted {
             self.clip_wanted = false;
-            return io::emit(&Event::Clip { on: false });
+            return io::emit(&Event::Clip { on: false, area: None });
         }
+        self.clip_area = None;
         if self.live && self.shown == Some(true) {
-            return io::emit(&Event::Clip { on: true });
+            return io::emit(&Event::Clip { on: true, area: None });
         }
         // Once the frozen screens are gone and the user's app is in front again (`live_shown`):
         // their leaving isn't what happened.
@@ -568,11 +583,46 @@ impl Overlay {
         self.go_live(cx);
     }
 
+    /// A pin's card's camera (or `⌘K` in it): the screen goes live, and a clip records only what
+    /// shows in the pin's part of it (`clip_area_of`).
+    fn clip_of(&mut self, screen: usize, index: usize, cx: &mut Context<Self>) {
+        if !self.spec.clips || self.done || self.recording_clip() {
+            return;
+        }
+        let Some(area) = self.clip_area_of(screen, index) else { return };
+        self.clip_area = Some(area);
+        self.clip_wanted = true;
+        self.go_live(cx);
+    }
+
+    /// A pin's part of the screen, for a clip of it (`ClipArea::of`).
+    fn clip_area_of(&self, screen: usize, index: usize) -> Option<ClipArea> {
+        ClipArea::of(self.session.screens.get(screen)?.annotations.get(index)?, self.spec.screens.get(screen)?)
+    }
+
     /// The live screen shows, the frozen ones gone: a clip asked for while frozen starts.
     pub fn live_shown(&mut self) {
         if std::mem::take(&mut self.clip_wanted) {
-            io::emit(&Event::Clip { on: true });
+            io::emit(&Event::Clip { on: true, area: self.clip_area });
         }
+    }
+
+    /// Where the outline goes: around the pin's area while a clip of it records, live (AppKit's
+    /// coordinates).
+    pub fn outline_wanted(&self) -> Option<PtRect> {
+        if !self.live || self.clip.is_none() || self.spec.windowed.is_some() {
+            return None;
+        }
+        let area = self.clip_area?;
+        let s = self.spec.screens.iter().find(|s| s.display == area.display)?;
+        let (x, top) = (s.frame.x + area.rect.x - s.origin.0, area.rect.y - s.origin.1);
+        Some(PtRect::new(x, s.frame.y + s.frame.height - top - area.rect.height, area.rect.width, area.rect.height))
+    }
+
+    /// The number of the pin whose area the clip being recorded is of, if it's of one.
+    fn clip_pin(&self) -> Option<u32> {
+        let key = self.clip_area?.annotation;
+        self.session.screens.iter().flat_map(|s| &s.annotations).find(|a| a.key == key).map(|a| a.number)
     }
 
     /// A clip is being recorded, or about to be.
@@ -1185,6 +1235,10 @@ impl Overlay {
         if let Some(index) = marker {
             let number = self.session.screens[screen].annotations[index].number;
             items.push((format!("Edit Annotation {number}"), String::new(), MenuItem::EditAnnotation(index)));
+            if self.spec.clips && self.clip_area_of(screen, index).is_some() {
+                let key = format!("{}K", keys::COMMAND);
+                items.push((format!("Record Annotation {number}'s Area"), key, MenuItem::ClipOf(index)));
+            }
             items.push((format!("Remove Annotation {number}"), String::new(), MenuItem::RemoveAnnotation(index)));
         }
         // On a measured section, annotating means that section; elsewhere, what's under the pointer.
@@ -1218,6 +1272,7 @@ impl Overlay {
             MenuItem::Cmd(cmd) => self.command(cmd, window, cx),
             MenuItem::Tool(tool) => self.session.set_tool(tool),
             MenuItem::RemoveAnnotation(index) => self.session.remove_annotation(screen, index),
+            MenuItem::ClipOf(index) => self.clip_of(screen, index, cx),
             MenuItem::RemoveHeld(index) => self.session.remove_held(screen, index),
             MenuItem::EditAnnotation(index) => self.open_card(screen, index, window, cx),
             MenuItem::ShotOfHeld(index) => self.shot_of_held(screen, index),
@@ -1349,6 +1404,12 @@ impl Overlay {
                 ("enter", _) if !m.shift => self.close_card(window, cx),
                 // Tab and ⇧Tab: the next pin's card on this screen, or the one before.
                 ("tab", _) if plain => self.next_card(m.shift, window, cx),
+                // ⌘K: a clip of its pin's area (the card's camera).
+                ("k", _) if mods.cmd && !m.shift && !m.alt => {
+                    if let Some(card) = &self.card {
+                        self.clip_of(card.screen, card.index, cx);
+                    }
+                }
                 (_, Some(intent)) => self.choose_intent(intent),
                 _ => return,
             }
@@ -1897,6 +1958,9 @@ impl Overlay {
                 self.clip = seconds.map(|s| (s, Instant::now()));
                 if was && !now && !self.done && self.live {
                     self.toast("The clip is in the aside");
+                }
+                if !now && !self.clip_wanted {
+                    self.clip_area = None;
                 }
             }
             Command::ToggleFreeze if self.live => self.freeze(None),
@@ -3562,7 +3626,10 @@ fn clip_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let recording = o.recording_clip();
     let (press, tip) = (overlay.clone(), overlay.clone());
     let name: SharedString = match (recording, o.live) {
-        (true, _) => "Recording a clip (click to stop)".into(),
+        (true, _) => match o.clip_pin() {
+            Some(number) => format!("Recording pin {number}'s area (click to stop)").into(),
+            None => "Recording a clip (click to stop)".into(),
+        },
         (false, true) => "Record a clip of what happens next".into(),
         (false, false) => with_key("Record a clip of what happens next, live", o.keys.label(Cmd::Clip)).into(),
     };
@@ -3788,8 +3855,12 @@ impl ScreenView {
         // field keeps its width, so what's typed doesn't wrap again. Placed for the wider card, it
         // doesn't move sideways when it widens.
         let has_said = !a.said.is_empty() || transcribing || recording_here;
-        let width = CARD_WIDTH + if has_said { TRASH_WIDTH } else { 0.0 };
-        let x = (a.at.0 - ox + MARKER / 2.0 + 6.0).clamp(8.0, (ww - CARD_WIDTH - TRASH_WIDTH - 8.0).max(8.0));
+        // Its camera, where clips can be recorded and the pin is on more than a point.
+        let filmable = o.spec.clips && o.clip_area_of(card.screen, card.index).is_some();
+        let camera_width = if filmable { CAMERA_WIDTH } else { 0.0 };
+        let width = CARD_WIDTH + camera_width + if has_said { TRASH_WIDTH } else { 0.0 };
+        let widest = CARD_WIDTH + camera_width + TRASH_WIDTH;
+        let x = (a.at.0 - ox + MARKER / 2.0 + 6.0).clamp(8.0, (ww - widest - 8.0).max(8.0));
         let top = (o.spec.screens[card.screen].menu_bar - oy).max(0.0);
         let below = (a.at.1 - oy + MARKER / 2.0 + 6.0).max(top + 8.0);
         // Near the bottom, above the annotation, growing upward: what was said goes above the text
@@ -3909,6 +3980,37 @@ impl ScreenView {
                 })
                 .child(icon(tool_icon(tool), t.primary))
         });
+        // A clip of what's in its pin's area, live: in the card, K types.
+        let camera = filmable.then(|| {
+            let (press, tip) = (self.overlay.clone(), self.overlay.clone());
+            let (screen, index) = (card.screen, card.index);
+            let name: SharedString = format!("Record this area, live ({}K)", keys::COMMAND).into();
+            div()
+                .id("card-clip")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(28.))
+                .rounded(px(7.))
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .on_hover(move |hovered, _, cx| {
+                    let name = name.clone();
+                    tip.update(cx, |o, cx| {
+                        o.card_tip = hovered.then_some(name);
+                        cx.notify();
+                    });
+                })
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    cx.stop_propagation();
+                    press.update(cx, |o, cx| {
+                        o.card_tip = None;
+                        o.clip_of(screen, index, cx);
+                        cx.notify();
+                    });
+                })
+                .child(icon("clip", t.primary))
+        });
         let surface = frozen_glass(&self.overlay, t, card.screen, (ox, oy), 12.)
             .id("card")
             .occlude()
@@ -3931,7 +4033,7 @@ impl ScreenView {
                     .gap(px(6.))
                     .child(div().flex_1().child(card.input.clone()))
                     .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(dots))
-                    .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(tools))
+                    .child(div().flex().items_center().h(px(30.)).gap(px(1.)).children(tools).children(camera))
                     .child(talk_button(&self.overlay, o, "card-talk", false))
                     .children(trash),
             )
