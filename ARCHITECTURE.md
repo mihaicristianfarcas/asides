@@ -113,7 +113,7 @@ crates/
     overlay.rs        the session state machine (tools, holds, guides, pins, shots, restore,
                       follow-ups), scripts
     look.rs           what an agent may look at again (`asides look`): a pin's window, for a while
-    motion.rs         clips: the frames a recording keeps as the screen changes, and their strip
+    motion.rs         clips: the frames a recording keeps as the screen changes, and their pictures
     picture.rs        frames cropped, scaled and encoded as PNGs (looks, clips)
     takes.rs          a session's recordings, joined into one, with their moments
     helper.rs         app ↔ overlay protocol: Spec, Event, Command, Outcome
@@ -248,7 +248,7 @@ the pill names the session typed into last from its first frame.
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
    Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each
    frame the app in front shows as it changes (`capture::watch`); `motion::Recorder` keeps a few.
-   Freezing, sending or closing ends it, and its strip joins the aside as an image.
+   Freezing, sending or closing ends it, and its pictures (`motion::pictures`) join the aside.
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).
 5. **Send** (`finish`): the overlay renders each freeze's screenshot, around what's on it

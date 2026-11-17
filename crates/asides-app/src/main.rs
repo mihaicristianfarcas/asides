@@ -1906,15 +1906,20 @@ impl App {
             return;
         }
         let Some(mut f) = self.finishing.take() else { return };
-        // Each clip where it was recorded, its strip an image of the aside, said what it shows.
+        // Each clip where it was recorded, its pictures images of the aside, then said what they show.
         for (_, made) in self.clips.extract_if(.., |c| c.0 == f.clips) {
-            f.outcome.items.push(asides_core::helper::Item {
-                time: overlay::seconds_between(f.origin, made.started),
-                image: Some("clip".into()),
-                text: Some(made.caption),
-                ..Default::default()
-            });
-            f.images.push(Some(made.png));
+            let time = overlay::seconds_between(f.origin, made.started);
+            let place = made.app.as_deref().map_or_else(|| "on the screen".to_string(), |app| format!("in {app}"));
+            let (count, mut caption) = (made.pngs.len(), Some(made.summary.caption(&place)));
+            for (i, png) in made.pngs.into_iter().enumerate() {
+                f.outcome.items.push(asides_core::helper::Item {
+                    time,
+                    image: Some("clip".into()),
+                    text: if i + 1 == count { caption.take() } else { None },
+                    ..Default::default()
+                });
+                f.images.push(Some(png));
+            }
         }
         let detail = self.config.annotation_detail;
         for item in &mut f.outcome.items {

@@ -622,8 +622,8 @@ mod tests {
     }
 
     /// Records a clip of app `$ASIDES_CLIP_APP` (its process id) on the main display, as the pill's
-    /// button does, for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip.png` and what's
-    /// said after it, `clip.txt`. `--ignored`; needs the Screen Recording permission.
+    /// button does, for `$ASIDES_CLIP_SECONDS` (3), into `$ASIDES_CAPTURE_DUMP/clip-1.png` (and on)
+    /// and what's said after them, `clip.txt`. `--ignored`; needs the Screen Recording permission.
     #[test]
     #[ignore]
     fn records_a_clip() {
@@ -638,7 +638,9 @@ mod tests {
         });
         std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
         let made = recording.finish().expect("no frame came");
-        std::fs::write(dir.join("clip.png"), &made.png).unwrap();
-        std::fs::write(dir.join("clip.txt"), &made.caption).unwrap();
+        for (i, png) in made.pngs.iter().enumerate() {
+            std::fs::write(dir.join(format!("clip-{}.png", i + 1)), png).unwrap();
+        }
+        std::fs::write(dir.join("clip.txt"), made.summary.caption("in the test's app")).unwrap();
     }
 }

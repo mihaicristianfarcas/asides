@@ -2,7 +2,7 @@
 //! from the pill's record button until it's pressed again, the screen freezes, or the aside is sent
 //! or closed. The frames come from `capture::watch`, on a thread of its own, straight into the
 //! recorder (which keeps few); the main thread only starts and stops it. Stopped, it's put together
-//! off the main thread (`Recording::finish`): a strip's PNG takes a moment.
+//! off the main thread (`Recording::finish`): its pictures' PNGs take a moment.
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -70,11 +70,13 @@ pub struct Recording {
     pub asked: Instant,
 }
 
-/// A clip, put together: when it started, its strip (a PNG) and what's said after it in the aside.
+/// A clip, put together: when it started, its pictures (PNGs), what's said after them, and the app
+/// it's of (said in that).
 pub struct Made {
     pub started: Instant,
-    pub png: Vec<u8>,
-    pub caption: String,
+    pub pngs: Vec<Vec<u8>>,
+    pub summary: motion::Summary,
+    pub app: Option<String>,
 }
 
 impl Recording {
@@ -100,11 +102,7 @@ impl Recording {
         let tape = tape.lock().unwrap().take()?;
         let (first, recorder) = tape.recorder?;
         let clip = recorder.finish(first.elapsed().as_secs_f32())?;
-        let strip = motion::strip(&clip)?;
-        Some(Made {
-            started: tape.started,
-            png: picture::png(&strip),
-            caption: motion::caption(&clip, tape.app.as_deref()),
-        })
+        let pngs: Vec<Vec<u8>> = motion::pictures(&clip).iter().map(picture::png).collect();
+        (!pngs.is_empty()).then(|| Made { started: tape.started, pngs, summary: clip.summary(), app: tape.app })
     }
 }
