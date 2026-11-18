@@ -192,9 +192,10 @@ impl Host {
     /// where none of them is.
     pub fn tool(&self, pid: i32, env: &HashMap<String, String>, procs: &[Proc]) -> Option<PathBuf> {
         let get = |name: &str| env.get(name).filter(|v| !v.is_empty());
+        // With its folder (`has_root`: WSL's paths have no drive, which Windows' `is_absolute` asks for).
         let absolute = |p: &Proc| {
             let named = Path::new(&p.executable).to_path_buf();
-            if named.is_absolute() { Some(named) } else { executable_path(p.pid) }
+            if named.has_root() { Some(named) } else { executable_path(p.pid) }
         };
         let program = |pid: Option<&str>| {
             let pid: i32 = pid?.parse().ok()?;
