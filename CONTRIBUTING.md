@@ -121,7 +121,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol
 |---|---|---|
 | Unit | `make test` | history, sessions, delivery plans, messages, links, config, measuring, the overlay session, its rendering, the MCP server, updates (the feed, `Flow`, the swap script) |
 | Speech | `make test-speech` | transcribing the fixtures, a real model download |
-| End-to-end | `make e2e` | a dev-hooks build driven through the CLI with a history of its own: recordings, scripted sessions, Wispr Flow, sending to a stand-in agent (Diri, else Terminal), copying, `asides mcp`. Restores your config and clipboard. |
+| End-to-end | `make e2e` | a dev-hooks build driven through the CLI with a history of its own: recordings, scripted sessions, Wispr Flow, sending to a stand-in agent (Diri, else Terminal, then tmux, screen, Zellij and Neovim where installed, without windows; `ZELLIJ=<path>` for one elsewhere; `E2E_APPS=<folder>` adds WezTerm and kitty from it, on screen), copying, `asides mcp`. Restores your config and clipboard. |
 | Overlay | replays (below) | the real windows, driven by AppKit events, captured to PNGs |
 | Manual | checklist (below) | what a script can't do |
 

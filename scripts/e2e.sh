@@ -3,8 +3,10 @@
 # WAV fixtures stand in for the microphone (`asides simulate`), a scripted session on a drawn
 # screenshot for the screen (`asides simulate-measure`, played by the overlay's process without
 # windows), a database of our own for Wispr Flow's history, and a stand-in agent (e2e-agent.c, run
-# as `claude` in Terminal) for an agent session asides types into. The history goes to a folder of
-# the test's own (`ASIDES_HOME`), and nothing is sent to the user's own sessions.
+# as `claude` in Diri or Terminal, then in tmux, screen, Zellij and Neovim where they're installed;
+# ZELLIJ names a zellij elsewhere; E2E_APPS a folder with WezTerm.app or kitty.app, on screen) for an
+# agent session asides types into. The history goes to a folder of the test's own (`ASIDES_HOME`),
+# and nothing is sent to the user's own sessions.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,11 +25,27 @@ cp "$CONFIG" "$WORK/config.toml.saved" 2>/dev/null || true
 cp "$STATE" "$WORK/state.json.saved" 2>/dev/null || true
 AGENT_TTY=""
 DIRI_SESSION=""
+# What the terminal apps tried write in the home, which wasn't there before.
+NEW_IN_HOME=()
 cleanup() {
     [ -f "${AGENT_LOG:-}" ] && { echo "--- agent log"; cat "$AGENT_LOG"; }
     "$CLI" quit >/dev/null 2>&1 || true
     launchctl unsetenv ASIDES_HOME 2>/dev/null || true
     pkill -f "$WORK/bin/claude" 2>/dev/null || true
+    # What ran the stand-in agent without a window, if a check stopped the run first.
+    command -v tmux >/dev/null && tmux -S "$WORK/tmux" kill-server >/dev/null 2>&1 || true
+    /usr/bin/screen -S "asides-e2e-$$" -X quit >/dev/null 2>&1 || true
+    [ -n "${ZELLIJ_BIN:-}" ] && ZELLIJ_CONFIG_DIR="$WORK/zellij" "$ZELLIJ_BIN" kill-session "asides-e2e-$$" >/dev/null 2>&1 || true
+    if [ -n "${ZELLIJ_CACHE:-}" ]; then
+        for _ in $(seq 1 50); do pgrep -qf "$ZELLIJ_BIN --server" || break; sleep 0.1; done
+        rm -rf "$ZELLIJ_CACHE"
+    fi
+    if [ -n "${E2E_APPS:-}" ]; then
+        pkill -f "$E2E_APPS/WezTerm.app/Contents/MacOS/wezterm-gui" 2>/dev/null || true
+        pkill -f "$E2E_APPS/kitty.app/Contents/MacOS/kitty" 2>/dev/null || true
+        for made in ${NEW_IN_HOME[@]+"${NEW_IN_HOME[@]}"}; do rm -rf "$made"; done
+    fi
+    [ -S "$WORK/nvim" ] && nvim --server "$WORK/nvim" --remote-expr 'execute("qa!")' >/dev/null 2>&1 || true
     # A run that stops early leaves its Diri session behind, exited, unless it's removed here.
     if [ -n "$DIRI_SESSION" ]; then "$DIRIJOR" session release "$DIRI_SESSION" --remove >/dev/null 2>&1 || true; fi
     if [ -n "$AGENT_TTY" ] && [ "$AGENT_TTY" != diri ]; then
@@ -323,6 +341,95 @@ print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo), ""
         DIRI_SESSION=""
         AGENT_TTY=""
     fi
+fi
+
+echo "Sending through what takes text itself (tmux, screen, Zellij, Neovim)"
+# The stand-in agent in a pane of each that's installed, run without a window: asides finds which
+# runs it, and types in with that one's own command, which needs no permission.
+in_session() { # host, then the command that starts the stand-in agent there
+    local host=$1; shift
+    : > "$AGENT_LOG"
+    "$@" >/dev/null
+    local session=""
+    # The one there (the stand-in in Diri may not have ended yet).
+    for _ in $(seq 1 40); do
+        session=$("$CLI" sessions --json | /usr/bin/python3 -I -c 'import json, sys
+repo, app = sys.argv[1:]
+print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo and s["host"]["app"] == app), ""))' \
+            "$(cd "$REPO" && pwd -P)" "$(tr '[:upper:]' '[:lower:]' <<<"$host")")
+        [ -n "$session" ] && break
+        sleep 0.5
+    done
+    check "$host: asides finds the session there" grep -q " $session .*Claude Code (shop.* in $host" <<<"$("$CLI" sessions)"
+    "$CLI" send "$(aside_id padding)" --to "$session" > "$WORK/sent.txt" 2>&1 || cat "$WORK/sent.txt"
+    # What it read, in one line (a paste may come in several reads).
+    local typed; typed=$(tr -d '\n' < "$AGENT_LOG")
+    check "$host: the screenshot's path, pasted on its own" \
+        grep -q "<ESC>\[200~$ASIDES_HOME/history/[^<]*/images/1.png<ESC>\[201~" <<<"$typed"
+    check "$host: the text, as a bracketed paste" grep -q "<ESC>\[200~[^<]*padding on the summary card" <<<"$typed"
+    check "$host: then Return, which sends it" grep -q "<ESC>\[201~<CR>$" <<<"$typed"
+}
+STANDIN=(/usr/bin/env ASIDES_E2E_LOG="$AGENT_LOG" "$WORK/bin/claude")
+TMUX_BIN=$(command -v tmux || true)
+if [ -n "$TMUX_BIN" ]; then
+    in_session tmux "$TMUX_BIN" -S "$WORK/tmux" new-session -d -s e2e -c "$REPO" "${STANDIN[@]}"
+    "$TMUX_BIN" -S "$WORK/tmux" kill-server 2>/dev/null || true
+fi
+if [ -x /usr/bin/screen ]; then
+    (cd "$REPO" && /usr/bin/screen -dmS asides-e2e-$$ "${STANDIN[@]}")
+    in_session screen true
+    /usr/bin/screen -S asides-e2e-$$ -X quit 2>/dev/null || true
+fi
+ZELLIJ_BIN=${ZELLIJ:-$(command -v zellij || true)}
+if [ -n "$ZELLIJ_BIN" ]; then
+    # Its settings in a folder of its own. It keeps which socket is which session in a cache in the
+    # home, where asides' client looks: taken back after if it wasn't there.
+    ZELLIJ_CACHE="$HOME/Library/Caches/org.Zellij-Contributors.Zellij"
+    [ -e "$ZELLIJ_CACHE" ] && ZELLIJ_CACHE=""
+    zellij() { ZELLIJ_CONFIG_DIR="$WORK/zellij" "$ZELLIJ_BIN" "$@"; }
+    mkdir -p "$WORK/zellij"
+    zellij attach --create-background asides-e2e-$$ options --show-startup-tips false --show-release-notes false \
+        >/dev/null 2>&1
+    # A pane run before the session has its first is dropped, and nothing says when it has one.
+    for _ in $(seq 1 25); do
+        grep -q terminal_ <<<"$(zellij --session asides-e2e-$$ action list-panes 2>/dev/null)" && break
+        sleep 0.2
+    done
+    in_session Zellij zellij --session asides-e2e-$$ run --cwd "$REPO" -- "${STANDIN[@]}"
+    zellij kill-session asides-e2e-$$ >/dev/null 2>&1 || true
+    # Its server writes the cache as it ends.
+    for _ in $(seq 1 50); do pgrep -qf "$ZELLIJ_BIN --server" || break; sleep 0.1; done
+    zellij delete-session asides-e2e-$$ >/dev/null 2>&1 || true
+    if [ -n "$ZELLIJ_CACHE" ]; then rm -rf "$ZELLIJ_CACHE"; fi
+fi
+NVIM_BIN=$(command -v nvim || true)
+if [ -n "$NVIM_BIN" ]; then
+    (cd "$REPO" && ASIDES_E2E_LOG="$AGENT_LOG" "$NVIM_BIN" --clean --headless --listen "$WORK/nvim" \
+        -c "terminal $WORK/bin/claude" </dev/null >/dev/null 2>&1 &)
+    in_session Neovim true
+    "$NVIM_BIN" --server "$WORK/nvim" --remote-expr 'execute("qa!")' >/dev/null 2>&1 || true
+fi
+
+# On screen, where E2E_APPS names a folder holding WezTerm.app or kitty.app: a small window of each
+# runs the stand-in (kitty with its remote control on, from its command line), quit after. Neither
+# needs a permission. What they write in the home is taken back if it wasn't there.
+E2E_APPS=${E2E_APPS:-}
+if [ -n "$E2E_APPS" ]; then
+    echo "Sending in other terminal apps, on screen ($E2E_APPS)"
+    for made in "$HOME/.local/share/wezterm" "$HOME/.config/kitty" "$HOME/Library/Caches/kitty"; do
+        [ -e "$made" ] || NEW_IN_HOME+=("$made")
+    done
+fi
+if [ -d "$E2E_APPS/WezTerm.app" ]; then
+    in_session WezTerm open -na "$E2E_APPS/WezTerm.app" --args --config initial_cols=60 --config initial_rows=8 \
+        start --cwd "$REPO" -- "${STANDIN[@]}"
+    pkill -f "$E2E_APPS/WezTerm.app/Contents/MacOS/wezterm-gui" || true
+fi
+if [ -d "$E2E_APPS/kitty.app" ]; then
+    in_session kitty open -na "$E2E_APPS/kitty.app" --args -o allow_remote_control=yes --listen-on "unix:$WORK/kitty" \
+        -o remember_window_size=no -o initial_window_width=480 -o initial_window_height=140 --directory "$REPO" \
+        "${STANDIN[@]}"
+    pkill -f "$E2E_APPS/kitty.app/Contents/MacOS/kitty" || true
 fi
 
 echo "Copying an aside"
