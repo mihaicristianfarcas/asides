@@ -86,7 +86,8 @@ changes.
   large-v3-turbo`). It keeps its asides in a temporary history, sends only to a stand-in agent of
   its own (in Diri, or Terminal without Diri; then in tmux, screen, Zellij and Neovim where
   installed, without windows; with `E2E_APPS`, in WezTerm and kitty on screen), and puts back the
-  user's settings and clipboard.
+  user's settings and clipboard. `E2E_AGENTS=1` adds real Claude Code and Codex, with settings of
+  their own in the test's folder and no network, checked by what their transcripts recorded.
 - **Keep binary names unique ignoring case** (case-insensitive APFS): the CLI is `asides`, the
   app's `asides-app`. `pkill -x asides` would also stop the agents' `asides mcp` servers.
 - **Don't add permissions** without the maintainer's agreement. Freezing the screen uses Screen
@@ -428,6 +429,18 @@ use `asides mcp`'s `get_aside`.
   an account: they get the common plan (a bracketed paste, then Return). The deprecated `kimi-cli`
   package ran its successor's installer (`curl … | bash`) as it started: start agents only with a
   scratch `HOME`, and kill what they leave behind (Codex's and Cline's daemons, screen's `login`).
+- Real Claude Code and Codex can be typed into without an account or the network: settings of their
+  own (`CLAUDE_CONFIG_DIR` and `CODEX_HOME`, which leave the user's untouched), the API at a closed
+  port, and `sandbox-exec` denying connections (`unshare -rn` in WSL). Codex's daemon isn't allowed
+  there: `--no-daemon`. Their transcripts say what arrived (`E2E_AGENTS`).
+- npm's Claude Code runs `bin/claude.exe` on Linux and macOS too: names are matched without `.exe`
+  (WSL's listing missed it). Detached, macOS's screen 4.0 shows nothing (`hardcopy` is empty) and
+  Claude Code took no input: run screen in a pane of tmux.
+- `open -a NAME` looks only in the Applications folders; `open -b ID` finds any copy Launch Services
+  knows. An app's Apple Events to itself need no Automation: `osascript` from a shell in iTerm drives
+  iTerm (how asides' iTerm plan was checked). `CFFIXED_USER_HOME` moves iTerm's files but not its
+  preferences; a path with an `Applications` folder in it skips its "Move to Applications?", and its
+  "session ended very soon" sheet holds its AppleScript.
 - Wispr Flow's `flow.sqlite` schema changes between versions: discover columns, open it read-only
   (it writes in WAL mode).
 
