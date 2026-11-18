@@ -756,13 +756,27 @@ pub fn launch_words(
     let mut words = agent.command(message, extra).ok_or_else(|| {
         format!("{} can't start with an aside: start it yourself, then send the aside to it.", agent.name())
     })?;
-    if agent == AgentKind::Claude {
-        // Its screenshots are outside the repo: readable without asking.
-        for dir in readable {
-            words.splice(1..1, ["--add-dir".to_string(), dir.to_string_lossy().into_owned()]);
-        }
+    if agent == AgentKind::Claude && !readable.is_empty() {
+        // Its screenshots are outside the repo: readable without asking. A rule, not `--add-dir`,
+        // whose folders it asks to trust as it starts (2.1.3xx), "No, exit" chosen.
+        let mut allow = vec!["--allowedTools".to_string()];
+        allow.extend(readable.iter().map(|dir| read_rule(dir)));
+        words.splice(1..1, allow);
     }
     Ok(words)
+}
+
+/// Claude Code's permission rule to read what's in `dir`: an absolute path starts with `//`, and
+/// Windows' are written as Claude Code compares them (`C:\x` is `/c/x`).
+fn read_rule(dir: &Path) -> String {
+    let path = dir.to_string_lossy().replace('\\', "/");
+    let path = match path.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => {
+            format!("/{}{}", drive.to_ascii_lowercase() as char, &path[2..])
+        }
+        _ => path,
+    };
+    format!("Read(/{}/**)", path.trim_end_matches('/'))
 }
 
 /// The line typed into the user's shell (bash, zsh or fish alike) to run a launch script.
@@ -1201,7 +1215,12 @@ mod tests {
                 .unwrap();
         assert!(script.contains("cd '/r/my shop' || exit 1"), "{script}");
         assert!(script.contains("export ASIDES_LAUNCH='l1'"), "{script}");
-        assert!(script.ends_with("exec 'claude' '--add-dir' '/h' '--' 'It'\\''s broken'\n"), "{script}");
+        assert!(script.ends_with("exec 'claude' '--allowedTools' 'Read(//h/**)' '--' 'It'\\''s broken'\n"), "{script}");
+        assert_eq!(
+            read_rule(Path::new("C:\\Users\\me\\.asides\\history\\a")),
+            "Read(//c/Users/me/.asides/history/a/**)"
+        );
+        assert_eq!(read_rule(Path::new("/Users/me/h/")), "Read(//Users/me/h/**)");
         assert_eq!(launch_line(Path::new("/tmp/a b.sh")), "'/tmp/a b.sh'");
         let ghostty = open_terminal_script(&Host::Ghostty, Path::new("/r"), "'/t/x.sh'").unwrap();
         assert!(ghostty.contains("set initial input of c to \"'/t/x.sh'\" & linefeed"), "{ghostty}");

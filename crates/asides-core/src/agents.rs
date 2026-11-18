@@ -137,8 +137,8 @@ const FACTS: [Facts; 22] = [
         // Driven by another program (an editor's extension) through its standard input, too.
         not_flags: &["-p", "--print", "--input-format", "--output-format"],
         not_commands: &["agents", "mcp", "doctor", "logs", "stop", "rm", "update"],
-        // After `--`: an option taking several values before it (`--add-dir`) took the prompt for
-        // one more, and the session started empty.
+        // After `--`: an option taking several values before it (`--add-dir`, `--allowedTools`)
+        // took the prompt for one more, and the session started empty.
         first_message: Some(&["--"]),
     },
     Facts {
