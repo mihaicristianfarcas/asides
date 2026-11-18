@@ -34,7 +34,8 @@ for p in [0-9]*; do
   printf '\036%s\037%s' "$s" "$e"
   set -- ${{s##*) }}
   [ "$5" = 0 ] && continue
-  case "${{e##*/}}" in {}) ;; *) continue ;; esac
+  n=${{e##*/}}
+  case "${{n%.exe}}" in {}) ;; *) continue ;; esac
   t=$(readlink "$p/fd/0" 2>/dev/null)
   printf '\037%s\037%s\037%s\037' "$t" "$(readlink "$p/cwd" 2>/dev/null)" "$(stat -c %X "$t" 2>/dev/null)"
   cat "$p/cmdline" 2>/dev/null
@@ -336,5 +337,22 @@ mod tests {
         let script = script();
         assert!(script.contains("claude|") && script.contains("|cursor-agent|") && script.contains("|python*|"));
         assert!(!script.contains("{{"), "{script}");
+    }
+
+    /// npm's Claude Code runs `bin/claude.exe` on Linux too: its `exe` is that, wherever it's started.
+    #[cfg(unix)]
+    #[test]
+    fn takes_programs_named_with_exe() {
+        let script = script();
+        let test = script.lines().find(|l| l.trim_start().starts_with("case ")).unwrap().replace("continue", "echo no");
+        for (exe, taken) in [("/n/claude-code/bin/claude.exe", true), ("/usr/bin/codex", true), ("/usr/bin/vim", false)]
+        {
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("e={exe}; n=${{e##*/}}\n{test}"))
+                .output()
+                .unwrap();
+            assert_eq!(out.stdout.is_empty(), taken, "{exe}: {}", String::from_utf8_lossy(&out.stdout));
+        }
     }
 }
