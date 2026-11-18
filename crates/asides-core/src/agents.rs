@@ -610,6 +610,18 @@ impl AgentKind {
 
     /// Whether a process named `executable` may be an agent, before its arguments are read (they
     /// are then, to tell): a runtime running a script, or a program named as one.
+    /// The names of agents' own programs (not of the runtimes scripts run in).
+    pub fn executables() -> Vec<&'static str> {
+        FACTS
+            .iter()
+            .flat_map(|f| f.process)
+            .filter_map(|p| match *p {
+                Process::Executable(name) | Process::Alias { name, .. } => Some(name),
+                Process::Script(_) => None,
+            })
+            .collect()
+    }
+
     pub fn may_be(executable: &str) -> bool {
         FACTS.iter().any(|f| f.process.iter().any(|p| p.may_be(executable)))
     }

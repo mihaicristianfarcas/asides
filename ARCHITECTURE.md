@@ -44,9 +44,13 @@ in `asides-app`, `win/` in `asides-overlay`).
   links and ends.
 - **Sessions** come from a Toolhelp snapshot and each agent's process memory (its command line,
   folder and environment: `sessions_windows.rs`); the console's host app from `WT_SESSION` or
-  `TERM_PROGRAM`.
+  `TERM_PROGRAM`. With a `wsl.exe` running, a script lists each running WSL distribution's
+  processes (`sessions_wsl.rs`, about 0.1 s each; none is started to look), and each agent there
+  gets the console of its `wsl.exe`: by Windows Terminal's tab (`WT_SESSION` reaches WSL), else by
+  when each started. Its id is its distribution's and its pid (`Ubuntu:4242`).
 - **Typing in**: `asides type-into <pid>` attaches to the agent's console and writes its input
-  (`WriteConsoleInputW`): any terminal, nothing to allow. New sessions open in Windows Terminal
+  (`WriteConsoleInputW`): any terminal, nothing to allow; in WSL, the console of its `wsl.exe`, or
+  tmux's (Zellij's…) own command through `wsl.exe`. New sessions open in Windows Terminal
   (`wt.exe … asides launch <file>`), which starts the agent without a shell and ends.
 - **Freezing**: GDI captures each monitor; UI Automation names what's under a pin; the overlay's
   windows are topmost tool windows, the pill above the screens and left out of captures, and a

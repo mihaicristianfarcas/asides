@@ -9,14 +9,20 @@
 //! (VS Code's) say who they are (`TERM_PROGRAM`) and keep a console of their own (ConPTY) under the
 //! shell they start. asides types into any of them the same way (`deliver.rs`).
 //!
+//! Agents in WSL's distributions are listed by a script run in each that's running (`sessions_wsl.rs`),
+//! and typed into through their `wsl.exe`'s console.
+//!
 //! Windows keeps no time of a console's last input (the Mac's terminal device's access time): a
 //! session's last input is when its agent last wrote what was said (Claude Code's transcript), or
 //! when it started; the app puts the sessions in the window in front first as asides opens
 //! ([`in_front`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+use std::io::Write;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
@@ -32,7 +38,7 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::Shell::CommandLineToArgvW;
 use windows::core::{PCWSTR, PWSTR};
 
-use super::{AgentSession, Host, Proc};
+use super::{AgentSession, Host, Proc, wsl};
 use crate::agents::AgentKind;
 
 /// A process in the snapshot.
@@ -347,7 +353,112 @@ pub fn discover() -> Vec<AgentSession> {
     }
     STARTED.lock().unwrap().extend(started);
     read_input_times(&mut sessions);
+    sessions.extend(wsl_sessions(&entries));
     sessions
+}
+
+/// `CREATE_NO_WINDOW`: `wsl.exe` runs without a console of its own showing.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// The agent sessions in WSL's distributions that are running, when a WSL terminal may be open:
+/// none is started to look. Each running distribution takes about 0.1 s.
+fn wsl_sessions(entries: &[Entry]) -> Vec<AgentSession> {
+    let wsl_exe = |exe: &str| ["wsl.exe", "bash.exe"].iter().any(|w| exe.eq_ignore_ascii_case(w));
+    if !entries.iter().any(|e| wsl_exe(&e.exe) || e.exe.eq_ignore_ascii_case("wslhost.exe")) {
+        return Vec::new();
+    }
+    let running: Vec<String> = wsl_output(&["--list", "--running", "--quiet"], None)
+        .map(|out| wsl::parse_list(&out))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| !d.starts_with("docker-desktop"))
+        .collect();
+    if running.is_empty() {
+        return Vec::new();
+    }
+    let default = default_distro().unwrap_or_else(|| running[0].clone());
+    // A `wsl.exe` anywhere, and the program each tab of Windows Terminal runs (a distribution's own
+    // launcher, `ubuntu.exe`, is one).
+    let terminals: HashSet<i32> =
+        entries.iter().filter(|e| e.exe.eq_ignore_ascii_case("WindowsTerminal.exe")).map(|e| e.pid).collect();
+    let consoles: Vec<wsl::Console> = entries
+        .iter()
+        .filter(|e| {
+            wsl_exe(&e.exe)
+                || (terminals.contains(&e.ppid)
+                    && !console_host(&e.exe)
+                    && !may_be_shell(&e.exe)
+                    && !may_be_agent(&e.exe))
+        })
+        .filter_map(|e| {
+            let details = Process::open(e.pid)?.details()?;
+            Some(wsl::Console {
+                pid: e.pid,
+                started: details.started,
+                tab: details.env.get("WT_SESSION").filter(|t| !t.is_empty()).cloned(),
+                distro: wsl_exe(&e.exe).then(|| wsl::distro_of(&details.args, &default)),
+            })
+        })
+        .collect();
+    let mut taken = HashSet::new();
+    let script = wsl::script();
+    let mut found = Vec::new();
+    for distro in &running {
+        if let Some(out) = wsl_output(&["-d", distro, "--exec", "sh"], Some(&script)) {
+            found.extend(wsl::sessions(distro, &wsl::parse(&out), &consoles, &mut taken));
+        }
+    }
+    found
+}
+
+/// What `wsl.exe` with these arguments prints, given `input`.
+fn wsl_output(args: &[&str], input: Option<&str>) -> Option<Vec<u8>> {
+    let mut child = Command::new("wsl.exe")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let (Some(text), Some(mut stdin)) = (input, child.stdin.take()) {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    let out = child.wait_with_output().ok()?;
+    out.status.success().then_some(out.stdout)
+}
+
+/// WSL's default distribution, as the registry names it.
+fn default_distro() -> Option<String> {
+    let lxss = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+    let id = user_registry_string(lxss, "DefaultDistribution")?;
+    user_registry_string(&format!(r"{lxss}\{id}"), "DistributionName")
+}
+
+/// A string value of the user's registry.
+fn user_registry_string(key: &str, name: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+    use windows::core::HSTRING;
+    let (key, name) = (HSTRING::from(key), HSTRING::from(name));
+    let mut len = 0u32;
+    // SAFETY: the first call says how many bytes the value takes; the second writes at most that many.
+    unsafe {
+        RegGetValueW(HKEY_CURRENT_USER, &key, &name, RRF_RT_REG_SZ, None, None, Some(&mut len)).ok().ok()?;
+        let mut data = vec![0u16; (len as usize).div_ceil(2)];
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            &key,
+            &name,
+            RRF_RT_REG_SZ,
+            None,
+            Some(data.as_mut_ptr().cast()),
+            Some(&mut len),
+        )
+        .ok()
+        .ok()?;
+        let end = data.iter().position(|&c| c == 0).unwrap_or(data.len());
+        Some(String::from_utf16_lossy(&data[..end]))
+    }
 }
 
 /// Where the folder a process works in is kept among its variables while sessions are found.
@@ -362,7 +473,8 @@ static STARTED: std::sync::LazyLock<std::sync::Mutex<HashMap<i32, SystemTime>>> 
 pub fn read_input_times(sessions: &mut [AgentSession]) {
     let home = std::env::home_dir().unwrap_or_default();
     let started = STARTED.lock().unwrap();
-    for s in sessions {
+    // In WSL, its terminal's last input, as found.
+    for s in sessions.iter_mut().filter(|s| !matches!(s.host, Host::Wsl { .. })) {
         let written = match s.agent {
             AgentKind::Claude => claude_written(&home, s.pid),
             _ => None,
@@ -396,8 +508,12 @@ pub fn in_front(sessions: &mut [AgentSession], front: i32) {
             .take(16)
             .any(|e| e.pid == front || Some(e.pid) == front_shell)
     };
-    let latest =
-        sessions.iter().enumerate().filter(|(_, s)| shows(s.pid)).max_by_key(|(_, s)| s.last_input).map(|(i, _)| i);
+    let latest = sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.local_pid().is_some_and(shows))
+        .max_by_key(|(_, s)| s.last_input)
+        .map(|(i, _)| i);
     if let Some(i) = latest {
         sessions[i].last_input = Some(SystemTime::now());
     }

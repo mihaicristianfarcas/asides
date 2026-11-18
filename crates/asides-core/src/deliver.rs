@@ -45,6 +45,13 @@
 //!   Return; a screenshot's path is pasted on its own first, as in Terminal. Codex reads keys there
 //!   without bracketed paste (an Esc would interrupt it): its text is typed in one burst, which it
 //!   takes for a paste, new lines and all.
+//! - **WSL** (Windows): the console of the agent's `wsl.exe` is typed into the same way, and
+//!   `wsl.exe` hands Linux's terminal the keys' characters, escape sequences too, so it goes as on
+//!   Linux: a bracketed paste (Codex included: it's Linux's), then the key that sends it. A
+//!   screenshot's path is given as WSL sees it (`/mnt/c/…`). In tmux, Zellij, screen or Neovim
+//!   there, their own command runs through `wsl.exe -d <distribution> --exec`. Measured on
+//!   2026-11-18 on Windows 11 with WSL 2.7 (Ubuntu 26.04) with a stand-in agent: in a tab of
+//!   Windows Terminal, in a console window, and in tmux.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -153,6 +160,26 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
             Ok(typed(session.agent, &parts, submit, |text| Step::Pty { tty: tty.clone(), text }))
         }
         Host::Other { name } => Err(cant_type_into(name)),
+        Host::Wsl { distro, console, mount, inner } => {
+            let parts: Vec<Part> = parts
+                .iter()
+                .map(|part| match part {
+                    Part::Image(path) => Part::Image(wsl_path(mount, path)),
+                    Part::Text(text) => Part::Text(text.clone()),
+                })
+                .collect();
+            match (inner, console) {
+                (Some(inner), _) => {
+                    let inside = AgentSession { host: (**inner).clone(), ..session.clone() };
+                    Ok(plan(&inside, &parts, dirijor)?.into_iter().map(|step| in_wsl(distro, step)).collect())
+                }
+                (None, Some(pid)) => {
+                    let parts: Vec<&Part> = parts.iter().collect();
+                    Ok(typed(session.agent, &parts, submit, |text| Step::Console { pid: *pid, text }))
+                }
+                (None, None) => Err(cant_type_into("this terminal in WSL")),
+            }
+        }
     }
 }
 
@@ -439,6 +466,30 @@ fn terminal(agent: AgentKind, tty: &str, parts: &[&Part], submit: SubmitKey) -> 
     }
     steps.push(Step::Script(in_terminal_tab(tty, &what)));
     steps
+}
+
+/// A Windows path as WSL sees it, Windows' drives being in `mount`: `C:\Users\…` is `/mnt/c/Users/…`.
+fn wsl_path(mount: &str, path: &str) -> String {
+    match path.as_bytes() {
+        [drive, b':', b'\\' | b'/', ..] if drive.is_ascii_alphabetic() => {
+            format!("{mount}{}/{}", drive.to_ascii_lowercase() as char, path[3..].replace('\\', "/"))
+        }
+        _ => path.to_string(),
+    }
+}
+
+/// A step of a plan for Linux, taken from Windows in WSL's distribution `distro`: its programs run
+/// through `wsl.exe`, their input passed on.
+fn in_wsl(distro: &str, step: Step) -> Step {
+    match step {
+        Step::Run { program, args, stdin } => {
+            let mut words =
+                vec!["-d".into(), distro.into(), "--exec".into(), program.to_string_lossy().replace('\\', "/")];
+            words.extend(args);
+            Step::Run { program: "wsl.exe".into(), args: words, stdin }
+        }
+        other => other,
+    }
 }
 
 /// Bracketed-paste markers around `text`; its new lines as Return (what a terminal sends for them).
@@ -1033,6 +1084,43 @@ mod tests {
                 key(&["tab"]),
             ]
         );
+    }
+
+    #[test]
+    fn types_into_wsl_through_its_console_or_its_multiplexer() {
+        let wsl = |console, inner: Option<Host>| Host::Wsl {
+            distro: "Ubuntu".into(),
+            console,
+            mount: "/mnt/".into(),
+            inner: inner.map(Box::new),
+        };
+        let parts =
+            [Part::Image(r"C:\Users\me\.asides\history\a\images\1.png".into()), Part::Text("Low.\nFix it.".into())];
+        let path = "/mnt/c/Users/me/.asides/history/a/images/1.png";
+        // Its `wsl.exe`'s console, as Linux's terminals are typed into: Codex takes bracketed paste.
+        let keys = |text: &str| Step::Console { pid: 7, text: text.into() };
+        assert_eq!(
+            plan(&session(AgentKind::Codex, wsl(Some(7), None)), &parts, Path::new("")).unwrap(),
+            [
+                keys(&format!("\x1b[200~{path}\x1b[201~\x1b[200~Low.\rFix it.\x1b[201~")),
+                Step::Wait(BEFORE_SUBMIT),
+                keys("\t")
+            ]
+        );
+        // In tmux there, tmux's own command, through `wsl.exe`.
+        let tmux = Host::Tmux { socket: "/tmp/tmux-1000/default".into(), pane: "%3".into() };
+        let mut session = session(AgentKind::Claude, wsl(None, Some(tmux)));
+        session.tool = Some(PathBuf::from("/usr/bin/tmux"));
+        let steps = plan(&session, &parts, Path::new("")).unwrap();
+        let Step::Run { program, args, stdin } = &steps[0] else { panic!("{steps:?}") };
+        assert_eq!(program, Path::new("wsl.exe"));
+        assert_eq!(args[..6], ["-d", "Ubuntu", "--exec", "/usr/bin/tmux", "-S", "/tmp/tmux-1000/default"]);
+        assert_eq!(stdin.as_deref(), Some(path));
+        assert_eq!(steps[2], Step::Wait(ATTACH));
+        // A terminal there whose console isn't known.
+        session.host = wsl(None, None);
+        assert!(plan(&session, &parts, Path::new("")).is_err());
+        assert_eq!(wsl_path("/mnt/", r"\\server\share\1.png"), r"\\server\share\1.png");
     }
 
     #[test]

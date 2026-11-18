@@ -439,7 +439,13 @@ use `asides mcp`'s `get_aside`.
   PowerShell prints in the OEM code page: `×` showed as `x`. Check text by its code points.
   Windows PowerShell reads a `.ps1` without a BOM as ANSI: what a script types comes out garbled
   (`é` as `Ã©`); save it with one.
-- Extracting with `tar` keeps the archive's mtimes: cargo saw old files as built (`tar -m`).
+- Extracting with `tar` keeps the archive's mtimes: cargo saw old files as built (`tar -m`). macOS's
+  `tar` adds a `._` file beside each one with extended attributes (`COPYFILE_DISABLE=1`).
+- WSL: a distribution stops a few seconds after its last `wsl.exe` ends, and its `/tmp` is cleared:
+  keep test files under `/mnt/c/…`, or keep a terminal open. Windows Terminal starts `wsl.exe`,
+  which starts a second on the same console; both carry `WT_SESSION`, which `WSLENV` hands into
+  WSL. PowerShell's `|` and `>` re-encode bytes (UTF-16): give `wsl.exe` input with `cmd /c`'s `<`.
+  `wsl.exe --list` prints UTF-16.
 - Starting a program waits while Defender scans it, the first time after a build or an update:
   1.2 s for the overlay, 10 s for the x64 build under emulation, on the main thread until the
   standby overlay was started from a thread of its own (`App::stand_by`). Started again, 7 ms.
