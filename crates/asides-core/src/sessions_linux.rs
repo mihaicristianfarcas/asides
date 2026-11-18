@@ -63,26 +63,23 @@ fn parse_environ(bytes: &[u8]) -> HashMap<String, String> {
 
 /// Tells the terminal a session is in from what its programs were given.
 pub fn host_of(env: &HashMap<String, String>) -> Host {
-    host_with(env, helper_may_type())
+    host_with(env, None, helper_may_type())
 }
 
-/// [`host_of`], knowing whether terminals can be typed into through their ptys.
-pub fn host_with(env: &HashMap<String, String>, may_type: bool) -> Host {
+/// [`host_of`], knowing which multiplexer or editor runs the agent (`innermost`).
+pub fn host_inside(env: &HashMap<String, String>, innermost: Option<&str>) -> Host {
+    host_with(env, innermost, helper_may_type())
+}
+
+/// [`host_inside`], knowing whether terminals can be typed into through their ptys.
+pub fn host_with(env: &HashMap<String, String>, innermost: Option<&str>, may_type: bool) -> Host {
     let get = |name: &str| env.get(name).filter(|v| !v.is_empty());
     // A multiplexer first: its programs got the variables of the terminal that started it too.
-    if let (Some(tmux), Some(pane)) = (get("TMUX"), get("TMUX_PANE")) {
-        let socket = tmux.split(',').next().unwrap_or_default().to_string();
-        return Host::Tmux { socket, pane: pane.clone() };
+    if let Some(host) = Host::taking_text(env, innermost) {
+        return host;
     }
     if let (Some(service), Some(session)) = (get("KONSOLE_DBUS_SERVICE"), get("KONSOLE_DBUS_SESSION")) {
         return Host::Konsole { service: service.clone(), session: session.clone() };
-    }
-    if let Some(pane) = get("WEZTERM_PANE") {
-        return Host::WezTerm { pane: pane.clone(), socket: get("WEZTERM_UNIX_SOCKET").cloned() };
-    }
-    // Set only with kitty's remote control on (`listen_on`).
-    if let (Some(listen), Some(window)) = (get("KITTY_LISTEN_ON"), get("KITTY_WINDOW_ID")) {
-        return Host::Kitty { listen: listen.clone(), window: window.clone() };
     }
     Host::Pty { name: terminal_name(env), may_type }
 }
@@ -160,7 +157,10 @@ pub fn discover() -> Vec<AgentSession> {
         }
         procs.push(proc);
     }
-    let mut sessions = super::sessions_with(&procs, |env| host_with(env, may_type));
+    let mut sessions = super::sessions_with(&procs, |env, innermost| host_with(env, innermost, may_type));
+    for s in &mut sessions {
+        s.tool = procs.iter().find(|p| p.pid == s.pid).and_then(|p| s.host.tool(s.pid, &p.env, &procs));
+    }
     for s in &mut sessions {
         s.dir = std::fs::read_link(format!("/proc/{}/cwd", s.pid)).unwrap_or_default();
     }
@@ -249,14 +249,18 @@ mod tests {
         assert_eq!(
             host_with(
                 &env(&[("GNOME_TERMINAL_SCREEN", "/org/gnome/Terminal/screen/1"), ("VTE_VERSION", "7600")]),
+                None,
                 true
             ),
             pty("GNOME Terminal", true)
         );
-        assert_eq!(host_with(&env(&[("PTYXIS_VERSION", "47"), ("VTE_VERSION", "7800")]), false), pty("Ptyxis", false));
-        assert_eq!(host_with(&env(&[("TERM_PROGRAM", "vscode")]), true), pty("VS Code", true));
-        assert_eq!(host_with(&env(&[("TERM", "foot")]), true), pty("foot", true));
-        assert_eq!(host_with(&env(&[]), true), pty("a terminal", true));
+        assert_eq!(
+            host_with(&env(&[("PTYXIS_VERSION", "47"), ("VTE_VERSION", "7800")]), None, false),
+            pty("Ptyxis", false)
+        );
+        assert_eq!(host_with(&env(&[("TERM_PROGRAM", "vscode")]), None, true), pty("VS Code", true));
+        assert_eq!(host_with(&env(&[("TERM", "foot")]), None, true), pty("foot", true));
+        assert_eq!(host_with(&env(&[]), None, true), pty("a terminal", true));
         // In tmux, whatever terminal started it.
         assert_eq!(
             host_with(
@@ -266,19 +270,23 @@ mod tests {
                     ("GNOME_TERMINAL_SCREEN", "/x"),
                     ("TERM_PROGRAM", "tmux"),
                 ]),
+                None,
                 false
             ),
             Host::Tmux { socket: "/tmp/tmux-1000/default".into(), pane: "%3".into() }
         );
         assert_eq!(
-            host_with(&env(&[("KONSOLE_DBUS_SERVICE", ":1.42"), ("KONSOLE_DBUS_SESSION", "/Sessions/2")]), false),
+            host_with(&env(&[("KONSOLE_DBUS_SERVICE", ":1.42"), ("KONSOLE_DBUS_SESSION", "/Sessions/2")]), None, false),
             Host::Konsole { service: ":1.42".into(), session: "/Sessions/2".into() }
         );
-        assert_eq!(host_with(&env(&[("WEZTERM_PANE", "7")]), false), Host::WezTerm { pane: "7".into(), socket: None });
-        // kitty answers only with remote control on: its pty otherwise.
-        assert_eq!(host_with(&env(&[("KITTY_WINDOW_ID", "1")]), true), pty("kitty", true));
         assert_eq!(
-            host_with(&env(&[("KITTY_WINDOW_ID", "1"), ("KITTY_LISTEN_ON", "unix:/tmp/k")]), false),
+            host_with(&env(&[("WEZTERM_PANE", "7")]), None, false),
+            Host::WezTerm { pane: "7".into(), socket: None }
+        );
+        // kitty answers only with remote control on: its pty otherwise.
+        assert_eq!(host_with(&env(&[("KITTY_WINDOW_ID", "1")]), None, true), pty("kitty", true));
+        assert_eq!(
+            host_with(&env(&[("KITTY_WINDOW_ID", "1"), ("KITTY_LISTEN_ON", "unix:/tmp/k")]), None, false),
             Host::Kitty { listen: "unix:/tmp/k".into(), window: "1".into() }
         );
     }

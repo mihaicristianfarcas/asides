@@ -185,11 +185,13 @@ Run what your change touches, and say in the pull request what you tried.
   freezes (no pill in the screenshot); `⌃⌥Space` sends from live; closed, `⌃⌥P` opens live.
 - [ ] **Glass**: every surface shows what's behind it blurred, over light and dark; setup reads
   clearly over a page of text.
-- [ ] **Sending**, each of Claude Code, Codex, OpenCode in each of Terminal, Ghostty, Diri: the
-  Automation prompt the first time; the message with screenshots attached where taken (none with
+- [ ] **Sending**, each of Claude Code, Codex, OpenCode in each of Terminal, Ghostty, iTerm,
+  WezTerm, kitty (remote control on), Diri, and tmux in Warp or VS Code: the Automation prompt the
+  first time (Terminal, Ghostty, iTerm); the message with screenshots attached where taken (none with
   nothing marked); queued while the agent works; the clipboard restored; a gone session reported,
   the aside in History. The pill names each session as its agent titled it.
-- [ ] **New session in…** in Terminal, Ghostty and Diri, in bash, zsh and fish.
+- [ ] **New session in…** in Terminal, Ghostty, iTerm, WezTerm, kitty and Diri, in bash, zsh and
+  fish; Cursor CLI, Gemini CLI and Kiro CLI start with the aside too.
 - [ ] **Copying**: History's Copy, Copy the Last Aside, and Copy Each Aside (sent, saved, a send
   that failed) put the aside on the clipboard once it's typed in: Notes, Mail and TextEdit paste
   what was said with each screenshot where it was taken; Slack, Discord and WhatsApp (in a draft)
@@ -253,10 +255,14 @@ Run what your change touches, and say in the pull request what you tried.
   or the history.
 - **An MCP tool**: `tools()` and `call_tool` in `mcp.rs`. Read-only (`readOnlyHint`), stdout for
   JSON-RPC only. Cover it in the e2e test.
-- **An agent or terminal app**: an agent is a row in `agents.rs`; an app is a `Host` in
+- **An agent or terminal app**: an agent is a row in `agents.rs` (how its process looks, which of
+  its runs aren't sessions, how a new one starts with a message), checked against its own build:
+  install it in a scratch folder (`npm install --prefix`, `uv tool install` with `UV_TOOL_DIR`),
+  run it in a pty with a scratch `HOME`, and read `ps` and its `--help`. An app is a `Host` in
   `sessions.rs` and a plan in `deliver.rs`. Measure what the agent records (multi-line, while busy,
-  images by Ctrl+V and by path) before writing the plan, and note the results in `deliver.rs`'s
-  module docs.
+  images by Ctrl+V and by path), or for a multiplexer what a program in it reads (a stand-in that
+  turns bracketed paste on and logs each byte), before writing the plan, and note the results in
+  `deliver.rs`'s module docs.
 - **A voice model**: `MODELS` in `models.rs`, with the exact size and SHA-256 from Hugging Face.
 - **The icon**: `swift scripts/make-icon.swift` writes `packaging/asides.icns` and Windows'
   `packaging/asides.ico`. The same mark is in

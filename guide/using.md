@@ -1,7 +1,7 @@
 # Using asides
 
 The first time asides opens, setup shows how it works, then asks where new sessions open
-(Terminal, Ghostty or Diri, and the agent), how much each pin says, what macOS must allow, the
+(Terminal, Ghostty, iTerm, WezTerm, kitty or Diri, and the agent), how much each pin says, what macOS must allow, the
 voice model, the shortcuts, and whether asides opens at login. Skip it for the defaults: asides
 asks for each permission and the model when it first needs them, and doesn't open at login. General → **Set Up Again** goes through it again. **Help**, at the
 bottom of the asides window's sidebar, shows how to use asides, each part played out with the pill and its pieces.
@@ -48,10 +48,19 @@ through them slowly enough to read), or point at the name for the list (click it
 `W` opens it for the arrow keys: `⏎` picks, `←` `→` change the agent of a new session):
 
 - **Sessions**: every agent running in a terminal, by the title its agent gave it. Those in apps
-  asides can't type into (Warp, iTerm, VS Code…) are dimmed.
+  asides can't type into (Warp, VS Code…, unless the agent runs in tmux, Zellij or screen there)
+  are dimmed.
 - **New session in…**: an agent and a directory (a recent project, or **Choose Directory…**). Sending
-  starts the agent there, in Terminal, Ghostty or Diri (Settings), with the aside as its first
-  message.
+  starts the agent there, in Terminal, Ghostty, iTerm, WezTerm, kitty or Diri (Settings), with the
+  aside as its first message.
+
+## Agents and terminals
+
+| | |
+|---|---|
+| Agents | Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Qwen Code, Cursor CLI, Droid, Amp, Kiro CLI, goose, Crush, Cline, Kilo Code, Auggie, Pi, Continue CLI, iFlow CLI, Mistral Vibe, Kimi Code, Letta Code and Aider. New sessions start with any of them but Amp, Crush, Cline, Kimi Code, Letta Code and Aider, which can't start with a message: start those yourself. |
+| On a Mac | Terminal, iTerm and Ghostty (the first time, asides asks to control each: Automation), WezTerm and Diri (nothing to allow), kitty with its remote control on (`allow_remote_control yes` and `listen_on unix:/tmp/kitty` in kitty.conf). |
+| Anywhere | A pane of tmux, Zellij (0.44 or later) or GNU screen, and Neovim's terminal (0.10 or later), take text themselves: in Warp, VS Code, Zed, JetBrains' IDEs, Alacritty or any other app, run the agent in one of them. |
 - **History only**: keep it, send it later.
 
 ## Tools
@@ -215,7 +224,7 @@ differences:
 |---|---|
 | Keys | `⌃` and `⌘` are `Ctrl`, `⌥` is `Alt`: `Ctrl+Alt+Space` opens and sends, `Ctrl+Alt+P` goes live. They're in your desktop's keyboard settings on GNOME (Custom Shortcuts) and KDE (Shortcuts). On another Wayland desktop, bind keys to `asides open` and `asides live` yourself if it doesn't offer them. |
 | Where it lives | `[a]` in the panel, where it shows status icons: KDE, Ubuntu, Cinnamon, GNOME with the AppIndicator extension. Without one, the shortcuts, the `asides` command and the launcher's window do everything. |
-| Sessions | Agents in any terminal. tmux, Konsole and WezTerm take text themselves; kitty too with remote control on. Others go through a small helper, which where the system restricts it (Ubuntu, Arch) you allow once in setup. New sessions open in your desktop's terminal, or `[agents] terminal` in Settings. |
+| Sessions | Agents in any terminal. tmux, Zellij, screen, Neovim's terminal, Konsole and WezTerm take text themselves; kitty too with remote control on. Others go through a small helper, which where the system restricts it (Ubuntu, Arch) you allow once in setup. New sessions open in your desktop's terminal, or `[agents] terminal` in Settings. |
 | Frozen | Panels and keys aren't held back as on a Mac: `Alt+Tab` and the desktop's own shortcuts may still work. |
 | Permissions | GNOME on Wayland asks once before the first screenshot, with asides' window in front: **Allow…** by Screenshots in setup (a freeze not yet allowed opens it there). Pins name elements through AT-SPI: GTK apps always, Qt and browsers when the desktop's accessibility is on; KDE's and GNOME's Wayland tell asides nothing about windows, so otherwise a pin is a point. |
 | Clips | On X11 only: a Wayland desktop shows the screen to asides a picture at a time. X11 can't leave the pill out: a clip of the desktop shows it as it was when the clip started. |

@@ -33,7 +33,7 @@ use windows::Win32::UI::Shell::CommandLineToArgvW;
 use windows::core::{PCWSTR, PWSTR};
 
 use super::{AgentSession, Host, Proc};
-use crate::agents::{AgentKind, is_runtime};
+use crate::agents::AgentKind;
 
 /// A process in the snapshot.
 #[derive(Debug, Clone)]
@@ -241,9 +241,7 @@ fn console_host(exe: &str) -> bool {
 /// installs), or a version's (Claude Code's own installs keep each version as `versions\2.1.303`).
 fn may_be_agent(exe: &str) -> bool {
     let stem = exe.strip_suffix(".exe").or_else(|| exe.strip_suffix(".EXE")).unwrap_or(exe);
-    AgentKind::of_process(exe, &[]).is_some()
-        || is_runtime(exe)
-        || (!stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit() || c == '.'))
+    AgentKind::may_be(exe) || (!stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit() || c == '.'))
 }
 
 /// Which console a process has, from its environment and its ancestors: Windows Terminal's tab
@@ -327,7 +325,7 @@ pub fn discover() -> Vec<AgentSession> {
             proc
         })
         .collect();
-    let mut sessions = super::sessions_with(&procs, host_of);
+    let mut sessions = super::sessions_with(&procs, |env, _| host_of(env));
     let dirs: HashMap<i32, PathBuf> =
         procs.iter().filter_map(|p| Some((p.pid, PathBuf::from(p.env.get(CWD)?)))).collect();
     for s in &mut sessions {

@@ -1,7 +1,8 @@
 //! Typing asides into agent sessions (a `deliver::plan`'s steps: `dirijor`, AppleScript, the
-//! clipboard), and starting new sessions: a script that runs the agent with the aside as its first
-//! message, in a new window of Terminal (the default) or Ghostty, typed into the user's own shell, or
-//! as a session of Diri. Always off the main thread: an AppleScript waits for the user to say whether
+//! terminals' own commands, the clipboard), and starting new sessions: a script that runs the agent
+//! with the aside as its first message, in a new window of Terminal (the default), Ghostty or iTerm,
+//! typed into the user's own shell, run by a new window of WezTerm or kitty, or as a session of
+//! Diri. Always off the main thread: an AppleScript waits for the user to say whether
 //! asides may control that app (the first time), up to two minutes.
 //!
 //! The app is launched by Launch Services with a bare PATH, so the agents (installed with npm,
@@ -125,7 +126,7 @@ fn last_line(bytes: &[u8], otherwise: &str) -> String {
     text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(otherwise).trim().to_string()
 }
 
-/// Starts `agent` in `dir` in `terminal` ("Terminal", "Ghostty" or "Diri") with `message` as its
+/// Starts `agent` in `dir` in `terminal` (one of `deliver::TERMINALS`) with `message` as its
 /// first message; `readable`: folders it may read without asking (the aside's screenshots).
 /// Returns the launch's id (`ASIDES_LAUNCH` in the agent's environment).
 pub fn start_session(
@@ -140,7 +141,8 @@ pub fn start_session(
     fs::create_dir_all(&scripts)?;
     let launch = format!("{}-{}", agent.program(), now_ms());
     let script = scripts.join(format!("{launch}.sh"));
-    fs::write(&script, deliver::launch_script(agent, dir, message, extra, &launch, readable))?;
+    let source = deliver::launch_script(agent, dir, message, extra, &launch, readable).map_err(anyhow::Error::msg)?;
+    fs::write(&script, source)?;
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
     let line = deliver::launch_line(&script);
     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -159,8 +161,21 @@ pub fn start_session(
             }
             let _ = Command::new("open").args(["-a", "Diri"]).status();
         }
+        app @ ("WezTerm" | "kitty") => {
+            let program = ["/bin/sh".to_string(), script.to_string_lossy().into_owned()];
+            let args = deliver::open_terminal_args(app, dir, &program).context("no way to open it")?;
+            let out = Command::new("/usr/bin/open").args(&args).output().context("could not run open")?;
+            if !out.status.success() {
+                let _ = fs::remove_file(&script);
+                bail!("{app} didn't open: {}", last_line(&out.stderr, "it failed"));
+            }
+        }
         other => {
-            let host = if other == "Ghostty" { Host::Ghostty } else { Host::Terminal };
+            let host = match other {
+                "Ghostty" => Host::Ghostty,
+                "iTerm" => Host::ITerm,
+                _ => Host::Terminal,
+            };
             let script_source = deliver::open_terminal_script(&host, dir, &line).context("no way to open it")?;
             if let Err(err) = applescript(&script_source) {
                 let _ = fs::remove_file(&script);
@@ -189,7 +204,8 @@ fn finished(child: Child, timeout: Duration) -> Result<Option<Output>> {
     }
 }
 
-/// The agents installed for the user: programs on their login shell's PATH.
+/// The agents installed for the user that new sessions start with: programs on their login
+/// shell's PATH.
 pub fn installed_agents() -> Vec<AgentKind> {
     let child = match login_shell("printf '%s' \"$PATH\"").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(child) => child,
@@ -199,7 +215,7 @@ pub fn installed_agents() -> Vec<AgentKind> {
     let path = String::from_utf8_lossy(&out.stdout);
     // Interactive shells may print a banner first: the PATH is the last line.
     let path = path.lines().last().unwrap_or_default();
-    AgentKind::ALL.into_iter().filter(|kind| on_path(path, kind.program())).collect()
+    AgentKind::ALL.into_iter().filter(|kind| kind.launches() && on_path(path, kind.program())).collect()
 }
 
 /// Whether `program` is an executable file in one of `path`'s directories.

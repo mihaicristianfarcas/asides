@@ -1,5 +1,6 @@
 //! `~/Library/Application Support/asides/config.toml`
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -26,8 +27,9 @@ const HEADER: &str = r#"# asides settings (the asides window changes every one o
 # identify_elements: name what's under each annotation (needs the Accessibility permission);
 # padding: points of screen kept around what you annotated in the screenshot.
 # [agents] terminal: the app new sessions open in ("Terminal" when ""; "Ghostty", "Diri"; on Linux
-# the desktop's own when "", or any installed: "konsole", "kitty"…); claude, codex, opencode, gemini,
-# copilot, qwen: extra arguments for that agent's new sessions, e.g. claude = ["--model", "opus"].
+# the desktop's own when "", or any installed: "konsole", "kitty"…); default: the agent they start
+# (its program); an agent's program (claude, codex, gemini, cursor-agent…): extra arguments for its
+# new sessions, e.g. claude = ["--model", "opus"].
 # [measure.keys] the overlay's keys: modifiers (cmd, shift, alt, ctrl) + a key (a, enter, escape,
 # tab, space, backspace, left, …) joined with '+'; several separated by commas; "" turns one off.
 
@@ -76,37 +78,35 @@ pub struct Agents {
     pub terminal: String,
     /// The agent New session in… starts unless the user picks another (its program).
     pub default: String,
-    /// Extra command-line arguments for each agent's sessions.
-    pub claude: Vec<String>,
-    pub codex: Vec<String>,
-    pub opencode: Vec<String>,
-    pub gemini: Vec<String>,
-    pub copilot: Vec<String>,
-    pub qwen: Vec<String>,
+    /// Extra command-line arguments for each agent's sessions, by its program (`claude = […]`).
+    /// What isn't a list of words is left as it is, and ignored.
+    #[serde(flatten)]
+    pub args: BTreeMap<String, Words>,
+}
+
+/// An agent's extra arguments in `[agents]`, or something else there, kept but ignored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Words {
+    List(Vec<String>),
+    Other(toml::Value),
 }
 
 impl Agents {
     /// The extra arguments for `kind`'s sessions.
     pub fn args(&self, kind: AgentKind) -> &[String] {
-        match kind {
-            AgentKind::Claude => &self.claude,
-            AgentKind::Codex => &self.codex,
-            AgentKind::OpenCode => &self.opencode,
-            AgentKind::Gemini => &self.gemini,
-            AgentKind::Copilot => &self.copilot,
-            AgentKind::Qwen => &self.qwen,
+        match self.args.get(kind.program()) {
+            Some(Words::List(words)) => words,
+            _ => &[],
         }
     }
 
-    pub fn args_mut(&mut self, kind: AgentKind) -> &mut Vec<String> {
-        match kind {
-            AgentKind::Claude => &mut self.claude,
-            AgentKind::Codex => &mut self.codex,
-            AgentKind::OpenCode => &mut self.opencode,
-            AgentKind::Gemini => &mut self.gemini,
-            AgentKind::Copilot => &mut self.copilot,
-            AgentKind::Qwen => &mut self.qwen,
-        }
+    /// Sets them; none takes its line out of the file.
+    pub fn set_args(&mut self, kind: AgentKind, words: Vec<String>) {
+        match words.is_empty() {
+            true => self.args.remove(kind.program()),
+            false => self.args.insert(kind.program().to_string(), Words::List(words)),
+        };
     }
 
     /// The agent new sessions start with.

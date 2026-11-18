@@ -3,10 +3,14 @@
 //! terminal, which is how an aside reaches it (`deliver.rs`). Nothing is installed in the agents and
 //! nothing has to listen.
 //!
-//! The app hosting a session is told by the environment the agent was started with: Terminal and
-//! Ghostty set `TERM_PROGRAM`; Diri sets `DIRIJOR_SESSION_ID` (and no `TERM_PROGRAM`, so a terminal's
-//! own wins over one inherited from Diri). The session the user last typed into is the one whose
-//! terminal device was last read from: its access time, which is how `w` tells idle time.
+//! The app hosting a session is told by the environment the agent was started with: Terminal,
+//! Ghostty and iTerm set `TERM_PROGRAM`; Diri sets `DIRIJOR_SESSION_ID` (and no `TERM_PROGRAM`, so a
+//! terminal's own wins over one inherited from Diri). What takes text itself comes before the app
+//! showing it (`Host::taking_text`): a pane of tmux, Zellij or GNU screen in any terminal, a terminal
+//! of Neovim, WezTerm, kitty with its remote control on. Which of those runs the agent, when its
+//! variables say several, its processes tell: the nearest of them above it. The session the user
+//! last typed into is the one whose terminal device was last read from: its access time, which is
+//! how `w` tells idle time.
 //!
 //! A session is named as its agent titles it from what was said in it (or as the user renamed it):
 //! Claude Code in its transcript, Codex in its thread index, OpenCode in its database.
@@ -40,20 +44,31 @@ pub enum Host {
     Terminal,
     /// Ghostty: its terminal is found by working directory (Ghostty names no device).
     Ghostty,
+    /// iTerm: its session is found by the terminal device, as Terminal's tab.
+    ITerm,
     /// Diri: its session id.
     Diri { session: String },
-    /// An app asides can't type into (Warp, iTerm, VS Code…), as `TERM_PROGRAM` names it.
+    /// An app asides can't type into (Warp, VS Code…), as `TERM_PROGRAM` names it.
     Other { name: String },
     /// A console on Windows, in whichever app shows it (Windows Terminal, a console window, VS
     /// Code's terminal…): asides types into the console itself (`deliver.rs`).
     Console { name: String },
-    /// Linux: a pane of tmux, which takes text itself (its socket, and the pane).
+    /// A pane of tmux, which takes text itself (its socket, and the pane), in whatever terminal
+    /// shows it.
     Tmux { socket: String, pane: String },
+    /// A pane of Zellij (its session, and the pane's number), in whatever terminal shows it.
+    Zellij { session: String, pane: String },
+    /// A window of GNU screen (its session, `STY`, and the window's number), in whatever terminal
+    /// shows it.
+    Screen { session: String, window: String },
+    /// A terminal of Neovim (`:terminal`), by its server's address: the one whose job the agent
+    /// runs under.
+    Neovim { server: String },
     /// Linux: a tab of Konsole, which takes text itself over D-Bus.
     Konsole { service: String, session: String },
-    /// Linux: a pane of WezTerm, which takes text itself (`wezterm cli`).
+    /// A pane of WezTerm, which takes text itself (`wezterm cli`).
     WezTerm { pane: String, socket: Option<String> },
-    /// Linux: a window of kitty, with its remote control on (`kitten @`).
+    /// A window of kitty, with its remote control on (`kitten @`).
     Kitty { listen: String, window: String },
     /// Linux: any other terminal, typed into through its pty (`asides-keys`), if the system lets
     /// asides (`may_type`).
@@ -65,9 +80,13 @@ impl Host {
         match self {
             Host::Terminal => "Terminal",
             Host::Ghostty => "Ghostty",
+            Host::ITerm => "iTerm",
             Host::Diri { .. } => "Diri",
             Host::Other { name } | Host::Console { name } | Host::Pty { name, .. } => name,
             Host::Tmux { .. } => "tmux",
+            Host::Zellij { .. } => "Zellij",
+            Host::Screen { .. } => "screen",
+            Host::Neovim { .. } => "Neovim",
             Host::Konsole { .. } => "Konsole",
             Host::WezTerm { .. } => "WezTerm",
             Host::Kitty { .. } => "kitty",
@@ -81,20 +100,136 @@ impl Host {
 
     /// The app hosting a terminal on a Mac, from the environment its programs got.
     pub fn of(env: &HashMap<String, String>) -> Host {
+        Host::inside(env, None)
+    }
+
+    /// [`Host::of`], knowing which multiplexer or editor runs the agent (`innermost`). What takes
+    /// text itself comes first (`taking_text`): a pane of tmux is reached in Warp or VS Code too,
+    /// which asides can't type into.
+    pub fn inside(env: &HashMap<String, String>, innermost: Option<&str>) -> Host {
+        if let Some(host) = Host::taking_text(env, innermost) {
+            return host;
+        }
         match env.get("TERM_PROGRAM").map(String::as_str) {
             Some("Apple_Terminal") => Host::Terminal,
             Some("ghostty") => Host::Ghostty,
-            Some("iTerm.app") => Host::Other { name: "iTerm".into() },
+            Some("iTerm.app") => Host::ITerm,
             Some("vscode") => Host::Other { name: "VS Code".into() },
             Some("WarpTerminal") => Host::Other { name: "Warp".into() },
-            Some("WezTerm") => Host::Other { name: "WezTerm".into() },
             Some(other) if !other.is_empty() => Host::Other { name: other.into() },
             _ => match env.get("DIRIJOR_SESSION_ID") {
                 Some(id) if !id.is_empty() => Host::Diri { session: id.clone() },
+                // kitty sets no `TERM_PROGRAM`; without its remote control it takes no text.
+                _ if env.get("KITTY_WINDOW_ID").is_some_and(|id| !id.is_empty()) => {
+                    Host::Other { name: "kitty".into() }
+                }
                 _ => Host::Other { name: "an unknown terminal".into() },
             },
         }
     }
+
+    /// A terminal that takes text itself, by what its programs were given: a pane of tmux, Zellij or
+    /// GNU screen, a terminal of Neovim (`NVIM`), a pane of WezTerm, a window of kitty with its
+    /// remote control on (`listen_on`, which sets `KITTY_LISTEN_ON`). A multiplexer's programs got
+    /// the variables of the terminal that started it too, so the one running the agent
+    /// (`innermost`, one of [`HOSTING`]) comes first, then the multiplexers.
+    pub fn taking_text(env: &HashMap<String, String>, innermost: Option<&str>) -> Option<Host> {
+        let get = |name: &str| env.get(name).filter(|v| !v.is_empty());
+        let tmux = || {
+            let (tmux, pane) = (get("TMUX")?, get("TMUX_PANE")?);
+            let socket = tmux.split(',').next().unwrap_or_default().to_string();
+            Some(Host::Tmux { socket, pane: pane.clone() })
+        };
+        let zellij = || {
+            let (session, pane) = (get("ZELLIJ_SESSION_NAME")?, get("ZELLIJ_PANE_ID")?);
+            Some(Host::Zellij { session: session.clone(), pane: pane.clone() })
+        };
+        let screen = || Some(Host::Screen { session: get("STY")?.clone(), window: get("WINDOW")?.clone() });
+        let neovim = || Some(Host::Neovim { server: get("NVIM")?.clone() });
+        let by_name = |name: &str| match name {
+            "tmux" => tmux(),
+            "zellij" => zellij(),
+            "screen" => screen(),
+            "nvim" => neovim(),
+            _ => None,
+        };
+        let wezterm =
+            || Some(Host::WezTerm { pane: get("WEZTERM_PANE")?.clone(), socket: get("WEZTERM_UNIX_SOCKET").cloned() });
+        let kitty = || {
+            let (listen, window) = (get("KITTY_LISTEN_ON")?, get("KITTY_WINDOW_ID")?);
+            Some(Host::Kitty { listen: listen.clone(), window: window.clone() })
+        };
+        innermost
+            .and_then(by_name)
+            .or_else(tmux)
+            .or_else(zellij)
+            .or_else(screen)
+            .or_else(neovim)
+            .or_else(wezterm)
+            .or_else(kitty)
+    }
+
+    /// The program that types into this terminal, where the session's own surroundings say which:
+    /// tmux's (its server's, the process `TMUX` names), Zellij's, screen's and Neovim's (the one
+    /// running the agent, `pid`), WezTerm's command (beside the app's, in `WEZTERM_EXECUTABLE_DIR`),
+    /// kitty's `kitten` (beside the process `KITTY_PID` names). A Mac gives apps a bare `PATH`,
+    /// where none of them is.
+    pub fn tool(&self, pid: i32, env: &HashMap<String, String>, procs: &[Proc]) -> Option<PathBuf> {
+        let get = |name: &str| env.get(name).filter(|v| !v.is_empty());
+        let absolute = |p: &Proc| {
+            let named = Path::new(&p.executable).to_path_buf();
+            if named.is_absolute() { Some(named) } else { executable_path(p.pid) }
+        };
+        let program = |pid: Option<&str>| {
+            let pid: i32 = pid?.parse().ok()?;
+            absolute(procs.iter().find(|p| p.pid == pid)?)
+        };
+        let hosting = |name: &str| absolute(innermost(procs, pid).filter(|(n, _)| *n == name)?.1);
+        match self {
+            Host::Tmux { .. } => program(get("TMUX")?.split(',').nth(1)).or_else(|| hosting("tmux")),
+            Host::Zellij { .. } => hosting("zellij"),
+            Host::Screen { .. } => hosting("screen"),
+            Host::Neovim { .. } => hosting("nvim"),
+            Host::WezTerm { .. } => get("WEZTERM_EXECUTABLE_DIR")
+                .map(PathBuf::from)
+                .or_else(|| Some(Path::new(get("WEZTERM_EXECUTABLE")?).parent()?.to_path_buf()))
+                .map(|dir| dir.join("wezterm")),
+            Host::Kitty { .. } => Some(program(get("KITTY_PID").map(String::as_str))?.with_file_name("kitten")),
+            _ => None,
+        }
+    }
+}
+
+/// Where process `pid`'s program is, when `ps` names it only as it was started (`tmux`, found on
+/// the terminal's `PATH`, which asides' own isn't).
+#[cfg(target_os = "macos")]
+fn executable_path(pid: i32) -> Option<PathBuf> {
+    let mut buffer = vec![0u8; 4096];
+    // SAFETY: the kernel writes at most `buffer.len()` bytes into it and says how many.
+    let len = unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let path = std::str::from_utf8(buffer.get(..usize::try_from(len).ok()?)?).ok()?;
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn executable_path(_pid: i32) -> Option<PathBuf> {
+    None
+}
+
+/// The multiplexers and the editor that run terminals of their own, which take text themselves, by
+/// their programs' names (GNU screen's server is `SCREEN`).
+pub const HOSTING: [&str; 4] = ["tmux", "zellij", "screen", "nvim"];
+
+/// The nearest of [`HOSTING`] above process `pid` (its name, and its process): the one whose
+/// terminal it runs in.
+pub fn innermost(procs: &[Proc], pid: i32) -> Option<(&'static str, &Proc)> {
+    let by_pid: HashMap<i32, &Proc> = procs.iter().map(|p| (p.pid, p)).collect();
+    let start = by_pid.get(&pid)?;
+    std::iter::successors(by_pid.get(&start.ppid), |q| by_pid.get(&q.ppid)).take(32).find_map(|q| {
+        let base = q.executable.rsplit(['/', '\\']).next().unwrap_or(&q.executable).to_ascii_lowercase();
+        let name = base.strip_suffix(".exe").unwrap_or(&base);
+        HOSTING.iter().find(|h| **h == name).map(|h| (*h, *q))
+    })
 }
 
 /// An agent session: a coding agent's process with a terminal.
@@ -118,6 +253,9 @@ pub struct AgentSession {
     /// asides started it (with [`LAUNCH_VAR`]): the id of that launch.
     #[serde(default)]
     pub launch: Option<String>,
+    /// The program that types into its terminal, when the session says which ([`Host::tool`]).
+    #[serde(default)]
+    pub tool: Option<PathBuf>,
 }
 
 impl AgentSession {
@@ -190,39 +328,27 @@ pub struct Proc {
     pub env: HashMap<String, String>,
 }
 
-/// Arguments that make an agent's process something other than an interactive session (a
-/// one-off run, a server, a subcommand).
-fn interactive(agent: AgentKind, args: &[String]) -> bool {
-    let first = args.iter().skip(1).find(|a| !a.starts_with('-') || matches!(a.as_str(), "-p" | "--print"));
-    let not = match agent {
-        AgentKind::Claude => &["-p", "--print", "agents", "mcp", "doctor", "logs", "stop", "rm", "update"][..],
-        AgentKind::Codex => &["exec", "e", "app-server", "mcp", "mcp-server", "login", "logout", "proto", "apply"][..],
-        AgentKind::OpenCode => &["run", "serve", "mcp", "debug", "session", "auth", "models", "export"][..],
-        _ => &[][..],
-    };
-    // Claude Code driven by another program (an editor's extension) through its standard input.
-    let driven = ["-p", "--print", "--input-format", "--output-format"];
-    let flag = args.iter().any(|a| driven.contains(&a.as_str()) && agent == AgentKind::Claude);
-    !flag && first.is_none_or(|first| !not.contains(&first.as_str()))
-}
-
 /// The agent sessions among `procs`: agents' processes with a terminal, one per terminal (the
 /// first, not processes it started). Their folders and input times come after
 /// ([`AgentSession::dir`] is empty here).
 pub fn sessions_of(procs: &[Proc]) -> Vec<AgentSession> {
     #[cfg(windows)]
-    return sessions_with(procs, windows::host_of);
+    return sessions_with(procs, |env, _| windows::host_of(env));
     #[cfg(target_os = "linux")]
-    return sessions_with(procs, linux::host_of);
+    return sessions_with(procs, linux::host_inside);
     #[cfg(target_os = "macos")]
-    sessions_with(procs, Host::of)
+    sessions_with(procs, Host::inside)
 }
 
-/// [`sessions_of`], with the apps hosting the terminals told by `host_of` (each system's way).
-pub fn sessions_with(procs: &[Proc], host_of: impl Fn(&HashMap<String, String>) -> Host) -> Vec<AgentSession> {
+/// [`sessions_of`], with the apps hosting the terminals told by `host_of` (each system's way), from
+/// an agent's environment and the nearest of [`HOSTING`] above it.
+pub fn sessions_with(
+    procs: &[Proc],
+    host_of: impl Fn(&HashMap<String, String>, Option<&str>) -> Host,
+) -> Vec<AgentSession> {
     let agent = |p: &Proc| {
         let args: Vec<&str> = p.args.iter().map(String::as_str).collect();
-        AgentKind::of_process(&p.executable, &args).filter(|&a| interactive(a, &p.args))
+        AgentKind::of_process(&p.executable, &args).filter(|&a| a.is_session(&p.args))
     };
     let by_pid: HashMap<i32, &Proc> = procs.iter().map(|p| (p.pid, p)).collect();
     let mut found = Vec::new();
@@ -240,10 +366,11 @@ pub fn sessions_with(procs: &[Proc], host_of: impl Fn(&HashMap<String, String>) 
             agent: kind,
             dir: PathBuf::new(),
             tty: tty.clone(),
-            host: host_of(&p.env),
+            host: host_of(&p.env, innermost(procs, p.pid).map(|(name, _)| name)),
             last_input: None,
             name: None,
             launch: p.env.get(LAUNCH_VAR).cloned(),
+            tool: None,
         });
     }
     found
@@ -321,38 +448,64 @@ pub fn discover() -> Vec<AgentSession> {
     };
     let mut procs = parse_ps(&run("/bin/ps", &["-A", "-ww", "-o", "pid=,ppid=,tty=,comm="]));
     // Arguments and environments only for agents' processes (and scripts', which may be agents).
-    let wanted: Vec<i32> = procs
-        .iter()
-        .filter(|p| {
-            p.tty.is_some()
-                && (crate::agents::is_runtime(&p.executable) || AgentKind::of_process(&p.executable, &[]).is_some())
-        })
-        .map(|p| p.pid)
-        .collect();
+    let wanted: Vec<i32> =
+        procs.iter().filter(|p| p.tty.is_some() && AgentKind::may_be(&p.executable)).map(|p| p.pid).collect();
     if wanted.is_empty() {
         return Vec::new();
     }
-    let list = wanted.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
-    let args_out = run("/bin/ps", &["-ww", "-o", "pid=,command=", "-p", &list]);
-    let env_out = run("/bin/ps", &["-E", "-ww", "-o", "pid=,command=", "-p", &list]);
-    let by_pid = |out: &str| -> HashMap<i32, String> {
-        out.lines()
-            .filter_map(|l| {
-                let l = l.trim_start();
-                let (pid, rest) = l.split_once(char::is_whitespace)?;
-                Some((pid.parse().ok()?, rest.trim_start().to_string()))
+    // Each process's arguments, and its environment after them.
+    let read = |pids: &[i32]| -> HashMap<i32, (String, HashMap<String, String>)> {
+        let list = pids.iter().map(i32::to_string).collect::<Vec<_>>().join(",");
+        let by_pid = |out: &str| -> HashMap<i32, String> {
+            out.lines()
+                .filter_map(|l| {
+                    let l = l.trim_start();
+                    let (pid, rest) = l.split_once(char::is_whitespace)?;
+                    Some((pid.parse().ok()?, rest.trim_start().to_string()))
+                })
+                .collect()
+        };
+        let args = by_pid(&run("/bin/ps", &["-ww", "-o", "pid=,command=", "-p", &list]));
+        let envs = by_pid(&run("/bin/ps", &["-E", "-ww", "-o", "pid=,command=", "-p", &list]));
+        args.into_iter()
+            .map(|(pid, line)| {
+                let env = envs.get(&pid).map(|e| parse_env(e, &line)).unwrap_or_default();
+                (pid, (line, env))
             })
             .collect()
     };
-    let (args, envs) = (by_pid(&args_out), by_pid(&env_out));
+    let read_wanted = read(&wanted);
     for p in procs.iter_mut().filter(|p| wanted.contains(&p.pid)) {
-        let line = args.get(&p.pid).cloned().unwrap_or_default();
-        p.env = envs.get(&p.pid).map(|e| parse_env(e, &line)).unwrap_or_default();
+        let (line, env) = read_wanted.get(&p.pid).cloned().unwrap_or_default();
+        p.env = env;
         p.args = line.split_whitespace().map(String::from).collect();
+    }
+    // An agent that titles its process (Pi, Kimi Code) writes over what `ps` reads of its
+    // environment: its shell's, which started it in the same terminal, says the same of it. (One a
+    // multiplexer started itself has none to ask.)
+    let tty_of: HashMap<i32, Option<String>> = procs.iter().map(|p| (p.pid, p.tty.clone())).collect();
+    let untitled: Vec<(i32, i32)> = procs
+        .iter()
+        .filter(|p| p.env.is_empty() && wanted.contains(&p.pid) && tty_of.get(&p.ppid) == Some(&p.tty))
+        .filter(|p| {
+            AgentKind::of_process(&p.executable, &p.args.iter().map(String::as_str).collect::<Vec<_>>()).is_some()
+        })
+        .map(|p| (p.pid, p.ppid))
+        .collect();
+    if !untitled.is_empty() {
+        let parents = read(&untitled.iter().map(|(_, ppid)| *ppid).collect::<Vec<_>>());
+        for (pid, ppid) in untitled {
+            if let (Some(p), Some((_, env))) = (procs.iter_mut().find(|p| p.pid == pid), parents.get(&ppid)) {
+                p.env = env.clone();
+            }
+        }
     }
     let mut sessions = sessions_of(&procs);
     if sessions.is_empty() {
         return sessions;
+    }
+    for s in &mut sessions {
+        s.tool = procs.iter().find(|p| p.pid == s.pid).and_then(|p| s.host.tool(s.pid, &p.env, &procs));
     }
     let list = sessions.iter().map(|s| s.pid.to_string()).collect::<Vec<_>>().join(",");
     let dirs = parse_lsof_cwd(&run("/usr/sbin/lsof", &["-a", "-d", "cwd", "-Fpn", "-p", &list]));
@@ -702,7 +855,7 @@ mod tests {
                 &[("TERM_PROGRAM", "ghostty")],
             ),
         ];
-        let found = sessions_with(&procs, Host::of);
+        let found = sessions_with(&procs, Host::inside);
         let summary: Vec<(i32, AgentKind, Host)> = found.iter().map(|s| (s.pid, s.agent, s.host.clone())).collect();
         assert_eq!(
             summary,
@@ -718,6 +871,97 @@ mod tests {
     }
 
     #[test]
+    fn tells_what_takes_text_itself_on_a_mac() {
+        let env = |vars: &[(&str, &str)]| -> HashMap<String, String> {
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        // tmux in Warp, which asides can't type into: its pane is reached all the same.
+        let in_tmux =
+            env(&[("TMUX", "/private/tmp/tmux-501/default,812,0"), ("TMUX_PANE", "%4"), ("TERM_PROGRAM", "tmux")]);
+        let tmux = Host::of(&in_tmux);
+        assert_eq!(tmux, Host::Tmux { socket: "/private/tmp/tmux-501/default".into(), pane: "%4".into() });
+        assert!(tmux.reachable());
+        // Its own tmux, the one whose server runs: a Mac's apps have no Homebrew on their `PATH`.
+        let procs = [
+            proc(812, 1, None, "/opt/homebrew/bin/tmux new -s work", &[]),
+            proc(900, 1, None, "/Applications/kitty.app/Contents/MacOS/kitty", &[]),
+            proc(901, 1, None, "tmux", &[]),
+        ];
+        assert_eq!(tmux.tool(0, &in_tmux, &procs), Some(PathBuf::from("/opt/homebrew/bin/tmux")));
+        // A server ps names without its folder is left to the `PATH`.
+        assert_eq!(tmux.tool(0, &env(&[("TMUX", "/tmp/t,901,0")]), &procs), None);
+        let in_wezterm = env(&[
+            ("TERM_PROGRAM", "WezTerm"),
+            ("WEZTERM_PANE", "3"),
+            ("WEZTERM_UNIX_SOCKET", "/Users/me/.local/share/wezterm/gui-sock-77"),
+            ("WEZTERM_EXECUTABLE", "/Applications/WezTerm.app/Contents/MacOS/wezterm-gui"),
+        ]);
+        let wezterm = Host::of(&in_wezterm);
+        let socket = Some("/Users/me/.local/share/wezterm/gui-sock-77".to_string());
+        assert_eq!(wezterm, Host::WezTerm { pane: "3".into(), socket });
+        let command = PathBuf::from("/Applications/WezTerm.app/Contents/MacOS/wezterm");
+        assert_eq!(wezterm.tool(0, &in_wezterm, &procs), Some(command));
+        // kitty takes text only with its remote control on.
+        assert_eq!(
+            Host::of(&env(&[("KITTY_WINDOW_ID", "2"), ("KITTY_PID", "900")])),
+            Host::Other { name: "kitty".into() }
+        );
+        let in_kitty =
+            env(&[("KITTY_WINDOW_ID", "2"), ("KITTY_PID", "900"), ("KITTY_LISTEN_ON", "unix:/tmp/kitty-900")]);
+        let kitty = Host::of(&in_kitty);
+        assert_eq!(kitty, Host::Kitty { listen: "unix:/tmp/kitty-900".into(), window: "2".into() });
+        assert_eq!(
+            kitty.tool(0, &in_kitty, &procs),
+            Some(PathBuf::from("/Applications/kitty.app/Contents/MacOS/kitten"))
+        );
+        assert_eq!(Host::of(&env(&[("TERM_PROGRAM", "iTerm.app")])), Host::ITerm);
+        assert!(Host::ITerm.reachable() && !Host::of(&env(&[("TERM_PROGRAM", "vscode")])).reachable());
+        assert_eq!(Host::Terminal.tool(0, &in_tmux, &procs), None);
+        assert_eq!(serde_json::to_string(&Host::ITerm).unwrap(), r#"{"app":"iterm"}"#);
+    }
+
+    #[test]
+    fn the_nearest_multiplexer_or_editor_runs_the_agent() {
+        let env = |vars: &[(&str, &str)]| -> HashMap<String, String> {
+            vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let zellij = env(&[("ZELLIJ", "0"), ("ZELLIJ_SESSION_NAME", "work"), ("ZELLIJ_PANE_ID", "2")]);
+        assert_eq!(Host::of(&zellij), Host::Zellij { session: "work".into(), pane: "2".into() });
+        let screen = env(&[("STY", "812.ttys004.mac"), ("WINDOW", "1"), ("TERM_PROGRAM", "Apple_Terminal")]);
+        assert_eq!(Host::of(&screen), Host::Screen { session: "812.ttys004.mac".into(), window: "1".into() });
+        // Neovim in Ghostty: its terminal, not Ghostty's, which shows Neovim.
+        let nvim = env(&[("NVIM", "/tmp/nvim.me/0"), ("TERM_PROGRAM", "ghostty")]);
+        assert_eq!(Host::of(&nvim), Host::Neovim { server: "/tmp/nvim.me/0".into() });
+        // Claude Code in Neovim's terminal, Neovim in a pane of tmux: both say so; its processes tell.
+        let both =
+            env(&[("TMUX", "/private/tmp/tmux-501/default,812,0"), ("TMUX_PANE", "%1"), ("NVIM", "/tmp/nvim.me/0")]);
+        let procs = [
+            proc(812, 1, None, "/opt/homebrew/bin/tmux", &[]),
+            proc(820, 812, Some("ttys004"), "-zsh", &[]),
+            proc(830, 820, Some("ttys004"), "/opt/homebrew/bin/nvim", &[]),
+            proc(840, 830, Some("ttys005"), "/bin/zsh", &[]),
+            proc(850, 840, Some("ttys005"), "claude", &[]),
+            // And tmux started in Neovim's terminal: its server isn't Neovim's child.
+            proc(860, 812, Some("ttys006"), "codex", &[]),
+        ];
+        let mut procs = procs.to_vec();
+        procs[4].env = both.clone();
+        procs[5].env = both.clone();
+        let found = sessions_with(&procs, Host::inside);
+        assert_eq!(found[0].host, Host::Neovim { server: "/tmp/nvim.me/0".into() });
+        assert_eq!(found[1].host, Host::Tmux { socket: "/private/tmp/tmux-501/default".into(), pane: "%1".into() });
+        assert_eq!(found[0].host.tool(850, &both, &procs), Some(PathBuf::from("/opt/homebrew/bin/nvim")));
+        assert_eq!(innermost(&procs, 860).map(|(name, _)| name), Some("tmux"));
+        // GNU screen's server names itself `SCREEN`.
+        let procs = [proc(700, 1, None, "SCREEN", &[]), proc(710, 700, Some("ttys008"), "droid", &[])];
+        assert_eq!(innermost(&procs, 710).map(|(name, _)| name), Some("screen"));
+        assert_eq!(
+            serde_json::to_string(&Host::Neovim { server: "s".into() }).unwrap(),
+            r#"{"app":"neovim","server":"s"}"#
+        );
+    }
+
+    #[test]
     fn the_default_is_the_session_typed_into_last() {
         let at = |secs: u64| Some(SystemTime::UNIX_EPOCH + Duration::from_secs(secs));
         let session = |pid: i32, host: Host, last_input| AgentSession {
@@ -729,6 +973,7 @@ mod tests {
             last_input,
             name: None,
             launch: None,
+            tool: None,
         };
         let sessions = [
             session(1, Host::Terminal, at(100)),
@@ -902,6 +1147,7 @@ mod tests {
             last_input: None,
             name: None,
             launch: None,
+            tool: None,
         };
         let folders = known_folders(&home, &[running], std::slice::from_ref(&blog), 10);
         assert_eq!(folders[..2], [shop.clone(), blog.clone()], "the running session's repo, then the recent ones");

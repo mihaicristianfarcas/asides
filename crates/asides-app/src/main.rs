@@ -1010,7 +1010,10 @@ impl App {
                 id: s.id(),
                 label,
                 app: s.host.name().to_string(),
-                unreachable: (!s.host.reachable()).then(|| format!("In {}: asides can't type there", s.host.name())),
+                unreachable: (!s.host.reachable()).then(|| match s.host.name() {
+                    "kitty" => "In kitty: its remote control is off".to_string(),
+                    name => format!("In {name}: asides can't type there (it can in tmux)"),
+                }),
             })
             .collect();
         let folders =

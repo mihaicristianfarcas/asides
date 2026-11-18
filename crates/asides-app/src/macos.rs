@@ -328,11 +328,26 @@ pub type MainThread = objc2::MainThreadMarker;
 /// macOS opens `asides://` links with the app its Info.plist names: nothing to register.
 pub fn register_links() {}
 
-/// The terminal apps asides types into (a bundle ID): leaving one, the user may have started a
-/// session there.
+/// The apps with terminals asides types into (a bundle ID): leaving one, the user may have started a
+/// session there. Those new sessions open in, and those where a pane of tmux, Zellij or screen is
+/// reached: Warp, the editors, the other terminals.
 pub fn is_terminal(bundle: &str) -> bool {
     use asides_core::deliver;
+    const HOSTING: [&str; 10] = [
+        "dev.warp.Warp-Stable",
+        "com.microsoft.VSCode",
+        "com.todesktop.230313mzl4w4u92",
+        "com.exafunction.windsurf",
+        "dev.zed.Zed",
+        "org.alacritty",
+        "co.zeit.hyper",
+        "org.tabby",
+        "dev.commandline.waveterm",
+        "com.raphaelamorim.rio",
+    ];
     deliver::TERMINALS.iter().any(|t| deliver::bundle_id(t) == Some(bundle))
+        || HOSTING.contains(&bundle)
+        || bundle.starts_with("com.jetbrains.")
 }
 
 /// Any app may hand the keyboard to the overlay on macOS (it activates itself).

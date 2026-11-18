@@ -20,6 +20,20 @@
 //!   Return finds nothing to send yet) and the text 1.5 s after.
 //! - Codex gets Tab instead of Return (`AgentKind::submit_key`): Return joins the turn it's working
 //!   on, and it may answer only the newer message.
+//! - **tmux, Zellij, screen, Neovim, WezTerm and kitty on a Mac** take text as on Linux (below), by
+//!   their own commands, found by the session itself (`Host::tool`): a pane of tmux is reached in
+//!   whatever app shows it, Warp and VS Code's terminal too. tmux measured on a Mac on 2026-11-16;
+//!   Zellij 0.46, screen 4.0 and Neovim 0.11 on 2026-11-18, with a stand-in agent logging each byte
+//!   it reads (`make e2e`); WezTerm and kitty there go by Linux's measurements (the same commands).
+//!   tmux's `paste-buffer -p` and Zellij's `action paste` bracket the text only when the program
+//!   asked for it (all agents do); screen's `stuff` and Neovim's `chan_send` type it as it is, so
+//!   it's wrapped in the markers here. screen 4.9 (Ubuntu's, measured that day) reads escapes in
+//!   what it's given (`^C`, `$HOME`): they're escaped for every screen but macOS's own, 4.0.
+//! - **iTerm**: AppleScript's `write text … newline NO` to the session on the agent's terminal
+//!   device types its text as the keyboard would, so it goes as on Linux: a bracketed paste, then
+//!   the key that sends it (a carriage return of its own: `write text`'s new line is a line feed,
+//!   which Claude Code takes for a new line). By iTerm's dictionary; not yet measured with the
+//!   agents.
 //! - **Linux**: any terminal, through its pty (`Step::Pty`: `asides-keys` writes what the keyboard
 //!   would), where the system lets asides, or what a terminal takes itself, which needs nothing
 //!   allowed: tmux's `paste-buffer`, Konsole's D-Bus `sendText`, `wezterm cli send-text`, kitty's
@@ -86,12 +100,29 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
         return Err("There's nothing to send.".into());
     }
     let submit = session.agent.submit_key();
+    // The terminal's own command, as the session names it, or by its name on the `PATH`.
+    let tool = |name: &str| session.tool.clone().unwrap_or_else(|| name.into());
     match &session.host {
         Host::Diri { session: id } => Ok(diri(id, &parts, submit, dirijor)),
         Host::Ghostty => Ok(vec![Step::Script(ghostty(&session.dir, &parts, submit))]),
         Host::Terminal => Ok(terminal(session.agent, &session.tty, &parts, submit)),
+        Host::ITerm => {
+            let send = |text: String| Step::Script(in_iterm_session(&session.tty, &text));
+            Ok(typed(session.agent, &parts, submit, send))
+        }
         Host::Console { .. } => Ok(console(session.agent, session.pid, &parts, submit)),
-        Host::Tmux { socket, pane } => Ok(tmux(socket, pane, session.agent, &parts, submit)),
+        Host::Tmux { socket, pane } => Ok(tmux(&tool("tmux"), socket, pane, session.agent, &parts, submit)),
+        Host::Zellij { session: name, pane } => Ok(zellij(&tool("zellij"), name, pane, session.agent, &parts, submit)),
+        Host::Screen { session: sty, window } => {
+            let program = tool("screen");
+            Ok(typed_in(session.agent, &parts, submit, |text| screen(&program, sty, window, &text)))
+        }
+        Host::Neovim { server } => {
+            let (program, pid) = (tool("nvim"), session.pid);
+            let send =
+                |text: String| Step::Run { program: program.clone(), args: neovim(server, pid, &text), stdin: None };
+            Ok(typed(session.agent, &parts, submit, send))
+        }
         Host::Konsole { service, session: tab } => {
             let send = |text: String| Step::Konsole { service: service.clone(), session: tab.clone(), text };
             Ok(typed(session.agent, &parts, submit, send))
@@ -99,7 +130,8 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
         Host::WezTerm { pane, socket } => {
             // Its own mux, by the variable its command reads: a session may be another instance's.
             let mut args: Vec<String> = socket.iter().map(|s| format!("WEZTERM_UNIX_SOCKET={s}")).collect();
-            args.extend(["wezterm", "cli", "send-text", "--no-paste", "--pane-id", pane].map(String::from));
+            args.push(tool("wezterm").to_string_lossy().into_owned());
+            args.extend(["cli", "send-text", "--no-paste", "--pane-id", pane].map(String::from));
             let send = |text: String| Step::Run { program: "env".into(), args: args.clone(), stdin: Some(text) };
             Ok(typed(session.agent, &parts, submit, send))
         }
@@ -107,7 +139,7 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
             let args: Vec<String> = ["@", "--to", listen, "send-text", "--match", &format!("id:{window}"), "--stdin"]
                 .map(String::from)
                 .into();
-            let send = |text: String| Step::Run { program: "kitten".into(), args: args.clone(), stdin: Some(text) };
+            let send = |text: String| Step::Run { program: tool("kitten"), args: args.clone(), stdin: Some(text) };
             Ok(typed(session.agent, &parts, submit, send))
         }
         Host::Pty { name, may_type } => {
@@ -120,26 +152,41 @@ pub fn plan(session: &AgentSession, parts: &[Part], dirijor: &Path) -> Result<Ve
             let tty = session.tty.clone();
             Ok(typed(session.agent, &parts, submit, |text| Step::Pty { tty: tty.clone(), text }))
         }
-        Host::Other { name } => {
-            let elsewhere = match cfg!(windows) {
-                true => "a console",
-                false => "Terminal, Ghostty or Diri",
-            };
-            Err(format!("asides can't type into {name}. Run the agent in {elsewhere}."))
-        }
+        Host::Other { name } => Err(cant_type_into(name)),
     }
+}
+
+/// Why asides can't type into the app `name`, and where it can.
+pub fn cant_type_into(name: &str) -> String {
+    if cfg!(windows) {
+        return format!("asides can't type into {name}. Run the agent in a console.");
+    }
+    if name == "kitty" {
+        return "asides types into kitty only with its remote control on (allow_remote_control and listen_on in \
+                kitty.conf). Or run the agent in tmux, Zellij or screen there."
+            .into();
+    }
+    format!(
+        "asides can't type into {name}. Run the agent in tmux, Zellij or screen there, or in Terminal, iTerm, \
+         Ghostty, WezTerm or Diri."
+    )
 }
 
 /// The plan for a terminal typed into byte by byte, as its keyboard would (`send`): a bracketed paste
 /// and the key that sends it. Claude Code attaches a pasted path a moment after the paste: on its
 /// own, ahead of the text. The others attach it as it's pasted.
 fn typed(agent: AgentKind, parts: &[&Part], submit: SubmitKey, send: impl Fn(String) -> Step) -> Vec<Step> {
+    typed_in(agent, parts, submit, |text| vec![send(text)])
+}
+
+/// [`typed`], each piece of text typed by some steps (`send`).
+fn typed_in(agent: AgentKind, parts: &[&Part], submit: SubmitKey, send: impl Fn(String) -> Vec<Step>) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut burst = String::new();
     for part in parts {
         match part {
             Part::Image(path) if agent == AgentKind::Claude => {
-                steps.push(send(pasted(path)));
+                steps.extend(send(pasted(path)));
                 steps.push(Step::Wait(ATTACH));
             }
             Part::Image(path) => burst.push_str(&pasted(path)),
@@ -147,43 +194,119 @@ fn typed(agent: AgentKind, parts: &[&Part], submit: SubmitKey, send: impl Fn(Str
         }
     }
     if !burst.is_empty() {
-        steps.push(send(burst));
+        steps.extend(send(burst));
     }
     steps.push(Step::Wait(BEFORE_SUBMIT));
-    steps.push(send(if submit == SubmitKey::Tab { "\t" } else { "\r" }.to_string()));
+    steps.extend(send(if submit == SubmitKey::Tab { "\t" } else { "\r" }.to_string()));
     steps
 }
 
-/// Through tmux, which knows whether the program in the pane wants bracketed pastes, and turns new
-/// lines into Returns: `paste-buffer -p`.
-fn tmux(socket: &str, pane: &str, agent: AgentKind, parts: &[&Part], submit: SubmitKey) -> Vec<Step> {
-    let run = |args: &[&str], stdin: Option<String>| Step::Run {
-        program: "tmux".into(),
-        args: ["-S", socket].iter().chain(args).map(|a| a.to_string()).collect(),
-        stdin,
-    };
-    let paste = |text: &str, steps: &mut Vec<Step>| {
-        steps.push(run(&["load-buffer", "-b", "asides", "-"], Some(text.to_string())));
-        steps.push(run(&["paste-buffer", "-p", "-d", "-b", "asides", "-t", pane], None));
-    };
+/// The plan for a multiplexer that pastes text itself (`paste`, bracketed when the program asked
+/// for it), then presses the key that sends it (`key`).
+fn pasting(agent: AgentKind, parts: &[&Part], paste: impl Fn(&str) -> Vec<Step>, key: Step) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut burst: Vec<&str> = Vec::new();
     for part in parts {
         match part {
             Part::Image(path) if agent == AgentKind::Claude => {
-                paste(path, &mut steps);
+                steps.extend(paste(path));
                 steps.push(Step::Wait(ATTACH));
             }
             Part::Image(path) | Part::Text(path) => burst.push(path),
         }
     }
     if !burst.is_empty() {
-        paste(&burst.join("\n\n"), &mut steps);
+        steps.extend(paste(&burst.join("\n\n")));
     }
     steps.push(Step::Wait(BEFORE_SUBMIT));
-    let key = if submit == SubmitKey::Tab { "Tab" } else { "Enter" };
-    steps.push(run(&["send-keys", "-t", pane, key], None));
+    steps.push(key);
     steps
+}
+
+/// Through tmux, which knows whether the program in the pane wants bracketed pastes, and turns new
+/// lines into Returns: `paste-buffer -p`.
+fn tmux(program: &Path, socket: &str, pane: &str, agent: AgentKind, parts: &[&Part], submit: SubmitKey) -> Vec<Step> {
+    let run = |args: &[&str], stdin: Option<String>| Step::Run {
+        program: program.to_path_buf(),
+        args: ["-S", socket].iter().chain(args).map(|a| a.to_string()).collect(),
+        stdin,
+    };
+    let paste = |text: &str| {
+        vec![
+            run(&["load-buffer", "-b", "asides", "-"], Some(text.to_string())),
+            run(&["paste-buffer", "-p", "-d", "-b", "asides", "-t", pane], None),
+        ]
+    };
+    let key = if submit == SubmitKey::Tab { "Tab" } else { "Enter" };
+    pasting(agent, parts, paste, run(&["send-keys", "-t", pane, key], None))
+}
+
+/// Through Zellij (0.44 or later, which can be told the pane): `action paste` pastes bracketed when
+/// the program asked for it, but keeps new lines as they are, so they're turned into Returns here,
+/// as a terminal pastes them. After `--`, text starting with `-` stays text.
+fn zellij(program: &Path, name: &str, pane: &str, agent: AgentKind, parts: &[&Part], submit: SubmitKey) -> Vec<Step> {
+    let pane = if pane.contains('_') { pane.to_string() } else { format!("terminal_{pane}") };
+    let run = |args: &[&str]| Step::Run {
+        program: program.to_path_buf(),
+        args: ["--session", name, "action"].iter().chain(args).map(|a| a.to_string()).collect(),
+        stdin: None,
+    };
+    let paste =
+        |text: &str| vec![run(&["paste", "--pane-id", &pane, "--", &text.replace("\r\n", "\r").replace('\n', "\r")])];
+    let key = if submit == SubmitKey::Tab { "Tab" } else { "Enter" };
+    pasting(agent, parts, paste, run(&["send-keys", "--pane-id", &pane, key]))
+}
+
+/// Most bytes in one of GNU screen's commands: what it's sent goes in a message of about a kilobyte.
+const SCREEN_CHUNK: usize = 512;
+
+/// Whether this screen reads `^X`, `$NAME` and `\` escapes in what it's told to `stuff` (4.9 and
+/// later: `^C` became Ctrl+C, `$HOME` the folder, a last `\` lost the whole piece): all but macOS's
+/// own (4.0.3, never updated since: later versions are GPLv3), which types it as it is.
+fn screen_reads_escapes(program: &Path) -> bool {
+    !(cfg!(target_os = "macos") && (program == Path::new("/usr/bin/screen") || program == Path::new("screen")))
+}
+
+/// `text` typed into GNU screen's window, as `stuff` commands of a few hundred bytes each (one long
+/// command was cut at a kilobyte), escaped where screen reads escapes: each piece ends whole.
+fn screen(program: &Path, sty: &str, window: &str, text: &str) -> Vec<Step> {
+    let escapes = screen_reads_escapes(program);
+    let stuff = |piece: &str| Step::Run {
+        program: program.to_path_buf(),
+        args: ["-S", sty, "-p", window, "-X", "stuff", piece].map(String::from).into(),
+        stdin: None,
+    };
+    let mut steps = Vec::new();
+    let mut piece = String::new();
+    for c in text.chars() {
+        let escaped = if escapes && matches!(c, '\\' | '^' | '$') { format!("\\{c}") } else { c.to_string() };
+        if piece.len() + escaped.len() > SCREEN_CHUNK {
+            steps.push(stuff(&std::mem::take(&mut piece)));
+        }
+        piece.push_str(&escaped);
+    }
+    if !piece.is_empty() {
+        steps.push(stuff(&piece));
+    }
+    steps
+}
+
+/// What finds Neovim's terminal whose job process `pid` runs under (it, or a process above it) and
+/// writes the bytes it's given there, as its keyboard would; with none, it fails.
+const NEOVIM_SEND: &str = "(function(pid, data) for _ = 1, 32 do for _, b in ipairs(vim.api.nvim_list_bufs()) do \
+    if vim.bo[b].buftype == 'terminal' and vim.b[b].terminal_job_pid == pid then \
+    vim.api.nvim_chan_send(vim.bo[b].channel, vim.base64.decode(data)) return 1 end end \
+    local p = vim.api.nvim_get_proc(pid) pid = p and p.ppid if not pid or pid <= 1 then break end end \
+    error(\"Couldn't find its terminal in Neovim.\") end)(_A[1], _A[2])";
+
+/// The arguments that type `text` into Neovim's terminal running process `pid` (Neovim 0.10 or
+/// later), through its server: its bytes as Base64, in a Lua function the server runs.
+fn neovim(server: &str, pid: i32, text: &str) -> Vec<String> {
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD.encode(text);
+    let lua = NEOVIM_SEND.replace('"', "\\\"");
+    let expr = format!("luaeval(\"{lua}\", [{pid}, '{data}'])");
+    ["--server", server, "--remote-expr", &expr].map(String::from).into()
 }
 
 fn diri(id: &str, parts: &[&Part], submit: SubmitKey, dirijor: &Path) -> Vec<Step> {
@@ -263,6 +386,34 @@ fn in_terminal_tab(tty: &str, what: &str) -> String {
     )
 }
 
+/// `write text` to iTerm's session on `tty`, without the new line it adds: `text` as the keyboard
+/// would type it, its control characters (a paste's markers, Return, Tab) by their numbers.
+fn in_iterm_session(tty: &str, text: &str) -> String {
+    let mut pieces: Vec<String> = Vec::new();
+    let mut plain = String::new();
+    for c in text.chars() {
+        if c.is_control() {
+            if !plain.is_empty() {
+                pieces.push(applescript_string(&std::mem::take(&mut plain)));
+            }
+            pieces.push(format!("(character id {})", c as u32));
+        } else {
+            plain.push(c);
+        }
+    }
+    if !plain.is_empty() {
+        pieces.push(applescript_string(&plain));
+    }
+    format!(
+        "tell application id \"com.googlecode.iterm2\"\n    repeat with w in windows\n        repeat with t in tabs of w\n            \
+         repeat with s in sessions of t\n                if tty of s is {tty} then\n                    tell s to write text ({what}) \
+         newline NO\n                    return\n                end if\n            end repeat\n        end repeat\n    end \
+         repeat\n    error \"Couldn't find its session in iTerm.\"\nend tell",
+        tty = applescript_string(&format!("/dev/{tty}")),
+        what = pieces.join(" & "),
+    )
+}
+
 fn bracketed(text: &str) -> String {
     format!("(character id 27) & \"[200~\" & {} & (character id 27) & \"[201~\"", applescript_string(text))
 }
@@ -323,9 +474,9 @@ fn console(agent: AgentKind, pid: i32, parts: &[&Part], submit: SubmitKey) -> Ve
 }
 
 /// The apps new sessions open in, which asides can also type into, as Settings offers them. Terminal
-/// is the default.
+/// is the default. (kitty only with its remote control on.)
 #[cfg(target_os = "macos")]
-pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "Diri"];
+pub const TERMINALS: &[&str] = &["Terminal", "Ghostty", "iTerm", "WezTerm", "kitty", "Diri"];
 
 /// The terminals new sessions open in on Linux (`linux_terminal` says how): the desktop's own comes
 /// first where it's installed (`preferred_terminal`), then these, in order.
@@ -430,16 +581,21 @@ pub fn bundle_id(name: &str) -> Option<&'static str> {
     match name.to_ascii_lowercase().as_str() {
         "terminal" => Some("com.apple.Terminal"),
         "ghostty" => Some("com.mitchellh.ghostty"),
+        "iterm" => Some("com.googlecode.iterm2"),
+        "wezterm" => Some("com.github.wez.wezterm"),
+        "kitty" => Some("net.kovidgoyal.kitty"),
         "diri" => Some("com.dirijor.diri"),
         _ => None,
     }
 }
 
-/// The bundle ID of the terminal app `name` asides types into with Apple events (Automation): none
-/// for Diri, which needs no permission.
+/// The bundle ID of the terminal app `name` asides types into with Apple events (Automation):
+/// Terminal, Ghostty and iTerm. Diri, WezTerm and kitty take text by their own commands, which needs
+/// no permission.
 #[cfg(not(target_os = "linux"))]
 pub fn automated_bundle(name: &str) -> Option<&'static str> {
-    bundle_id(name).filter(|_| !name.eq_ignore_ascii_case("diri"))
+    let automated = ["terminal", "ghostty", "iterm"].iter().any(|a| name.eq_ignore_ascii_case(a));
+    bundle_id(name).filter(|_| automated)
 }
 
 /// What must be allowed to type into the terminal `name`: on Linux the helper (`asides-keys`), but
@@ -521,10 +677,10 @@ pub fn launch_script(
     extra: &[String],
     launch: &str,
     readable: &[PathBuf],
-) -> String {
-    let words = launch_words(agent, message, extra, readable);
+) -> Result<String, String> {
+    let words = launch_words(agent, message, extra, readable)?;
     let command = words.iter().map(|w| sh_quote(w)).collect::<Vec<_>>().join(" ");
-    format!(
+    Ok(format!(
         "#!/bin/sh\n# Started by asides: {name} in {dir}.\nrm -f -- \"$0\"\nlogin_path=$(\"${{SHELL:-{shell}}}\" -ilc 'printf %s \"$PATH\"' \
          2>/dev/null </dev/null) && [ -n \"$login_path\" ] && PATH=$login_path\nexport PATH\ncd {qdir} || exit 1\nexport {var}={launch}\nexec \
          {command}\n",
@@ -534,20 +690,28 @@ pub fn launch_script(
         qdir = sh_quote(&dir.to_string_lossy()),
         var = crate::agents::LAUNCH_VAR,
         launch = sh_quote(launch),
-    )
+    ))
 }
 
 /// The command line that starts `agent` with `message` as its first message (and the user's extra
-/// arguments): its program, then its arguments. Claude Code may read `readable` without asking.
-pub fn launch_words(agent: AgentKind, message: &str, extra: &[String], readable: &[PathBuf]) -> Vec<String> {
-    let mut words = agent.command(message, extra);
+/// arguments): its program, then its arguments. Claude Code may read `readable` without asking. Some
+/// agents can't start with a message (`AgentKind::launches`).
+pub fn launch_words(
+    agent: AgentKind,
+    message: &str,
+    extra: &[String],
+    readable: &[PathBuf],
+) -> Result<Vec<String>, String> {
+    let mut words = agent.command(message, extra).ok_or_else(|| {
+        format!("{} can't start with an aside: start it yourself, then send the aside to it.", agent.name())
+    })?;
     if agent == AgentKind::Claude {
         // Its screenshots are outside the repo: readable without asking.
         for dir in readable {
             words.splice(1..1, ["--add-dir".to_string(), dir.to_string_lossy().into_owned()]);
         }
     }
-    words
+    Ok(words)
 }
 
 /// The line typed into the user's shell (bash, zsh or fish alike) to run a launch script.
@@ -555,7 +719,8 @@ pub fn launch_line(script: &Path) -> String {
     sh_quote(&script.to_string_lossy())
 }
 
-/// The AppleScript that opens a new window running `line` in `app`'s user shell, in `dir`.
+/// The AppleScript that opens a new window running `line` in `app`'s user shell, in `dir` (Terminal,
+/// Ghostty and iTerm; WezTerm and kitty are given the program to run, `open_terminal_args`).
 pub fn open_terminal_script(app: &Host, dir: &Path, line: &str) -> Option<String> {
     match app {
         Host::Terminal => Some(format!("tell application \"Terminal\" to do script {}", applescript_string(line))),
@@ -565,8 +730,28 @@ pub fn open_terminal_script(app: &Host, dir: &Path, line: &str) -> Option<String
             applescript_string(&dir.to_string_lossy()),
             applescript_string(line),
         )),
+        // `write text` ends the line itself: the shell runs it.
+        Host::ITerm => Some(format!(
+            "tell application id \"com.googlecode.iterm2\"\n    set w to (create window with default profile)\n    tell current \
+             session of w to write text {}\n    activate\nend tell",
+            applescript_string(line),
+        )),
         _ => None,
     }
+}
+
+/// The arguments of `open` that start `app` (WezTerm or kitty) in a new window of its own, in `dir`,
+/// running `program`: Launch Services starts it, so it's none of asides' processes.
+pub fn open_terminal_args(app: &str, dir: &Path, program: &[String]) -> Option<Vec<String>> {
+    let dir = dir.to_string_lossy().into_owned();
+    let mut args: Vec<String> = ["-na", app, "--args"].map(String::from).into();
+    match app {
+        "WezTerm" => args.extend(["start".into(), "--cwd".into(), dir, "--".into()]),
+        "kitty" => args.extend(["--directory".into(), dir]),
+        _ => return None,
+    }
+    args.extend(program.iter().cloned());
+    Some(args)
 }
 
 #[cfg(test)]
@@ -583,6 +768,7 @@ mod tests {
             last_input: None,
             name: None,
             launch: None,
+            tool: None,
         }
     }
 
@@ -645,6 +831,151 @@ mod tests {
                 run(&["send-keys", "-t", "%3", "Tab"], None),
             ]
         );
+    }
+
+    #[test]
+    fn types_into_a_mac_terminal_by_its_own_command() {
+        // tmux as the session's own server names it (a Mac's apps have no Homebrew on their `PATH`).
+        let host = Host::Tmux { socket: "/private/tmp/tmux-501/default".into(), pane: "%0".into() };
+        let own = PathBuf::from("/opt/homebrew/bin/tmux");
+        let in_tmux = AgentSession { tool: Some(own.clone()), ..session(AgentKind::Claude, host) };
+        let steps = plan(&in_tmux, &parts(), Path::new("")).unwrap();
+        let programs: Vec<&Path> = steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Run { program, .. } => Some(program.as_path()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(programs.len(), 5, "the screenshot's path and the text, each loaded and pasted, and Return");
+        assert!(programs.iter().all(|p| *p == own));
+        // WezTerm's command and kitty's, from inside their apps.
+        let host = Host::WezTerm { pane: "3".into(), socket: None };
+        let wezterm = PathBuf::from("/Applications/WezTerm.app/Contents/MacOS/wezterm");
+        let steps =
+            plan(&AgentSession { tool: Some(wezterm), ..session(AgentKind::Codex, host) }, &parts(), Path::new(""));
+        assert!(matches!(&steps.unwrap()[0], Step::Run { program, args, .. } if program == Path::new("env")
+            && args[..3] == ["/Applications/WezTerm.app/Contents/MacOS/wezterm", "cli", "send-text"]));
+        let host = Host::Kitty { listen: "unix:/tmp/kitty-900".into(), window: "2".into() };
+        let kitten = PathBuf::from("/Applications/kitty.app/Contents/MacOS/kitten");
+        let steps = plan(
+            &AgentSession { tool: Some(kitten.clone()), ..session(AgentKind::Codex, host) },
+            &parts(),
+            Path::new(""),
+        );
+        assert!(matches!(&steps.unwrap()[0], Step::Run { program, .. } if *program == kitten));
+    }
+
+    #[test]
+    fn types_into_zellij_screen_and_neovim() {
+        let run = |step: &Step| match step {
+            Step::Run { program, args, .. } => (program.display().to_string(), args.join(" ")),
+            other => panic!("{other:?}"),
+        };
+        // Zellij pastes it, bracketed, and its new lines become Returns; a text starting with `-` stays text.
+        let host = Host::Zellij { session: "work".into(), pane: "3".into() };
+        let zellij = AgentSession { tool: Some("/opt/homebrew/bin/zellij".into()), ..session(AgentKind::Codex, host) };
+        let steps = plan(&zellij, &[Part::Text("-v is\nwrong".into())], Path::new("")).unwrap();
+        assert_eq!(
+            run(&steps[0]),
+            (
+                "/opt/homebrew/bin/zellij".into(),
+                "--session work action paste --pane-id terminal_3 -- -v is\rwrong".into()
+            )
+        );
+        assert_eq!(run(steps.last().unwrap()).1, "--session work action send-keys --pane-id terminal_3 Tab");
+        // GNU screen types it in pieces of a few hundred bytes, which come back whole.
+        let host = Host::Screen { session: "812.ttys004.mac".into(), window: "1".into() };
+        let long = "é".repeat(400);
+        let steps = plan(&session(AgentKind::Claude, host), &[Part::Text(long.clone())], Path::new("")).unwrap();
+        let mut typed = String::new();
+        for step in &steps {
+            if let Step::Run { program, args, .. } = step {
+                assert_eq!(program, Path::new("screen"));
+                assert_eq!(args[..6], ["-S", "812.ttys004.mac", "-p", "1", "-X", "stuff"]);
+                assert!(args[6].len() <= SCREEN_CHUNK);
+                typed.push_str(&args[6]);
+            }
+        }
+        assert_eq!(typed, format!("{}\r", pasted(&long)));
+        assert!(steps.iter().filter(|s| matches!(s, Step::Run { .. })).count() > 2);
+        // Where screen reads escapes (not macOS's own), `\`, `^` and `$` are typed as they are, and
+        // no piece ends inside an escape.
+        let host = Host::Screen { session: "9.pts-1.box".into(), window: "0".into() };
+        let mut s = session(AgentKind::Claude, host);
+        s.tool = Some(PathBuf::from("/usr/local/bin/screen"));
+        let text = format!("a ^C $HOME {}", "\\".repeat(600));
+        let steps = plan(&s, &[Part::Text(text.clone())], Path::new("")).unwrap();
+        let mut typed = String::new();
+        for step in &steps {
+            if let Step::Run { args, .. } = step {
+                assert!(args[6].len() <= SCREEN_CHUNK);
+                let mut chars = args[6].chars();
+                while let Some(c) = chars.next() {
+                    let escaped = c == '\\';
+                    typed.push(if escaped { chars.next().expect("a whole escape") } else { c });
+                    assert!(escaped || !matches!(c, '^' | '$'), "{}", args[6]);
+                }
+            }
+        }
+        assert_eq!(typed, format!("{}\r", pasted(&text)));
+        // Neovim: through its server, to the terminal the agent runs under.
+        let host = Host::Neovim { server: "/tmp/nvim.me/0".into() };
+        let steps = plan(&session(AgentKind::OpenCode, host), &[Part::Text("Hi".into())], Path::new("")).unwrap();
+        let (program, args) = run(&steps[0]);
+        assert_eq!(program, "nvim");
+        assert!(args.starts_with("--server /tmp/nvim.me/0 --remote-expr luaeval(\"(function(pid, data)"), "{args}");
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(pasted("Hi"));
+        assert!(args.ends_with(&format!("end)(_A[1], _A[2])\", [42, '{data}'])")), "{args}");
+        assert!(args.contains(r#"error(\"Couldn't find its terminal in Neovim.\")"#), "{args}");
+    }
+
+    #[test]
+    fn opens_new_sessions_in_each_mac_terminal() {
+        let iterm = open_terminal_script(&Host::ITerm, Path::new("/r"), "'/t/x.sh'").unwrap();
+        assert!(iterm.contains("create window with default profile") && iterm.contains("write text \"'/t/x.sh'\""));
+        let program = ["/bin/sh".to_string(), "/t/x.sh".to_string()];
+        assert_eq!(
+            open_terminal_args("WezTerm", Path::new("/r/my shop"), &program).unwrap(),
+            ["-na", "WezTerm", "--args", "start", "--cwd", "/r/my shop", "--", "/bin/sh", "/t/x.sh"]
+        );
+        assert_eq!(
+            open_terminal_args("kitty", Path::new("/r"), &program).unwrap(),
+            ["-na", "kitty", "--args", "--directory", "/r", "/bin/sh", "/t/x.sh"]
+        );
+        assert!(open_terminal_args("Terminal", Path::new("/r"), &program).is_none());
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert_eq!(automated_bundle("iTerm"), Some("com.googlecode.iterm2"));
+            assert_eq!(automated_bundle("WezTerm"), None);
+            assert_eq!(automated_bundle("Diri"), None);
+        }
+    }
+
+    #[test]
+    fn types_into_iterm_as_its_keyboard_would() {
+        let steps = plan(&session(AgentKind::Codex, Host::ITerm), &parts(), Path::new("")).unwrap();
+        let [Step::Script(paste), Step::Wait(_), Step::Script(key)] = &steps[..] else { panic!("{steps:?}") };
+        // A bracketed paste to the session on the agent's terminal, without iTerm's own new line.
+        assert!(paste.starts_with("tell application id \"com.googlecode.iterm2\""), "{paste}");
+        assert!(paste.contains("if tty of s is \"/dev/ttys004\" then"));
+        assert!(paste.contains(
+            "write text ((character id 27) & \"[200~The \\\"Pay\\\" button is too low.\" & (character id 27) & \
+             \"[201~\" & (character id 27) & \"[200~/h/1.png\" & (character id 27) & \"[201~\""
+        ));
+        assert!(paste.contains(") newline NO"));
+        // Codex's Tab; the others get a carriage return, not `write text`'s line feed.
+        assert!(key.contains("write text ((character id 9)) newline NO"), "{key}");
+        let steps = plan(&session(AgentKind::OpenCode, Host::ITerm), &parts(), Path::new("")).unwrap();
+        assert!(
+            matches!(steps.last(), Some(Step::Script(key)) if key.contains("write text ((character id 13)) newline NO"))
+        );
+        // What asides can't type into says where it can.
+        let warp = session(AgentKind::Claude, Host::Other { name: "Warp".into() });
+        let why = plan(&warp, &parts(), Path::new("")).unwrap_err();
+        assert!(why.contains("Warp") && why.contains("tmux"), "{why}");
+        assert_eq!(bundle_id("iTerm"), Some("com.googlecode.iterm2"));
     }
 
     #[test]
@@ -776,7 +1107,8 @@ mod tests {
             "The \"Pay\" button is too low.\n\n[Screenshot 1: /h/1.png]\n\n### 1. button"
         );
         let script =
-            launch_script(AgentKind::Claude, Path::new("/r/my shop"), "It's broken", &[], "l1", &[PathBuf::from("/h")]);
+            launch_script(AgentKind::Claude, Path::new("/r/my shop"), "It's broken", &[], "l1", &[PathBuf::from("/h")])
+                .unwrap();
         assert!(script.contains("cd '/r/my shop' || exit 1"), "{script}");
         assert!(script.contains("export ASIDES_LAUNCH='l1'"), "{script}");
         assert!(script.ends_with("exec 'claude' '--add-dir' '/h' '--' 'It'\\''s broken'\n"), "{script}");

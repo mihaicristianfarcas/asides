@@ -12,11 +12,11 @@ How asides fits together, for anyone changing it, and why it works this way.
 │  (CLI)   │ asides: │        sending; worker thread: Whisper → ~/.asides/history   │
 │          │ ◀────── │                                                              │
 └──────────┘ state.  └──────────────────────────────────────────────────────────────┘
-      │       json      │ JSON lines (stdin/stdout)      │ ps, lsof            │ dirijor, osascript
-      ▼                 ▼                                ▼                     ▼
- ~/.asides/history   asides-overlay (GPUI): the     agent sessions: claude, codex, opencode…
- (asides mcp reads)  frozen screens and the pill;   in Terminal, Ghostty or Diri, each aside
-                     --window: the asides window    typed in as the user's message
+      │       json      │ JSON lines (stdin/stdout)      │ ps, lsof            │ dirijor, osascript,
+      ▼                 ▼                                ▼                     ▼ tmux, zellij…
+ ~/.asides/history   asides-overlay (GPUI): the     agent sessions: claude, codex, cursor-agent…
+ (asides mcp reads)  frozen screens and the pill;   in Terminal, iTerm, Ghostty, WezTerm, Diri or
+                     --window: the asides window    a multiplexer, each typed in as the user's message
 ```
 
 - **The app** is one long-lived, menu-bar-only process. The main thread owns the UI and recording;
@@ -82,8 +82,8 @@ systems (`linux/` in `asides-app`, `lin/` in `asides-overlay`). GPUI is vendored
   shortcuts (running `asides open`), KDE's `kglobalaccel`, and the GlobalShortcuts portal; otherwise
   the error says to bind the commands.
 - **Sessions** come from `/proc` (`sessions_linux.rs`); the terminal from the environment.
-- **Typing in** (`deliver.rs`): what a terminal takes itself (tmux, Konsole's D-Bus, WezTerm, kitty)
-  needs nothing allowed. Any other pty: `asides-keys` gets the terminal's pty master with
+- **Typing in** (`deliver.rs`): what a terminal takes itself (tmux, Zellij, screen, Neovim, Konsole's
+  D-Bus, WezTerm, kitty) needs nothing allowed. Any other pty: `asides-keys` gets the terminal's pty master with
   `pidfd_getfd` and writes what the keyboard would. Where `ptrace_scope` is 1 or more (Ubuntu, Arch)
   that needs `cap_sys_ptrace` on the helper alone, granted by the user in setup (`pkexec setcap`),
   never by a package. It's small on purpose: it checks the terminal is the user's and drops the
@@ -223,13 +223,20 @@ Background threads never touch AppKit (the pasteboard excepted); they send `User
 ### Finding sessions
 
 `sessions::discover` lists processes (`ps`), keeps interactive agents with a terminal (one per
-terminal), and reads their environment (`ps -E`) and folder (`lsof -d cwd`). `TERM_PROGRAM` or
-`DIRIJOR_SESSION_ID` gives the host app. The terminal device's access time is the last input: the
-latest reachable session is the default target (`sessions::latest`).
+terminal; `agents.rs` says what each agent's process looks like and which of its runs aren't
+sessions), and reads their environment (`ps -E`) and folder (`lsof -d cwd`). What takes text
+itself comes first: tmux, Zellij, screen or Neovim, the nearest above the agent in the process tree
+when its variables name several (`sessions::innermost`), then WezTerm and kitty; else
+`TERM_PROGRAM` or `DIRIJOR_SESSION_ID` gives the host app. Their programs are found by those
+processes (`Host::tool`, `proc_pidpath`): the app's `PATH` has no Homebrew. An agent that titles its
+process (Pi, Kimi Code) wrote over what `ps` reads of its environment: its shell's stands in. The
+terminal device's access time is the last input: the latest reachable session is the default target
+(`sessions::latest`).
 
 Looking takes tens of milliseconds, so it's done before asides opens: as a session starts (Claude
-Code and Codex write a file, `sessions::start_folders`), when the user leaves a terminal app it can
-type into, and as one ends. Opening only reads the terminals' access times again (microseconds), so
+Code and Codex write a file, `sessions::start_folders`), when the user leaves an app with terminals
+it can reach (`system::is_terminal`: the terminals, and Warp, the editors and the others a
+multiplexer may run in), and as one ends. Opening only reads the terminals' access times again (microseconds), so
 the pill names the session typed into last from its first frame.
 
 ### Opening, freezing, sending
@@ -272,11 +279,13 @@ the pill names the session typed into last from its first frame.
 
 `App::deliver` sends to:
 - **A session**: `deliver::plan` for its app and agent (Diri's `dirijor` and Terminal's `do script`
-  with bracketed paste, Ghostty's `input text`), screenshots by Ctrl+V or by path as each agent
-  takes them, Return to send (Tab for Codex). `terminal::run_steps` runs it and restores the
-  pasteboard.
+  with bracketed paste, Ghostty's `input text`, iTerm's `write text`, the commands of tmux, Zellij,
+  screen, Neovim, WezTerm and kitty), screenshots by Ctrl+V or by path as each agent takes them,
+  Return to send (Tab for Codex). `terminal::run_steps` runs it and restores the pasteboard.
 - **A new session**: `terminal::start_session` writes a launch script (login shell's `PATH`, `cd`,
-  the agent with the aside) and opens it in Terminal, Ghostty or Diri.
+  the agent with the aside, for an agent that starts with one: `AgentKind::launches`) and opens it
+  in Terminal, Ghostty, iTerm (typed into the user's shell), WezTerm or kitty (`open -na`, running
+  it), or Diri.
 - **History only**: nothing more.
 
 `UserEvent::Delivered` records where it went (`Aside::record_delivery`) and flashes `[n]` or the
@@ -353,7 +362,7 @@ Break these only on purpose, and update this list.
 11. **Stable signing identity, hardened runtime**: permissions follow the identity; every capability
     needs an entitlement.
 12. **No new permissions without discussion.** Today: Microphone, Screen Recording, Accessibility
-    (optional), Automation for Terminal and Ghostty. Not Input Monitoring. On Windows, only the
+    (optional), Automation for Terminal, Ghostty and iTerm. Not Input Monitoring. On Windows, only the
     microphone. On Linux, where the kernel requires it, `cap_sys_ptrace` on `asides-keys` alone,
     which the user grants; a Wayland desktop may ask once before a screenshot.
 13. **`asides mcp` writes only JSON-RPC to stdout**, and its tools are read-only (and marked so):
