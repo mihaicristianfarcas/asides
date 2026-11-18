@@ -3043,7 +3043,7 @@ impl AsidesWindow {
                 .child(topic(
                     "Where it goes",
                     format!(
-                        "To the agent session you typed into last: Claude Code, Codex, OpenCode and more, in \
+                        "To the agent session you typed into last: Claude Code, Codex, Cursor CLI and 19 more, in \
                          {AGENT_TERMINALS}. {next} picks the next one. Point at its name for the list \
                          ({sessions} opens it for the arrows and ⏎): a new session in a {dir}, or History only, \
                          to send it later.",

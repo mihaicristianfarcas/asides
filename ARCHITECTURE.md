@@ -209,7 +209,7 @@ Casks/asides.rb       the Homebrew cask (the repository is a tap)
 | Worker | the `Transcriber`; **creating asides** | `UserEvent::Work` |
 | Model download | the `.part` file | `UserEvent::Model`, a `Condvar` for the worker |
 | Sending (per aside) | a plan's steps, the pasteboard | `UserEvent::Delivered` |
-| Sessions | `sessions::discover` when asked (asides opening, the window coming forward, an aside sent, the user leaving Terminal, Ghostty or Diri), as one starts (its agent's file, FSEvents) and as one ends (kqueue) | `UserEvent::Sessions` |
+| Sessions | `sessions::discover` when asked (asides opening, the window coming forward, an aside sent, the user leaving an app with terminals it can reach), as one starts (its agent's file, FSEvents) and as one ends (kqueue) | `UserEvent::Sessions` |
 | Config watcher | `config.toml`, as it changes (FSEvents) | `UserEvent::ConfigFileChanged` |
 | Wispr Flow watcher | `flow.sqlite`, when it changes | `UserEvent::Wispr` |
 | Agent finder (launch) | the login shell's installed agents | `UserEvent::Agents` |
