@@ -84,7 +84,9 @@ changes.
 - **Know what `make e2e` uses.** It sets the model to large-v3-turbo (the fixtures are English and
   Romanian), which must be in `~/Library/Application Support/asides/models/` (`asides download
   large-v3-turbo`). It keeps its asides in a temporary history, sends only to a stand-in agent of
-  its own (in Diri, or Terminal without Diri), and puts back the user's settings and clipboard.
+  its own (in Diri, or Terminal without Diri; then in tmux, screen, Zellij and Neovim where
+  installed, without windows; with `E2E_APPS`, in WezTerm and kitty on screen), and puts back the
+  user's settings and clipboard.
 - **Keep binary names unique ignoring case** (case-insensitive APFS): the CLI is `asides`, the
   app's `asides-app`. `pkill -x asides` would also stop the agents' `asides mcp` servers.
 - **Don't add permissions** without the maintainer's agreement. Freezing the screen uses Screen
