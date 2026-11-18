@@ -94,7 +94,7 @@ pub fn sessions(
             loop {
                 let found = sessions::discover();
                 if let Some(exits) = &exits {
-                    exits.watch(found.iter().map(|s| s.pid));
+                    exits.watch(found.iter().filter_map(|s| s.local_pid()));
                 }
                 if !report(found) || asked.recv().is_err() {
                     return;

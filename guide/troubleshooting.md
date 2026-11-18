@@ -3,7 +3,7 @@
 **The aside didn't reach my agent.** The menu (and History in the asides window) says why. On a Mac
 asides types into Terminal, iTerm, Ghostty, WezTerm, Diri, kitty with its remote control on, and
 tmux, Zellij, screen or Neovim's terminal in any app (on Windows, any console: Windows Terminal, VS
-Code's terminal…); the first time, allow it to control Terminal, iTerm or Ghostty (System Settings
+Code's terminal…, and WSL's); the first time, allow it to control Terminal, iTerm or Ghostty (System Settings
 → Privacy & Security → Automation). Every aside stays in History: send it again from there, or with `asides
 send`.
 

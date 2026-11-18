@@ -207,7 +207,7 @@ asides works the same on Windows 10 (2004 or later) and 11, x64 or Arm64, with t
 | Keys | `⌃` and `⌘` are `Ctrl`, `⌥` is `Alt`: `Ctrl+Alt+Space` opens and sends, `Ctrl+Alt+P` goes live. The pill's `?` and Keys show Windows' names. |
 | Words | A directory is a folder, as Windows says: **Choose Folder…** in the pill's list. |
 | Where it lives | `[a]` in the notification area (Windows may tuck it under `^`). The asides window is in the taskbar while it's open. |
-| Sessions | Agents in Windows Terminal, VS Code's terminal or any console: asides types into their console, as you would. New sessions open in Windows Terminal, or a console window of their own. |
+| Sessions | Agents in Windows Terminal, VS Code's terminal or any console: asides types into their console, as you would. In WSL too (in a Windows Terminal tab, a console window, or tmux, Zellij or screen there), with screenshots as `/mnt/c/…` paths. New sessions open in Windows Terminal, or a console window of their own. |
 | Frozen | The Windows key, `Alt+Tab`, `Alt+Esc` and `Ctrl+Esc` are held back; `Ctrl+Alt+Del` still works. |
 | Permissions | Only the microphone: Settings → Privacy & security → Microphone → **Let desktop apps access your microphone**. |
 | Voice | whisper.cpp on the CPU. `keep_audio` keeps a `.wav`. |

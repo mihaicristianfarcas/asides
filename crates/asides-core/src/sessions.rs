@@ -36,6 +36,12 @@ pub mod windows;
 #[path = "sessions_linux.rs"]
 pub mod linux;
 
+#[path = "sessions_proc.rs"]
+pub mod procfs;
+
+#[path = "sessions_wsl.rs"]
+pub mod wsl;
+
 /// Where a session's terminal is, which decides how an aside is typed into it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "app", rename_all = "lowercase")]
@@ -73,6 +79,11 @@ pub enum Host {
     /// Linux: any other terminal, typed into through its pty (`asides-keys`), if the system lets
     /// asides (`may_type`).
     Pty { name: String, may_type: bool },
+    /// Windows: a terminal in one of WSL's Linux distributions (`sessions_wsl.rs`), typed into through
+    /// the console of the `wsl.exe` showing it (`console`, a Windows process), or by the multiplexer
+    /// or editor running it there (`inner`), whose command runs through `wsl.exe`. Windows' drives
+    /// are in `mount` there (`/mnt/`).
+    Wsl { distro: String, console: Option<i32>, mount: String, inner: Option<Box<Host>> },
 }
 
 impl Host {
@@ -90,12 +101,17 @@ impl Host {
             Host::Konsole { .. } => "Konsole",
             Host::WezTerm { .. } => "WezTerm",
             Host::Kitty { .. } => "kitty",
+            Host::Wsl { inner: Some(inner), .. } => inner.name(),
+            Host::Wsl { .. } => "WSL",
         }
     }
 
     /// asides can type into sessions there.
     pub fn reachable(&self) -> bool {
-        !matches!(self, Host::Other { .. } | Host::Pty { may_type: false, .. })
+        !matches!(
+            self,
+            Host::Other { .. } | Host::Pty { may_type: false, .. } | Host::Wsl { console: None, inner: None, .. }
+        )
     }
 
     /// The app hosting a terminal on a Mac, from the environment its programs got.
@@ -259,9 +275,21 @@ pub struct AgentSession {
 }
 
 impl AgentSession {
-    /// The session's id, for as long as its process lives.
+    /// The session's id, for as long as its process lives: its process's, after its distribution's
+    /// in WSL (`Ubuntu:4242`), whose processes are numbered apart from Windows'.
     pub fn id(&self) -> String {
-        self.pid.to_string()
+        match &self.host {
+            Host::Wsl { distro, .. } => format!("{distro}:{}", self.pid),
+            _ => self.pid.to_string(),
+        }
+    }
+
+    /// The process of this system showing the session: its own, or in WSL its terminal's `wsl.exe`.
+    pub fn local_pid(&self) -> Option<i32> {
+        match self.host {
+            Host::Wsl { console, .. } => console,
+            _ => Some(self.pid),
+        }
     }
 
     /// The repository (or folder) it works in, by name.
