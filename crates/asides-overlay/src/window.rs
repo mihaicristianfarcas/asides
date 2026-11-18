@@ -568,6 +568,8 @@ pub struct AsidesWindow {
     demos_moving: bool,
     demos_next: Option<Duration>,
     demos_due: Option<Instant>,
+    /// Help's pill to try.
+    try_pill: help::TryPill,
 }
 
 /// Development (`ASIDES_WINDOW_QUIET`): the window opens without taking the keyboard, for captures
@@ -930,6 +932,7 @@ impl AsidesWindow {
             demos_moving: false,
             demos_next: None,
             demos_due: None,
+            try_pill: help::TryPill::default(),
         };
         this.reload();
         this.selected = this.asides.first().map(|a| a.id.clone());
@@ -2767,7 +2770,7 @@ impl AsidesWindow {
     /// Demonstration `name`, `width` wide, as it is now, and the step of the basics it shows. What it
     /// does next is noted for `play_demos`.
     fn demo(&mut self, name: &'static str, width: f32, window: &Window) -> (AnyElement, Option<usize>) {
-        let Some(demo) = help::demo(name) else { return (div().into_any_element(), None) };
+        let Some(demo) = help::demo(name, width) else { return (div().into_any_element(), None) };
         let since = self.demos_from.get(name).copied().unwrap_or(self.demos_since);
         // Development (`ASIDES_HELP_AT=<ms>`): every demonstration at that moment, for captures.
         let at = std::env::var("ASIDES_HELP_AT").ok().and_then(|ms| ms.parse().ok()).map(Duration::from_millis);
@@ -2778,7 +2781,7 @@ impl AsidesWindow {
             (a, b) => a.or(b),
         };
         let look = self.look();
-        let view = help::view(demo, &shown, width, &look, window);
+        let view = help::view(&demo, &shown, width, &look, window);
         (view, shown.step)
     }
 
@@ -2823,10 +2826,35 @@ impl AsidesWindow {
 
     /// The basics played from step `step` on, to watch it.
     fn watch_step(&mut self, step: usize, cx: &mut Context<Self>) {
-        if let Some(at) = help::demo("basics").and_then(|demo| demo.time_of_step(step)) {
+        // Its timing is the same at any width.
+        if let Some(at) = help::demo("basics", BASICS_WIDTH).and_then(|demo| demo.time_of_step(step)) {
             self.demos_from.insert("basics", Instant::now().checked_sub(at).unwrap_or_else(Instant::now));
             cx.notify();
         }
+    }
+
+    /// Help's pill to try, `width` wide, what's done to it heard by `try_pill`.
+    fn try_pill_view(&mut self, width: f32, cx: &mut Context<Self>) -> AnyElement {
+        let this = cx.entity().downgrade();
+        let act = std::rc::Rc::new(move |done: help::Try, _: &mut Window, cx: &mut App| {
+            let _ = this.update(cx, |this, cx| this.try_pill(done, cx));
+        });
+        help::try_pill(width, &self.try_pill, &self.look(), act)
+    }
+
+    /// `done` to Help's pill to try; a note it shows, or its being away, ends at its time.
+    fn try_pill(&mut self, done: help::Try, cx: &mut Context<Self>) {
+        let ends = self.try_pill.apply(done, Instant::now());
+        cx.notify();
+        let Some(at) = ends else { return };
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(at.saturating_duration_since(Instant::now())).await;
+            let _ = this.update(cx, |this, cx| {
+                this.try_pill.expire(Instant::now());
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The basics: played, and their four steps, the one it shows lit (a click on one plays it);
@@ -2937,11 +2965,11 @@ impl AsidesWindow {
                 .into_any_element()
         };
         let basics = self.basics(width, false, window, cx);
-        let pill = help::still(width, false, &self.look());
+        let pill = self.try_pill_view(width, cx);
         let (target, _) = self.demo("target", width, window);
         let (card, _) = self.demo("card", width, window);
         let (tools, _) = self.demo("tools", width, window);
-        let sheet = help::still(width, true, &self.look());
+        let sheet = help::still(width, &self.look());
         let part = |glyph: &str, label: &str, text: String| {
             div()
                 .min_h(px(44.))
@@ -3011,7 +3039,9 @@ impl AsidesWindow {
                 .child(topic("The basics", format!("Over any app: {open}, click, talk, {open}."), Some(basics)))
                 .child(topic(
                     "The pill",
-                    "It's at the top of the frozen screen. Drag it anywhere: it stays there.".into(),
+                    "It's at the top of the frozen screen. Drag it anywhere: it stays there. Try it here: \
+                     nothing is sent."
+                        .into(),
                     Some(pill.into_any_element()),
                 ))
                 .child(topic(

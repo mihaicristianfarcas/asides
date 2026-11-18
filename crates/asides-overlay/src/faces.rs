@@ -58,9 +58,10 @@ pub fn tool_icon(tool: Tool) -> &'static str {
 /// A surface of the pill (the pill, its list): rounded, the glass behind it (macOS blurs what's
 /// behind the window there, `native::set_glass`) under the asides window's sidebar's tint, a
 /// hairline around it. No shadow: GPUI fills one under the whole surface too, between the blur and
-/// the tint, and it darkened the glass to near black.
+/// the tint, and it darkened the glass to near black. The overlay makes it take the pointer
+/// (`occlude`); in Help, the page scrolls under it.
 pub fn glass_panel(t: Theme) -> Div {
-    div().relative().occlude().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
+    div().relative().rounded(px(12.)).border_1().border_color(t.card_stroke).bg(pill_tint(t))
 }
 
 /// The pill's tint. Only macOS blurs behind the pill's window (`windows.rs`): elsewhere it's nearly
@@ -144,6 +145,26 @@ pub fn mic_face(listening: bool, level: f32, t: Theme) -> Div {
         .child(icon(if listening { "mic" } else { "mic-off" }, ink))
 }
 
+/// The pill's camera: a clip of what happens next, recorded live (a soft red while recording, its
+/// stop square).
+pub fn clip_face(recording: bool, t: Theme) -> Div {
+    let red = hex(style::RECORDING_SOFT, 1.0);
+    // Recording, over the red: white on dark glass, the ink on light (as the microphone).
+    let ink = match recording {
+        true if t.dark => gpui::white(),
+        true => t.primary,
+        false => Emphasis::Plain.ink(t),
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(28.))
+        .rounded(px(8.))
+        .when(recording, |d| d.bg(red.opacity(0.32)))
+        .child(icon(if recording { "clip-stop" } else { "clip" }, ink))
+}
+
 /// Buttons side by side as one control.
 pub fn group(buttons: Vec<AnyElement>, t: Theme) -> AnyElement {
     div().flex().rounded(px(8.)).bg(t.hover).children(buttons).into_any_element()
@@ -178,48 +199,84 @@ pub fn tool_box(t: Theme) -> Div {
 }
 
 /// The pill as it stands, for Help: the keys at a glance (`help`, lit), the microphone (listening,
-/// filled to `level`), where the aside goes (`list_open`, lit), the tool unless it's Annotate (and
-/// how much of it shows, growing in), start over, send and close. The overlay's own is `ui::toolbar`.
+/// filled to `level`), the camera (recording a clip), where the aside goes (`list_open`, lit), the
+/// tool unless it's Annotate (its slot, easing), start over, send and close. The overlay's own is
+/// `ui::toolbar`.
 pub struct Still {
     pub help: bool,
     pub listening: bool,
     pub level: f32,
+    pub recording_clip: bool,
     pub target: AnyElement,
     pub list_open: bool,
-    pub tool: Option<(Tool, f32)>,
+    pub tool: Option<ToolSlot>,
+}
+
+/// The tool's slot on the pill, as the overlay's eases (`ui::toolbar`'s `slot`): as wide as it's drawn
+/// (the gap before it its own: from nothing, it grows in), how much of it shows (fading as it grows in
+/// or shrinks away), its box as wide, and the tools' names in it, how much each shows (one fading into
+/// the other), in its middle, cut off on both sides while it's narrower.
+pub struct ToolSlot {
+    pub width: f32,
+    pub shown: f32,
+    pub tools: Vec<(Tool, f32)>,
+}
+
+/// How wide a tool's slot is, its name `name_width` wide: the gap before it, the button's border and
+/// sides, the icon and the gap after it.
+pub fn tool_slot_width(name_width: f32) -> f32 {
+    PILL_GAP + 2.0 + 16.0 + 15.0 + 5.0 + name_width
 }
 
 pub fn still_pill(pill: Still, t: Theme) -> Div {
+    still_pill_with(pill, t, &|_, button| button.into_any_element())
+}
+
+/// The pill as it stands, each button passed through `button` with its name (`help`, `mic`, `clip`,
+/// `target`, `restart`, `done`, `close`): Help's pill to try adds what they do.
+pub fn still_pill_with(pill: Still, t: Theme, button: &dyn Fn(&'static str, Div) -> AnyElement) -> Div {
     let plain = Emphasis::Plain.ink(t);
     let target = button_face(if pill.list_open { Emphasis::On } else { Emphasis::Plain }, true, t).child(pill.target);
     let first = group(
         vec![
-            help_face(pill.help, t).into_any_element(),
-            mic_face(pill.listening, pill.level, t).into_any_element(),
-            target.into_any_element(),
+            button("help", help_face(pill.help, t)),
+            button("mic", mic_face(pill.listening, pill.level, t)),
+            button("clip", clip_face(pill.recording_clip, t)),
+            button("target", target),
         ],
         t,
     );
-    let badge = pill.tool.map(|(tool, shown)| {
-        div().flex().flex_none().opacity(shown).child(div().flex_none().w(px(PILL_GAP))).child(
-            div()
-                .relative()
-                .flex()
-                .flex_none()
-                .child(tool_box(t).absolute().inset_0())
-                .child(button_face(Emphasis::On, false, t).child(tool_face(tool, t))),
-        )
+    let badge = pill.tool.filter(|slot| slot.width > 0.0).map(|slot| {
+        let faces = slot.tools.into_iter().map(|(tool, shown)| {
+            let face = button_face(Emphasis::On, false, t).flex_none().child(tool_face(tool, t));
+            div().absolute().inset_0().flex().items_center().justify_center().opacity(shown).child(face)
+        });
+        div()
+            .flex()
+            .flex_none()
+            .w(px(slot.width))
+            .overflow_hidden()
+            .opacity(slot.shown)
+            .child(div().flex_none().w(px(PILL_GAP)))
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .w(px((slot.width - PILL_GAP).max(0.0)))
+                    .h(px(28.))
+                    .overflow_hidden()
+                    .child(tool_box(t).absolute().inset_0())
+                    .children(faces),
+            )
     });
     let items = vec![
         div().flex().items_center().child(first).children(badge).into_any_element(),
         sep(t),
         group(
             vec![
-                button_face(Emphasis::Plain, true, t).child(icon("restart", plain)).into_any_element(),
-                button_face(Emphasis::Primary, true, t)
-                    .child(icon("check", Emphasis::Primary.ink(t)))
-                    .into_any_element(),
-                button_face(Emphasis::Plain, true, t).child(icon("close", plain)).into_any_element(),
+                button("restart", button_face(Emphasis::Plain, true, t).child(icon("restart", plain))),
+                button("done", button_face(Emphasis::Primary, true, t).child(icon("check", Emphasis::Primary.ink(t)))),
+                button("close", button_face(Emphasis::Plain, true, t).child(icon("close", plain))),
             ],
             t,
         ),
