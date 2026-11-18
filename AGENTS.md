@@ -386,7 +386,9 @@ use `asides mcp`'s `get_aside`.
   typed into last.
 - Claude Code asks to trust a folder it hasn't seen: a new session in a scratch folder waits there.
 - Claude Code's `--add-dir` takes several folders and took a new session's first message for one
-  more (it started empty, with no error): the prompt goes after `--` (Codex's too).
+  more (it started empty, with no error): the prompt goes after `--` (Codex's too). 2.1.3xx asks to
+  trust each `--add-dir` folder as it starts, "No, exit" chosen: new sessions allow reading the
+  screenshots with a rule instead (`--allowedTools 'Read(//…/**)'`).
 - A terminal app started from inside an agent's session hands its markers to every shell: start
   test terminals from the Dock (or strip them), and quit them after.
 - The Automation prompt holds an AppleScript until answered, failing after 2 minutes: run it off
