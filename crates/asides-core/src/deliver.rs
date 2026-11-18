@@ -792,10 +792,11 @@ pub fn open_terminal_script(app: &Host, dir: &Path, line: &str) -> Option<String
 }
 
 /// The arguments of `open` that start `app` (WezTerm or kitty) in a new window of its own, in `dir`,
-/// running `program`: Launch Services starts it, so it's none of asides' processes.
+/// running `program`: Launch Services starts it, so it's none of asides' processes. By its bundle ID:
+/// by name, `open` looks only in the Applications folders.
 pub fn open_terminal_args(app: &str, dir: &Path, program: &[String]) -> Option<Vec<String>> {
     let dir = dir.to_string_lossy().into_owned();
-    let mut args: Vec<String> = ["-na", app, "--args"].map(String::from).into();
+    let mut args: Vec<String> = ["-nb", bundle_id(app)?, "--args"].map(String::from).into();
     match app {
         "WezTerm" => args.extend(["start".into(), "--cwd".into(), dir, "--".into()]),
         "kitty" => args.extend(["--directory".into(), dir]),
@@ -989,11 +990,11 @@ mod tests {
         let program = ["/bin/sh".to_string(), "/t/x.sh".to_string()];
         assert_eq!(
             open_terminal_args("WezTerm", Path::new("/r/my shop"), &program).unwrap(),
-            ["-na", "WezTerm", "--args", "start", "--cwd", "/r/my shop", "--", "/bin/sh", "/t/x.sh"]
+            ["-nb", "com.github.wez.wezterm", "--args", "start", "--cwd", "/r/my shop", "--", "/bin/sh", "/t/x.sh"]
         );
         assert_eq!(
             open_terminal_args("kitty", Path::new("/r"), &program).unwrap(),
-            ["-na", "kitty", "--args", "--directory", "/r", "/bin/sh", "/t/x.sh"]
+            ["-nb", "net.kovidgoyal.kitty", "--args", "--directory", "/r", "/bin/sh", "/t/x.sh"]
         );
         assert!(open_terminal_args("Terminal", Path::new("/r"), &program).is_none());
         #[cfg(not(target_os = "linux"))]
