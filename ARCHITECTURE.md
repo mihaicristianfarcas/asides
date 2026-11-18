@@ -288,8 +288,8 @@ the pill names the session typed into last from its first frame.
   Return to send (Tab for Codex). `terminal::run_steps` runs it and restores the pasteboard.
 - **A new session**: `terminal::start_session` writes a launch script (login shell's `PATH`, `cd`,
   the agent with the aside, for an agent that starts with one: `AgentKind::launches`) and opens it
-  in Terminal, Ghostty, iTerm (typed into the user's shell), WezTerm or kitty (`open -na`, running
-  it), or Diri.
+  in Terminal, Ghostty, iTerm (typed into the user's shell), WezTerm or kitty (`open -nb` its bundle ID,
+  running it), or Diri.
 - **History only**: nothing more.
 
 `UserEvent::Delivered` records where it went (`Aside::record_delivery`) and flashes `[n]` or the
