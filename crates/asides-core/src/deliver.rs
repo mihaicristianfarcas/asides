@@ -1025,7 +1025,8 @@ mod tests {
         // What asides can't type into says where it can.
         let warp = session(AgentKind::Claude, Host::Other { name: "Warp".into() });
         let why = plan(&warp, &parts(), Path::new("")).unwrap_err();
-        assert!(why.contains("Warp") && why.contains("tmux"), "{why}");
+        // (On Windows, where a console is.)
+        assert!(why.contains("Warp") && why.contains(if cfg!(windows) { "console" } else { "tmux" }), "{why}");
         assert_eq!(bundle_id("iTerm"), Some("com.googlecode.iterm2"));
     }
 
