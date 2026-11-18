@@ -32,8 +32,8 @@ use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::faces::{
     Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face, card_cluster, card_tool,
-    choose_folder_content, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face, label_at,
-    list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
+    choose_folder_content, clip_face, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
+    label_at, list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
     new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box, tool_face, tool_icon,
 };
 use crate::input::{self, TextInput};
@@ -2956,6 +2956,7 @@ fn keys_sheet(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
     let shown = o.keys_sheet.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
     keys_sheet_face(o.theme, &o.keys, &o.spec.freeze_shortcut, &o.spec.record_shortcut, o.live)
+        .occlude()
         .id("keys")
         .top(slide)
         .opacity(shown)
@@ -3102,6 +3103,7 @@ fn targets_list(overlay: &Entity<Overlay>, o: &Overlay, glide: &Glide) -> AnyEle
     let shown = o.list.shown();
     let slide = px((1.0 - shown) * if o.list_up { 6.0 } else { -6.0 });
     list_panel(t)
+        .occlude()
         .id("targets")
         .top(slide)
         .opacity(shown)
@@ -3161,6 +3163,7 @@ fn toolbar_panel(
         .font_family(controls::font())
         .child(
             glass_panel(o.theme)
+                .occlude()
                 .id("toolbar")
                 .cursor(if o.moving_toolbar.is_some() { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
                 .on_mouse_down(MouseButton::Left, move |e, _, cx| {
@@ -3306,22 +3309,10 @@ fn clip_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
         (false, true) => "Record a clip of what happens next".into(),
         (false, false) => with_key("Record a clip of what happens next, live", o.keys.label(Cmd::Clip)).into(),
     };
-    let (red, t) = (color(style::RECORDING_SOFT, 1.0), o.theme);
-    // Recording, over the red: white on dark glass, the ink on light (as the microphone).
-    let ink = match recording {
-        true if t.dark => gpui::white(),
-        true => t.primary,
-        false => Emphasis::Plain.ink(t),
-    };
-    div()
+    let t = o.theme;
+    clip_face(recording, t)
         .id("clip")
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(28.))
-        .rounded(px(8.))
         .when(o.moving_toolbar.is_none(), |d| d.cursor_pointer())
-        .when(recording, |d| d.bg(red.opacity(0.32)))
         .when(!recording && o.moving_toolbar.is_none(), |d| d.hover(|s| s.bg(t.hover)))
         .on_hover(move |hovered, _, cx| tip.update(cx, |o, cx| o.show_hint("clip", name.clone(), *hovered, cx)))
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -3332,7 +3323,6 @@ fn clip_button(overlay: &Entity<Overlay>, o: &Overlay) -> AnyElement {
                 cx.notify();
             });
         })
-        .child(icon(if recording { "clip-stop" } else { "clip" }, ink))
         .into_any_element()
 }
 

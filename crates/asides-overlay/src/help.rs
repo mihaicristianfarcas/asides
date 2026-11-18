@@ -5,22 +5,23 @@
 //! first beat, round and round; the window is drawn every frame only while something moves, and else
 //! again when the next change is due.
 
-use std::collections::HashMap;
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use asides_core::inspect::{Intent, PtRect};
 use asides_core::keys;
 use asides_core::overlay::{MARKER, Tool};
 use gpui::{
-    AnyElement, Div, FontWeight, HighlightStyle, Hsla, StyledText, TextRun, Window, canvas, div, prelude::*, px,
+    AnyElement, Div, FontWeight, HighlightStyle, Hsla, StyledText, TextRun, Window, canvas, deferred, div, prelude::*,
+    px,
 };
 
 use crate::controls::{self, Radius, Theme, ease, hex};
 use crate::faces::{
-    self, Prim, Still, agent_segment, agents_track, card_cluster, card_field, card_surface, card_tool,
+    self, Prim, Still, ToolSlot, agent_segment, agents_track, card_cluster, card_field, card_surface, card_tool,
     choose_folder_content, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline, list_heading,
     list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass, still_pill, talk_face,
+    tool_slot_width,
 };
 use crate::style;
 use crate::ui::{CARD_WIDTH, Keys, LIST_GAP};
@@ -43,17 +44,17 @@ const POP: Duration = Duration::from_millis(150);
 const TYPE_EACH: Duration = Duration::from_millis(45);
 const WORD_EACH: Duration = Duration::from_millis(190);
 /// The pill's top on the stage.
-const PILL_TOP: f32 = 12.0;
+const PILL_TOP: f32 = 0.0;
 /// The pill's height, and how far left of its middle where the aside goes is (its buttons on either
-/// side are always as wide: 5 + 28 + 28 + 8 before the name, 8 + 2 + 21 + 90 + 5 after).
+/// side are always as wide: 5 + 28 + 28 + 28 + 9 before the name, 9 + 2 + 21 + 2 + 99 + 5 after).
 const PILL_HEIGHT: f32 = 38.0;
-const NAME_LEFT_OF_MIDDLE: f32 = 28.5;
+const NAME_LEFT_OF_MIDDLE: f32 = 20.0;
 
 /// A demonstration: its size (laid out that wide, in the middle of what it's given), where the app
-/// is on its stage (and the agent's chat), and its beats.
+/// and the agent's chat are on its stage, and its beats.
 pub struct Demo {
     pub size: (f32, f32),
-    pub app: Option<Point>,
+    pub app: Option<Rect>,
     pub chat: Option<Rect>,
     pub beats: Vec<Beat>,
 }
@@ -99,8 +100,6 @@ pub struct Scene {
     pub list: Option<Option<usize>>,
     /// The tool, when it isn't Annotate.
     pub tool: Option<Tool>,
-    /// What a click would pin, under the pointer.
-    pub hover: Option<Rect>,
     pub pins: Vec<Pin>,
     /// A pin's card open: its pin's number, what's typed (typing in, a character at a time, when
     /// `typing`), what it asks for.
@@ -144,28 +143,51 @@ pub enum Measured {
     Area(Rect),
 }
 
-/// The demonstration called `name`: `basics`, `target`, `card` or `tools`.
-pub fn demo(name: &str) -> Option<&'static Demo> {
-    static DEMOS: OnceLock<HashMap<&'static str, Demo>> = OnceLock::new();
-    DEMOS
-        .get_or_init(|| {
-            HashMap::from([("basics", basics()), ("target", target()), ("card", card()), ("tools", tools())])
-        })
-        .get(name)
+/// The demonstration called `name` (`basics`, `target`, `card` or `tools`), laid out `width` wide.
+pub fn demo(name: &str, width: f32) -> Option<Demo> {
+    match name {
+        "basics" => Some(basics(width)),
+        "target" => Some(target()),
+        "card" => Some(card(width)),
+        "tools" => Some(tools(width)),
+        _ => None,
+    }
 }
 
 // --- The app on the stage ---
 
-/// Its size, and where its parts are, from its top left.
-const APP: (f32, f32) = (290.0, 218.0);
-const APP_ROWS: Rect = (12.0, 40.0, 266.0, 68.0);
-const APP_BUTTON: Rect = (16.0, 156.0, 92.0, 42.0);
-/// Under the line above the total, and its right edge, inside.
-const APP_RULE: f32 = 117.0;
-const APP_TOTAL: Point = (246.0, 135.0);
+/// The app's border (`border_1`): what's on it starts inside, and so do the marks on it (from its
+/// outside, they were a point off).
+const APP_BORDER: f32 = 1.0;
+/// Its parts, from the top left inside its border: its rows (cramped, as the basics say: they touch),
+/// the line above the total (what's under it), the total's top, and the button to pay.
+const APP_ROW_TOPS: [f32; 2] = [42.0, 66.0];
+const APP_ROW_HEIGHT: f32 = 24.0;
+const APP_RULE: f32 = 102.0;
+const APP_TOTAL_TOP: f32 = 110.0;
+const APP_BUTTON: Rect = (16.0, 140.0, 92.0, 42.0);
+/// How tall what's on it is, with room under the button.
+const APP_CONTENT: f32 = 198.0;
 
-fn on_app(app: Point, (x, y, w, h): Rect) -> Rect {
-    (app.0 + x, app.1 + y, w, h)
+/// Where the app's part at `(x, y, w, h)` is on the stage, the app at `app`.
+fn on_app(app: Rect, (x, y, w, h): Rect) -> Rect {
+    (app.0 + APP_BORDER + x, app.1 + APP_BORDER + y, w, h)
+}
+
+/// Its rows, a little around them (what a drag over them pins).
+fn app_rows(app: Rect) -> Rect {
+    let top = APP_ROW_TOPS[0] - 3.0;
+    on_app(app, (12.0, top, app.2 - 2.0 * APP_BORDER - 24.0, APP_ROW_TOPS[1] + APP_ROW_HEIGHT + 3.0 - top))
+}
+
+fn app_button(app: Rect) -> Rect {
+    on_app(app, APP_BUTTON)
+}
+
+/// The total's middle.
+fn app_total(app: Rect) -> Point {
+    let (x, y, _, _) = on_app(app, (app.2 - 2.0 * APP_BORDER - 38.0, APP_TOTAL_TOP + 8.0, 0.0, 0.0));
+    (x, y)
 }
 
 /// A circle drawn by hand around `(x, y)`: a little past where it started.
@@ -184,22 +206,31 @@ fn session(i: usize) -> &'static str {
 
 // --- The demonstrations ---
 
-/// Freeze, click what's wrong, say why, send: an app and the agent's chat beside it.
-fn basics() -> Demo {
-    let app = (20.0, 62.0);
-    let button = on_app(app, APP_BUTTON);
-    let rows = on_app(app, APP_ROWS);
+/// Under the pill, where the screen's windows start; between the app and the agent's chat; and under
+/// what's on the app, room for what's said (it goes over the windows' bottom).
+const SCREEN_TOP: f32 = PILL_TOP + PILL_HEIGHT + 12.0;
+const SCREEN_GAP: f32 = 12.0;
+const CAPTION_ROOM: f32 = 48.0;
+
+/// Freeze, click what's wrong, say why, send: the app and the agent's chat beside it, as wide as
+/// they're given.
+fn basics(width: f32) -> Demo {
+    let chat_width = (width * 0.4).clamp(200.0, 280.0);
+    let app = (0.0, SCREEN_TOP, width - chat_width - SCREEN_GAP, APP_CONTENT + CAPTION_ROOM);
+    let chat = (app.2 + SCREEN_GAP, SCREEN_TOP, chat_width, app.3);
+    let button = app_button(app);
+    let rows = app_rows(app);
     let click = (button.0 + button.2 - 12.0, button.1 + 9.0);
-    let rest = (250.0, 40.0);
+    let rest = (app.0 + app.2 * 0.72, button.1 + 20.0);
     let frozen = Scene { frozen: true, listening: true, target: session(0), ..Scene::default() };
     let pin1 = Pin { number: 1, at: click, on: On::Element(button), intent: None };
     let pin2 = Pin { number: 2, at: (rows.0, rows.1), on: On::Area(rows), intent: None };
     let pinned = Scene { pins: vec![pin1.clone()], ..frozen.clone() };
     let both = Scene { pins: vec![pin1, pin2], ..frozen.clone() };
     Demo {
-        size: (536.0, 340.0),
+        size: (width, SCREEN_TOP + app.3),
         app: Some(app),
-        chat: Some((324.0, 62.0, 192.0, 218.0)),
+        chat: Some(chat),
         beats: vec![
             Beat {
                 hold: 900,
@@ -209,17 +240,15 @@ fn basics() -> Demo {
                 ..Beat::default()
             },
             Beat { hold: 1100, key: Some("open".into()), step: Some(0), scene: frozen.clone(), ..Beat::default() },
-            Beat {
-                hold: 380,
-                pointer: Some(click),
-                step: Some(1),
-                scene: Scene { hover: Some(button), ..frozen },
-                ..Beat::default()
-            },
+            // The pointer goes to the button and clicks: its outline and its number come in together.
             Beat { hold: 650, pointer: Some(click), click: true, step: Some(1), scene: pinned, ..Beat::default() },
             Beat {
                 hold: 700,
-                path: vec![(rows.0, rows.1), (150.0, 140.0), (rows.0 + rows.2, rows.1 + rows.3)],
+                path: vec![
+                    (rows.0, rows.1),
+                    (rows.0 + rows.2 * 0.5, rows.1 + rows.3 * 0.8),
+                    (rows.0 + rows.2, rows.1 + rows.3),
+                ],
                 drag: Some(Drag::Pin),
                 step: Some(1),
                 scene: both.clone(),
@@ -244,41 +273,28 @@ fn basics() -> Demo {
     }
 }
 
-/// Where it goes: the next session, then the list, a session picked in it.
+/// Where it goes: pointed at, the list opens; a session picked there, it closes. One, then back:
+/// the list shows most of the time (the room under the pill is its).
 fn target() -> Demo {
     let middle = 210.0;
     let name = (middle - NAME_LEFT_OF_MIDDLE, PILL_TOP + PILL_HEIGHT / 2.0);
-    let rest = (392.0, 116.0);
+    let row = |i| (name.0 + 20.0, list_row_middle(i));
     let scene = |target, list| Scene { frozen: true, listening: true, target, list, ..Scene::default() };
-    Demo {
-        size: (420.0, 424.0),
-        app: None,
-        chat: None,
-        beats: vec![
-            Beat { hold: 1100, pointer: Some(rest), scene: scene(session(0), None), ..Beat::default() },
-            Beat { hold: 1300, key: Some("target".into()), scene: scene(session(1), None), ..Beat::default() },
-            Beat { hold: 900, pointer: Some(name), scene: scene(session(1), Some(None)), ..Beat::default() },
-            Beat {
-                hold: 450,
-                pointer: Some((name.0 + 20.0, list_row_middle(2))),
-                scene: scene(session(1), Some(Some(2))),
-                ..Beat::default()
-            },
-            Beat {
-                hold: 1800,
-                pointer: Some((name.0 + 20.0, list_row_middle(2))),
-                click: true,
-                scene: scene(session(2), None),
-                ..Beat::default()
-            },
-        ],
-    }
+    let pick = |from: usize, to: usize| {
+        [
+            Beat { hold: 1300, pointer: Some(name), scene: scene(session(from), Some(None)), ..Beat::default() },
+            Beat { hold: 450, pointer: Some(row(to)), scene: scene(session(from), Some(Some(to))), ..Beat::default() },
+            Beat { hold: 700, pointer: Some(row(to)), click: true, scene: scene(session(to), None), ..Beat::default() },
+        ]
+    };
+    Demo { size: (420.0, 412.0), app: None, chat: None, beats: [pick(0, 2), pick(2, 0)].concat() }
 }
 
-/// A pin's card: its number clicked, what's typed, what it is.
-fn card() -> Demo {
-    let app = (20.0, 16.0);
-    let button = on_app(app, APP_BUTTON);
+/// A pin's card: its number clicked, what's typed, what it is. The app as wide as it's given, with
+/// room under its button for the card, and under that for the key pressed.
+fn card(width: f32) -> Demo {
+    let app = (0.0, 0.0, width, APP_CONTENT + 60.0 + CAPTION_ROOM);
+    let button = app_button(app);
     let at = (button.0 + 8.0, button.1 + button.3 - 6.0);
     let pin = |intent| Pin { number: 1, at, on: On::Element(button), intent };
     // The pill left out: the card is what's shown.
@@ -289,13 +305,13 @@ fn card() -> Demo {
     };
     let text = "Keep the label on one line";
     Demo {
-        size: (536.0, 322.0),
+        size: (width, app.3),
         app: Some(app),
         chat: None,
         beats: vec![
             Beat {
                 hold: 1000,
-                pointer: Some((440.0, 70.0)),
+                pointer: Some((width - 96.0, 70.0)),
                 scene: Scene { pins: vec![pin(None)], ..Scene::default() },
                 ..Beat::default()
             },
@@ -311,17 +327,19 @@ fn card() -> Demo {
     }
 }
 
-/// Measure (the distances from the pointer, then the size of what's dragged over), then Draw.
-fn tools() -> Demo {
-    let app = (40.0, 62.0);
-    let button = on_app(app, APP_BUTTON);
-    let at = (app.0 + 200.0, app.1 + 177.0);
+/// Measure (the distances from the pointer, then the size of what's dragged over), then Draw. The
+/// app as wide as it's given.
+fn tools(width: f32) -> Demo {
+    let app = (0.0, SCREEN_TOP, width, APP_CONTENT + 40.0);
+    let button = app_button(app);
+    let inside_right = app.0 + app.2 - APP_BORDER;
+    let at = (button.0 + button.2 + 96.0, button.1 + 21.0);
     let distance = Measured::Distance {
         at,
-        across: (button.0 + button.2, app.0 + APP.0 - 1.0),
-        down: (app.1 + APP_RULE, app.1 + APP.1 - 1.0),
+        across: (button.0 + button.2, inside_right),
+        down: (app.1 + APP_BORDER + APP_RULE, app.1 + app.3 - APP_BORDER),
     };
-    let ring = circle_around((app.0 + APP_TOTAL.0, app.1 + APP_TOTAL.1), (40.0, 17.0));
+    let ring = circle_around(app_total(app), (40.0, 17.0));
     let scene = |tool, measured: Vec<Measured>, pins| Scene {
         frozen: true,
         listening: true,
@@ -333,12 +351,13 @@ fn tools() -> Demo {
     };
     let size = Measured::Area(button);
     let drawn = Pin { number: 1, at: ring[0], on: On::Sketch(ring.clone()), intent: None };
+    let rest = (width - 96.0, app.1 + app.3 - 50.0);
     Demo {
-        size: (536.0, 330.0),
+        size: (width, app.1 + app.3),
         app: Some(app),
         chat: None,
         beats: vec![
-            Beat { hold: 900, pointer: Some((440.0, 250.0)), scene: scene(None, vec![], vec![]), ..Beat::default() },
+            Beat { hold: 900, pointer: Some(rest), scene: scene(None, vec![], vec![]), ..Beat::default() },
             Beat {
                 hold: 600,
                 key: Some("measure".into()),
@@ -652,18 +671,10 @@ pub struct Look {
     pub send: String,
 }
 
-/// The stage: a plain screen, as wide as it's given.
-fn stage(width: f32, height: f32, t: Theme) -> Div {
-    div()
-        .relative()
-        .flex_none()
-        .w(px(width))
-        .h(px(height))
-        .rounded(px(Radius::CARD))
-        .border_1()
-        .border_color(t.card_stroke)
-        .bg(t.control_hover)
-        .overflow_hidden()
+/// The stage, as wide as it's given: nothing of its own, only the windows and the overlay's pieces on
+/// it (a screen behind them looked pasted in).
+fn stage(width: f32, height: f32) -> Div {
+    div().relative().flex_none().w(px(width)).h(px(height))
 }
 
 /// How wide `text` is in the pill's name (12.5 points, medium).
@@ -730,18 +741,14 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
             .into_any_element()
     };
     let size_of = |(_, _, w, h): Rect| format!("{} × {}", w.round(), h.round());
-
-    // What a click would pin, under the pointer.
-    for (hover, shows) in [(from.hover, between(true, false, f)), (to.hover, f)] {
-        if let Some(r) = hover.filter(|_| shows > 0.0) {
-            prims.push(Prim::Fill(rect(r, dx), hex(style::ANNOTATION_BLUE, 0.12 * shows)));
-            prims.push(Prim::Border(rect(r, dx), hex(style::ANNOTATION_BLUE, shows), 1.5, false));
-        }
-    }
+    // What a click or a drag makes is there at once, as on screen: fading in, a drag's outline went
+    // as the pointer let go, then came back.
+    let made = &demo.beats[shown.beat];
+    let arriving = if made.click || made.drag.is_some() { 1.0 } else { f };
 
     // Measured: the distances from the pointer, and sizes held; those in both scenes stay, the others
     // come or go.
-    let staying = to.measured.iter().map(|m| (m, if from.measured.contains(m) { 1.0 } else { f }));
+    let staying = to.measured.iter().map(|m| (m, if from.measured.contains(m) { 1.0 } else { arriving }));
     let going = from.measured.iter().filter(|m| !to.measured.contains(m)).map(|m| (m, 1.0 - f));
     for (m, shows) in staying.chain(going) {
         if shows <= 0.0 {
@@ -777,7 +784,7 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
     let mut pins: Vec<(&Pin, f32)> = Vec::new();
     for p in &to.pins {
         let stays = from.pins.iter().any(|q| q.number == p.number);
-        pins.push((p, if stays { 1.0 } else { f }));
+        pins.push((p, if stays { 1.0 } else { arriving }));
     }
     for p in from.pins.iter().filter(|p| !to.pins.iter().any(|q| q.number == p.number)) {
         pins.push((p, 1.0 - f));
@@ -838,7 +845,7 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         }
     }
 
-    let app = demo.app.map(|(x, y)| app_view(t).absolute().left(px(x + dx)).top(px(y)));
+    let app = demo.app.map(|r| app_view(r, t).absolute().left(px(r.0 + dx)).top(px(r.1)));
     let chat = demo.chat.map(|r| chat_view(r, dx, between(from.sent, to.sent, f), shown, demo, t));
     let painted = canvas(
         |_, _, _| {},
@@ -865,7 +872,7 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
     let pill = pill_view(demo, from, to, f, shown, dx, look, window);
     let pointer = pointer_view(shown, to, dx);
     let captions = captions_view(shown, to, width, look);
-    stage(width, demo.size.1, t)
+    stage(width, demo.size.1)
         .children(app)
         .children(chat)
         .child(painted)
@@ -878,23 +885,25 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         .into_any_element()
 }
 
-/// The app on the stage: an order's summary, its total, and the button to pay.
-fn app_view(t: Theme) -> Div {
+/// The app on the stage, `(_, _, width, height)`: an order's summary (its rows cramped), its total, and
+/// the button to pay (its label wrapping).
+fn app_view((_, _, width, height): Rect, t: Theme) -> Div {
     let (sand, sage) =
         if t.dark { (hex(0x8c7d62, 1.0), hex(0x5f7a5a, 1.0)) } else { (hex(0xe6dcc6, 1.0), hex(0xa9c2a2, 1.0)) };
     let surface = if t.dark { hex(0x262523, 1.0) } else { hex(0xffffff, 1.0) };
+    let inside = width - 2.0 * APP_BORDER - 32.0;
     let row = |top: f32, swatch: Hsla, name: &'static str, price: &'static str| {
         div()
             .absolute()
             .left(px(16.))
             .top(px(top))
-            .w(px(APP.0 - 32.))
-            .h(px(26.))
+            .w(px(inside))
+            .h(px(APP_ROW_HEIGHT))
             .flex()
             .items_center()
             .gap(px(10.))
             .text_size(px(12.5))
-            .child(div().flex_none().size(px(26.)).rounded(px(6.)).bg(swatch))
+            .child(div().flex_none().size(px(APP_ROW_HEIGHT)).rounded(px(5.)).bg(swatch))
             .child(div().flex_1().child(name))
             .child(div().text_color(t.secondary).child(price))
     };
@@ -903,8 +912,8 @@ fn app_view(t: Theme) -> Div {
     let (button, on_button) =
         if t.dark { (hex(0xedebe7, 1.0), hex(0x1c1b19, 1.0)) } else { (hex(0x2b2a27, 1.0), hex(0xffffff, 1.0)) };
     div()
-        .w(px(APP.0))
-        .h(px(APP.1))
+        .w(px(width))
+        .h(px(height))
         .rounded(px(Radius::CARD))
         .border_1()
         .border_color(t.card_stroke)
@@ -920,15 +929,15 @@ fn app_view(t: Theme) -> Div {
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("Order summary"),
         )
-        .child(row(44., sand, "Linen tote", "$48.00"))
-        .child(row(78., sage, "Notebook × 2", "$24.00"))
-        .child(div().absolute().left(px(16.)).top(px(APP_RULE - 1.)).w(px(APP.0 - 32.)).h(px(1.)).bg(t.hairline))
+        .child(row(APP_ROW_TOPS[0], sand, "Linen tote", "$48.00"))
+        .child(row(APP_ROW_TOPS[1], sage, "Notebook × 2", "$24.00"))
+        .child(div().absolute().left(px(16.)).top(px(APP_RULE - 1.)).w(px(inside)).h(px(1.)).bg(t.hairline))
         .child(
             div()
                 .absolute()
                 .left(px(16.))
-                .top(px(124.))
-                .w(px(APP.0 - 32.))
+                .top(px(APP_TOTAL_TOP))
+                .w(px(inside))
                 .flex()
                 .justify_between()
                 .text_size(px(12.5))
@@ -1087,16 +1096,30 @@ fn pill_view(
         }
         _ => 0.0,
     };
+    // The tool's slot easing from one's width to the other's (nothing's: none), their names fading
+    // one into the other.
+    let slot_width = |tool: Option<Tool>| tool.map_or(0.0, |tool| tool_slot_width(name_width(tool.label(), window)));
     let tool = match (from.tool, to.tool) {
         (None, None) => None,
-        (Some(a), None) => Some((a, 1.0 - f)),
-        (_, Some(b)) => Some((b, if from.tool.is_some() { 1.0 } else { f })),
+        (a, b) => Some(ToolSlot {
+            width: slot_width(a) + (slot_width(b) - slot_width(a)) * ease(f),
+            shown: match (a, b) {
+                (None, _) => f,
+                (_, None) => 1.0 - f,
+                _ => 1.0,
+            },
+            tools: match (a, b) {
+                (Some(a), Some(b)) if a == b => vec![(a, 1.0)],
+                _ => a.map(|a| (a, 1.0 - f)).into_iter().chain(b.map(|b| (b, f))).collect(),
+            },
+        }),
     };
     let pill = still_pill(
         Still {
             help: false,
             listening: to.listening || from.listening,
             level,
+            recording_clip: false,
             target,
             list_open: to.list.is_some() && f > 0.5 || from.list.is_some() && f <= 0.5,
             tool,
@@ -1105,7 +1128,11 @@ fn pill_view(
     );
     let list = match (from.list, to.list) {
         (None, None) => None,
-        (a, b) => Some((list_view(b.or(a).flatten(), to.target, t), between(a.is_some(), b.is_some(), f))),
+        (a, b) => {
+            let chosen = (0..3).find(|&i| session(i) == to.target).map_or(Tried::History, Tried::Session);
+            let list = list_view(b.or(a).flatten(), chosen, 0, t, &|_, row| row.into_any_element());
+            Some((list, between(a.is_some(), b.is_some(), f)))
+        }
     };
     let below = list.map(|(list, shown)| {
         div()
@@ -1137,9 +1164,16 @@ fn list_row_middle(i: usize) -> f32 {
     PILL_TOP + PILL_HEIGHT + LIST_GAP as f32 + 1.0 + 4.0 + heading + session * i as f32 + session / 2.0
 }
 
-/// The pill's list as it lists three sessions (`lit`, the one the pointer's on; `chosen`'s checked),
-/// two directories and History only.
-fn list_view(lit: Option<usize>, chosen: &str, t: Theme) -> AnyElement {
+/// The pill's list as it lists three sessions (`lit`, the one the pointer's on), two directories and
+/// History only, `chosen` checked, a new session's agent `agent`. Each row and agent is passed
+/// through `row` with what picking it does (the pill to try picks them).
+fn list_view(
+    lit: Option<usize>,
+    chosen: Tried,
+    agent: usize,
+    t: Theme,
+    row: &dyn Fn(Option<Try>, Div) -> AnyElement,
+) -> AnyElement {
     let apps: [&str; 3] = match () {
         _ if cfg!(target_os = "macos") => ["Terminal", "Ghostty", "Diri"],
         _ if cfg!(windows) => ["Windows Terminal", "Windows Terminal", "Console"],
@@ -1149,24 +1183,27 @@ fn list_view(lit: Option<usize>, chosen: &str, t: Theme) -> AnyElement {
     let separator = if cfg!(windows) { "\\" } else { "/" };
     let mut rows: Vec<AnyElement> = vec![list_heading("Sessions", t).into_any_element()];
     for (i, app) in apps.into_iter().enumerate() {
-        let name = session(i);
-        let lines = list_lines(name.into(), Some(app.into()), t);
-        rows.push(list_row_face(name == chosen, lit == Some(i), true, lines, t).into_any_element());
+        let lines = list_lines(session(i).into(), Some(app.into()), t);
+        let face = list_row_face(chosen == Tried::Session(i), lit == Some(i), true, lines, t);
+        rows.push(row(Some(Try::Pick(Tried::Session(i))), face));
     }
     rows.push(list_hairline(t));
-    let agents = ["Claude Code", "Codex", "OpenCode"];
-    let track = agents_track(t).children(agents.into_iter().enumerate().map(|(i, name)| {
-        agent_segment(name, i == 0, t).when(i == 0, |d| d.bg(t.selected).border_color(t.selected_stroke))
+    let track = agents_track(t).children(AGENTS.into_iter().enumerate().map(|(i, name)| {
+        let face =
+            agent_segment(name, i == agent, t).when(i == agent, |d| d.bg(t.selected).border_color(t.selected_stroke));
+        row(Some(Try::Agent(i)), face)
     }));
     rows.push(new_session_row(track, t));
-    for name in ["shop", "api"] {
+    for (i, name) in FOLDERS.into_iter().enumerate() {
         let content = folder_content(name.into(), format!("{home}{separator}{name}"), t);
-        rows.push(list_row_face(false, false, true, content, t).into_any_element());
+        let face = list_row_face(chosen == Tried::New(agent, i), false, true, content, t);
+        rows.push(row(Some(Try::Pick(Tried::New(agent, i))), face));
     }
-    rows.push(list_row_face(false, false, true, choose_folder_content(t), t).into_any_element());
+    rows.push(row(None, list_row_face(false, false, true, choose_folder_content(t), t)));
     rows.push(list_hairline(t));
     let history = list_lines("History only".into(), Some("Send it later from the asides window".into()), t);
-    rows.push(list_row_face(false, false, true, history, t).into_any_element());
+    let face = list_row_face(chosen == Tried::History, false, true, history, t);
+    rows.push(row(Some(Try::Pick(Tried::History)), face));
     list_panel(t).child(list_rows().children(rows)).into_any_element()
 }
 
@@ -1353,34 +1390,293 @@ fn said_text(text: &str, words: usize, one: Hsla, two: Hsla, ink: Hsla) -> Style
 
 // --- Still ---
 
-/// The pill as it stands (`help`, its keys shown under it), on a stage as wide as it's given.
-pub fn still(width: f32, help: bool, look: &Look) -> AnyElement {
+/// The pill with its keys under it, in the middle of `width`.
+pub fn still(width: f32, look: &Look) -> AnyElement {
     let t = look.t;
     let pill = still_pill(
         Still {
-            help,
+            help: true,
             listening: true,
             level: 0.0,
+            recording_clip: false,
             target: faces::target_name(Some(session(0).into())).into_any_element(),
             list_open: false,
             tool: None,
         },
         t,
     );
-    let sheet = help.then(|| keys_sheet_face(t, &look.keys, &look.freeze, &look.send, false));
+    let sheet = keys_sheet_face(t, &look.keys, &look.freeze, &look.send, false);
     div()
-        .relative()
         .flex_none()
         .w(px(width))
-        .rounded(px(Radius::CARD))
-        .border_1()
-        .border_color(t.card_stroke)
-        .bg(t.control_hover)
-        .overflow_hidden()
-        .py(px(PILL_TOP))
         .flex()
         .justify_center()
-        .child(div().flex().flex_col().items_start().gap(px(LIST_GAP as f32)).child(pill).children(sheet))
+        .child(div().flex().flex_col().items_start().gap(px(LIST_GAP as f32)).child(pill).child(sheet))
+        .into_any_element()
+}
+
+// --- The pill to try ---
+
+/// A new session's agents, and the directories it can start in, in the pill's list.
+const AGENTS: [&str; 3] = ["Claude Code", "Codex", "OpenCode"];
+const FOLDERS: [&str; 2] = ["shop", "api"];
+/// How long a note shows under the pill (`ui::TOAST`), and the pill is away once sent or closed.
+pub const NOTE_SHOWN: Duration = Duration::from_millis(1600);
+pub const AWAY: Duration = Duration::from_millis(2200);
+
+/// Where the pill to try sends: a made-up session, a new one (its agent, its directory), History only.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Tried {
+    Session(usize),
+    New(usize, usize),
+    History,
+}
+
+impl Default for Tried {
+    fn default() -> Self {
+        Tried::Session(0)
+    }
+}
+
+impl Tried {
+    /// As the pill names it (`Targets::label`).
+    pub fn label(self) -> String {
+        match self {
+            Tried::Session(i) => session(i).into(),
+            Tried::New(agent, folder) => format!("New {} ({})", AGENTS[agent], FOLDERS[folder]),
+            Tried::History => "History only".into(),
+        }
+    }
+}
+
+/// What's done to the pill to try: the pointer on a button (or off it), a button clicked, an agent
+/// or where it goes picked in its list.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Try {
+    Point(&'static str, bool),
+    Press(&'static str),
+    Agent(usize),
+    Pick(Tried),
+    /// A click outside the list or the keys open under it.
+    Dismiss,
+}
+
+/// Help's pill to try, as it is: nothing is sent, its sessions are made up.
+#[derive(Default)]
+pub struct TryPill {
+    pub muted: bool,
+    /// Recording a clip.
+    pub clip: bool,
+    pub keys: bool,
+    pub list: bool,
+    pub target: Tried,
+    pub agent: usize,
+    /// The button under the pointer: its name shows under the pill.
+    pub pointed: Option<&'static str>,
+    /// What a note under it says (Start over's), until when.
+    pub note: Option<(String, Instant)>,
+    /// Sent or closed: the pill away, what's said in its place, until when.
+    pub away: Option<(String, Instant)>,
+    /// Each time it comes back (it fades in again).
+    pub back: u32,
+    /// The list or the keys closed by a click outside them, by which button opens them, and when: the
+    /// click on that button doesn't open them again.
+    pub closed: Option<(&'static str, Instant)>,
+}
+
+/// Within this of a click outside the list or the keys, their button's click was that click.
+const CLICKED_SHUT: Duration = Duration::from_millis(500);
+
+impl TryPill {
+    /// `done` to it now; when something it shows then should go (a note, the pill away), when.
+    pub fn apply(&mut self, done: Try, now: Instant) -> Option<Instant> {
+        match done {
+            Try::Point(id, true) => self.pointed = Some(id),
+            Try::Point(id, false) => {
+                if self.pointed == Some(id) {
+                    self.pointed = None;
+                }
+            }
+            Try::Press(id @ ("help" | "target"))
+                if self
+                    .closed
+                    .is_some_and(|(was, at)| was == id && now.saturating_duration_since(at) < CLICKED_SHUT) =>
+            {
+                self.closed = None;
+            }
+            Try::Press("help") => (self.keys, self.list) = (!self.keys, false),
+            Try::Press("mic") => self.muted = !self.muted,
+            Try::Press("clip") => {
+                self.clip = !self.clip;
+                if !self.clip {
+                    self.note = Some(("The clip is in the aside".into(), now + NOTE_SHOWN));
+                    return Some(now + NOTE_SHOWN);
+                }
+            }
+            Try::Press("target") => (self.list, self.keys) = (!self.list, false),
+            Try::Press("restart") => {
+                (self.list, self.keys) = (false, false);
+                self.note = Some(("Started over".into(), now + NOTE_SHOWN));
+                return Some(now + NOTE_SHOWN);
+            }
+            Try::Press(id @ ("done" | "close")) => {
+                let said = match id {
+                    "done" => format!("Sent to {}", self.target.label()),
+                    _ => "Closed without sending".into(),
+                };
+                (self.list, self.keys, self.pointed, self.note, self.clip) = (false, false, None, None, false);
+                self.away = Some((said, now + AWAY));
+                return Some(now + AWAY);
+            }
+            Try::Press(_) => {}
+            Try::Agent(agent) => {
+                self.agent = agent;
+                if let Tried::New(_, folder) = self.target {
+                    self.target = Tried::New(agent, folder);
+                }
+            }
+            Try::Pick(target) => (self.target, self.list) = (target, false),
+            Try::Dismiss => {
+                let open = if self.list { Some("target") } else { self.keys.then_some("help") };
+                self.closed = open.map(|id| (id, now));
+                (self.list, self.keys) = (false, false);
+            }
+        }
+        None
+    }
+
+    /// The note and the pill's absence, gone by `now`.
+    pub fn expire(&mut self, now: Instant) {
+        if self.note.as_ref().is_some_and(|(_, until)| *until <= now) {
+            self.note = None;
+        }
+        if self.away.as_ref().is_some_and(|(_, until)| *until <= now) {
+            (self.away, self.back) = (None, self.back + 1);
+        }
+    }
+}
+
+/// What hears what's done to the pill to try.
+pub type Act = Rc<dyn Fn(Try, &mut Window, &mut gpui::App)>;
+
+/// A note by the pill: the overlay's (`ui::notes_column`), on Help's page.
+fn note_view(text: String, t: Theme) -> Div {
+    plain_glass(t, 7.)
+        .h(px(26.))
+        .px(px(9.))
+        .flex()
+        .items_center()
+        .text_color(t.primary.opacity(0.86))
+        .text_size(px(12.))
+        .line_height(px(16.))
+        .child(div().relative().whitespace_nowrap().child(text))
+}
+
+/// Help's pill to try, in the middle of `width`: its buttons light up under the pointer, their names
+/// under it; the microphone mutes, the keys and the list open under it, a session is picked there;
+/// Start over says so; sent or closed, it's away a moment. `act` hears what's done to it.
+pub fn try_pill(width: f32, pill: &TryPill, look: &Look, act: Act) -> AnyElement {
+    let t = look.t;
+    let label = pill.target.label();
+    let k = |name: &str| (look.key)(name);
+    let named = |name: &str, key: String| if key.is_empty() { name.to_string() } else { format!("{name} ({key})") };
+    let name_of = |id: &str| match id {
+        "help" => named("Every key", k("help")),
+        "mic" if pill.muted => format!("Muted (click to listen, or hold {})", k("talk")),
+        "mic" => named("Listening (click to mute)", k("mic")),
+        "clip" if pill.clip => "Recording a clip (click to stop)".into(),
+        "clip" => named("Record a clip of what happens next, live", k("clip")),
+        "target" => format!("Where it goes ({} switches, {} lists)", k("target"), k("sessions")),
+        "restart" => named("Start over without sending", k("restart")),
+        "done" => format!("Send ({} or {})", look.send, k("done")),
+        _ => named("Close without sending", k("close")),
+    };
+    let button = |id: &'static str, face: Div| -> AnyElement {
+        let (hovered, pressed) = (act.clone(), act.clone());
+        // Lit as the overlay's: the main action lighter, the others a glass pill, unless already on.
+        let lit = match id {
+            "done" => Some(hex(style::UI_LIGHT, 1.0)),
+            "mic" if !pill.muted => None,
+            "clip" if pill.clip => None,
+            "target" if pill.list => None,
+            _ => Some(t.hover),
+        };
+        face.id(id)
+            .cursor_pointer()
+            .when_some(lit, |d, lit| d.hover(move |s| s.bg(lit)))
+            .on_hover(move |on, window, cx| hovered(Try::Point(id, *on), window, cx))
+            .on_click(move |_, window, cx| pressed(Try::Press(id), window, cx))
+            .into_any_element()
+    };
+    let shown: AnyElement = match &pill.away {
+        Some((said, _)) => controls::fade_in(
+            div().h(px(PILL_HEIGHT)).flex().items_center().child(note_view(said.clone(), t)),
+            gpui::SharedString::from(format!("tried-away-{}", pill.back)),
+            0.,
+        )
+        .into_any_element(),
+        None => {
+            let face = faces::still_pill_with(
+                Still {
+                    help: pill.keys,
+                    listening: !pill.muted,
+                    level: 0.0,
+                    recording_clip: pill.clip,
+                    target: faces::target_name(Some(label.clone().into())).into_any_element(),
+                    list_open: pill.list,
+                    tool: None,
+                },
+                t,
+                &button,
+            );
+            controls::fade_in(face, gpui::SharedString::from(format!("tried-pill-{}", pill.back)), 0.)
+                .into_any_element()
+        }
+    };
+    let row = |picks: Option<Try>, face: Div| -> AnyElement {
+        let Some(picks) = picks else { return face.into_any_element() };
+        let id = gpui::SharedString::from(format!("tried-{picks:?}"));
+        let pressed = act.clone();
+        face.id(id)
+            .cursor_pointer()
+            .hover(|s| s.bg(t.selected).border_color(t.selected_stroke))
+            .on_click(move |_, window, cx| pressed(picks, window, cx))
+            .into_any_element()
+    };
+    // Under it, from its left: the list or the keys, over what's below (on the page's color, which
+    // would show through the glass), until a click outside them; else a note.
+    let under: Option<AnyElement> = match (pill.away.is_some(), pill.list, pill.keys) {
+        (false, true, _) => Some(list_view(None, pill.target, pill.agent, t, &row)),
+        (false, _, true) => Some(keys_sheet_face(t, &look.keys, &look.freeze, &look.send, false).into_any_element()),
+        _ => None,
+    };
+    let open = under.is_some();
+    let panel = under.map(|under| {
+        let id = if pill.list { "tried-list" } else { "tried-keys" };
+        let dismiss = act.clone();
+        let surface = div().rounded(px(12.)).bg(t.control_hover).child(under);
+        deferred(
+            div()
+                .absolute()
+                .top(px(PILL_HEIGHT + LIST_GAP as f32))
+                .left_0()
+                .block_mouse_except_scroll()
+                .child(controls::fade_in(surface, id, -4.))
+                .on_mouse_down_out(move |_, window, cx| dismiss(Try::Dismiss, window, cx)),
+        )
+        .with_priority(1)
+    });
+    let said = pill.note.as_ref().map(|(text, _)| text.clone());
+    let said = said.or_else(|| (pill.away.is_none() && !open).then(|| pill.pointed.map(name_of)).flatten());
+    let note = div().h(px(34.)).pt(px(8.)).flex().justify_center().children(said.map(|text| note_view(text, t)));
+    div()
+        .flex_none()
+        .w(px(width))
+        .flex()
+        .flex_col()
+        .items_center()
+        .child(div().relative().h(px(PILL_HEIGHT)).child(shown).children(panel))
+        .child(note)
         .into_any_element()
 }
 
@@ -1534,18 +1830,93 @@ mod tests {
 
     #[test]
     fn every_demonstration_is_there_and_makes_sense() {
-        for name in ["basics", "target", "card", "tools"] {
-            let demo = super::demo(name).unwrap_or_else(|| panic!("no demonstration {name}"));
-            assert!(demo.beats.len() > 1, "{name}");
-            for beat in &demo.beats {
-                // A card is a pin's, and a drag says what it draws.
-                if let Some(card) = &beat.scene.card {
-                    assert!(beat.scene.pins.iter().any(|p| p.number == card.pin), "{name}");
+        for width in [536.0, 700.0] {
+            for name in ["basics", "target", "card", "tools"] {
+                let demo = super::demo(name, width).unwrap_or_else(|| panic!("no demonstration {name}"));
+                assert!(demo.beats.len() > 1, "{name}");
+                assert!(demo.size.0 <= width, "{name} at {width}");
+                for beat in &demo.beats {
+                    // A card is a pin's, and a drag says what it draws.
+                    if let Some(card) = &beat.scene.card {
+                        assert!(beat.scene.pins.iter().any(|p| p.number == card.pin), "{name}");
+                    }
+                    assert_eq!(beat.path.len() > 1, beat.drag.is_some(), "{name}");
                 }
-                assert_eq!(beat.path.len() > 1, beat.drag.is_some(), "{name}");
+                // The windows fill it, side by side.
+                let right = demo.chat.or(demo.app).map(|(x, _, w, _)| x + w);
+                assert!(right.is_none_or(|right| (right - demo.size.0).abs() < 0.01), "{name} at {width}");
             }
         }
-        let steps: Vec<_> = super::demo("basics").unwrap().beats.iter().filter_map(|b| b.step).collect();
+        let steps: Vec<_> = super::demo("basics", 600.0).unwrap().beats.iter().filter_map(|b| b.step).collect();
         assert_eq!((steps.first(), steps.last()), (Some(&0), Some(&3)));
+        // The same timing at any width (a step is watched from its start).
+        let (narrow, wide) = (super::demo("basics", 536.0).unwrap(), super::demo("basics", 700.0).unwrap());
+        assert_eq!(narrow.time_of_step(2), wide.time_of_step(2));
+    }
+
+    #[test]
+    fn what_is_marked_on_the_app_is_inside_its_border() {
+        let app = (10.0, 20.0, 300.0, 200.0);
+        // Drawn inside its 1-point border: the button at (16, 140) from there.
+        assert_eq!(app_button(app), (27.0, 161.0, 92.0, 42.0));
+        let rows = app_rows(app);
+        assert_eq!((rows.0, rows.2), (23.0, 300.0 - 2.0 - 24.0));
+        // Around both rows, a little past them.
+        assert!(rows.1 < 20.0 + 1.0 + APP_ROW_TOPS[0]);
+        assert!(rows.1 + rows.3 > 20.0 + 1.0 + APP_ROW_TOPS[1] + APP_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn the_pill_to_try_does_what_the_overlays_does() {
+        let now = Instant::now();
+        let mut pill = TryPill::default();
+        assert_eq!(pill.apply(Try::Press("mic"), now), None);
+        assert!(pill.muted);
+        // The list and the keys take turns under it.
+        pill.apply(Try::Press("target"), now);
+        pill.apply(Try::Press("help"), now);
+        assert!(pill.keys && !pill.list);
+        // A new session: the agent picked first, then the directory; a later agent follows.
+        pill.apply(Try::Press("target"), now);
+        pill.apply(Try::Agent(1), now);
+        pill.apply(Try::Pick(Tried::New(1, 0)), now);
+        assert!(!pill.list);
+        assert_eq!(pill.target.label(), "New Codex (shop)");
+        pill.apply(Try::Agent(2), now);
+        assert_eq!(pill.target.label(), "New OpenCode (shop)");
+        // Its buttons' names: only the one the pointer's still on.
+        pill.apply(Try::Point("mic", true), now);
+        pill.apply(Try::Point("restart", true), now);
+        pill.apply(Try::Point("mic", false), now);
+        assert_eq!(pill.pointed, Some("restart"));
+        // A clip recorded, then stopped: it's in the aside.
+        assert_eq!(pill.apply(Try::Press("clip"), now), None);
+        assert!(pill.clip);
+        let until = pill.apply(Try::Press("clip"), now).unwrap();
+        assert!(!pill.clip);
+        assert_eq!(pill.note.as_ref().map(|(text, _)| text.as_str()), Some("The clip is in the aside"));
+        pill.expire(until);
+        // Started over: a note, until it's gone.
+        let until = pill.apply(Try::Press("restart"), now).unwrap();
+        assert_eq!(pill.note.as_ref().map(|(text, _)| text.as_str()), Some("Started over"));
+        pill.expire(until - ms(1));
+        assert!(pill.note.is_some());
+        pill.expire(until);
+        assert!(pill.note.is_none());
+        // A click outside the list closes it; that click on where it goes doesn't open it again, a
+        // later one does.
+        pill.apply(Try::Press("target"), now);
+        pill.apply(Try::Dismiss, now);
+        pill.apply(Try::Press("target"), now + ms(80));
+        assert!(!pill.list);
+        pill.apply(Try::Press("target"), now + ms(900));
+        assert!(pill.list);
+        pill.apply(Try::Pick(Tried::New(2, 0)), now);
+        // Sent: away, saying where, then back (fading in again).
+        let until = pill.apply(Try::Press("done"), now).unwrap();
+        assert_eq!(pill.away.as_ref().map(|(text, _)| text.as_str()), Some("Sent to New OpenCode (shop)"));
+        assert_eq!(pill.pointed, None);
+        pill.expire(until);
+        assert_eq!((pill.away.is_none(), pill.back), (true, 1));
     }
 }
