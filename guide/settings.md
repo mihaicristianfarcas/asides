@@ -25,9 +25,9 @@ asides = "ctrl+alt+Space"       # open; while open, send
 freeze = "ctrl+alt+KeyP"        # frozen ↔ live
 
 [agents]                        # New session in…
-terminal = ""                   # "" (Terminal), "Ghostty" or "Diri"
-default = ""                    # "" (Claude Code), "codex", "opencode", "gemini", "copilot", "qwen"
-claude = []                     # extra arguments per agent, e.g. ["--model", "opus"]; also codex, opencode…
+terminal = ""                   # "" (Terminal), "Ghostty", "iTerm", "WezTerm", "kitty" or "Diri"
+default = ""                    # "" (Claude Code), or another agent's program: "codex", "cursor-agent", "gemini"…
+claude = ["--model", "opus"]    # extra arguments for an agent's new sessions, by its program
 
 [measure]
 color = "#FF2D55"

@@ -118,7 +118,7 @@ pub fn start_session(
     fs::create_dir_all(&launches)?;
     let launch = format!("{}-{}", agent.program(), now_ms());
     let file = launches.join(format!("{launch}.json"));
-    let words = deliver::launch_words(agent, message, extra, readable);
+    let words = deliver::launch_words(agent, message, extra, readable).map_err(anyhow::Error::msg)?;
     let spec = serde_json::json!({ "words": words, "dir": dir, "launch": launch });
     fs::write(&file, spec.to_string())?;
     let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -160,7 +160,7 @@ pub fn installed_agents() -> Vec<AgentKind> {
     let path = asides_core::launch::user_path();
     AgentKind::ALL
         .into_iter()
-        .filter(|kind| asides_core::launch::find_program(&path, kind.program()).is_some())
+        .filter(|kind| kind.launches() && asides_core::launch::find_program(&path, kind.program()).is_some())
         .collect()
 }
 

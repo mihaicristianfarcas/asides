@@ -282,8 +282,13 @@ fn list_sessions(json: bool) -> Result<()> {
         return Ok(());
     }
     if found.is_empty() {
-        let terminals = if cfg!(target_os = "macos") { "Terminal, Ghostty or Diri" } else { "any terminal" };
-        println!("No agent sessions are running. Start Claude Code, Codex or OpenCode in {terminals}.");
+        let terminals = match cfg!(target_os = "macos") {
+            true => "Terminal, iTerm, Ghostty, WezTerm or Diri, or in tmux, Zellij or screen in any terminal",
+            false => "any terminal",
+        };
+        println!(
+            "No agent sessions are running. Start Claude Code, Codex, Cursor or another coding agent in {terminals}."
+        );
         return Ok(());
     }
     let default = sessions::latest(&found).map(AgentSession::id);

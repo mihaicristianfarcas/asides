@@ -1,9 +1,10 @@
 # Troubleshooting
 
-**The aside didn't reach my agent.** The menu (and History in the asides window) says why. asides
-can type into Terminal, Ghostty and Diri (on Windows, any console: Windows Terminal, VS Code's
-terminal…); the first time, allow it to control Terminal or Ghostty (System Settings → Privacy &
-Security → Automation). Every aside stays in History: send it again from there, or with `asides
+**The aside didn't reach my agent.** The menu (and History in the asides window) says why. On a Mac
+asides types into Terminal, iTerm, Ghostty, WezTerm, Diri, kitty with its remote control on, and
+tmux, Zellij, screen or Neovim's terminal in any app (on Windows, any console: Windows Terminal, VS
+Code's terminal…); the first time, allow it to control Terminal, iTerm or Ghostty (System Settings
+→ Privacy & Security → Automation). Every aside stays in History: send it again from there, or with `asides
 send`.
 
 **It went to the wrong session.** It goes to the session you typed into last. Press `Tab` on the

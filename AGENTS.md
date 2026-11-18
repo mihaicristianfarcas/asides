@@ -9,7 +9,8 @@ before changing the app; [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow, an
 asides is a macOS menu-bar app plus a CLI, and runs on Windows and Linux too (ARCHITECTURE.md's "On
 Windows" and "On Linux"). `⌃⌥Space` freezes every screen under a pill; the user
 pins elements, measures, draws and talks; `⌃⌥Space` again types it all, transcribed locally and
-verbatim by whisper.cpp, into a coding agent's session in Terminal, Ghostty or Diri, as the user's
+verbatim by whisper.cpp, into a coding agent's session (22 agents: `agents.rs`) in Terminal, iTerm,
+Ghostty, WezTerm or Diri, or tmux, Zellij or screen in any app, as the user's
 own message with screenshots. `⌃⌥P` goes live and freezes again (one aside, many freezes). Every
 aside is kept in `~/.asides/history`. It works on anything on screen: web-only and CleanShot-only
 features are out of scope. Why it works this way: ARCHITECTURE.md's design decisions.
@@ -89,7 +90,7 @@ changes.
 - **Don't add permissions** without the maintainer's agreement. Freezing the screen uses Screen
   Recording (asked on first use) and Accessibility (with `identify_elements`, on by default; pins
   work without it); talking over the live screen must keep working without either. Sending uses
-  Automation for Terminal and Ghostty (asked the first time asides types into or opens a session
+  Automation for Terminal, Ghostty and iTerm (asked the first time asides types into or opens a session
   there); Diri needs none. Input Monitoring is not used.
 - **Keep the docs in sync, and short.** User-facing behavior goes in `guide/` (the README is only a
   pitch, install and links), structure and invariants in ARCHITECTURE.md, workflow in
@@ -398,6 +399,31 @@ use `asides mcp`'s `get_aside`.
   Shortcuts need the whole chord posted; modifier flags alone don't fire a hot key.
 - Codex asks before every MCP tool not marked `readOnlyHint`. Claude Code probes
   `server/discover` before `initialize`: answer "method not found".
+- On a Mac `ps -o comm` is the program as it was started (`tmux`, found on a terminal's `PATH`; Cursor's
+  `node`, which its script starts as `agent` or `cursor-agent`): `proc_pidpath` says where it is. The
+  app's `PATH` has no Homebrew: a multiplexer's program is the one its own process runs.
+- An agent that titles its process (Pi, Kimi Code) writes over the arguments and the environment `ps
+  -E` reads on a Mac: its shell's, on the same terminal, stands in.
+- A multiplexer's programs get the variables of the terminal it started in, and Neovim's those of the
+  multiplexer it runs in: which one runs an agent is the nearest above it in the process tree
+  (`sessions::innermost`). tmux's and Zellij's panes are their servers' children; macOS's screen 4.0
+  runs each window under `login -pflq`, its sockets in `$TMPDIR/.screen`.
+- Zellij's `action paste` brackets the text but keeps its new lines as line feeds (they're turned into
+  Returns first), and needs `--` before text starting with `-`; `--pane-id` needs 0.44. 0.46 names
+  its sockets by a hash, which session is which kept in a cache in the home
+  (`~/Library/Caches/org.Zellij-Contributors.Zellij`): a server started with another `HOME` isn't
+  found. A pane `run` before a new session has its first is dropped, without an error.
+- GNU screen's `-X` command travels in a message of about a kilobyte: a long `stuff` was cut, so it
+  goes in pieces of 512 bytes. macOS's screen 4.0 types `^`, `\` and `$` as they are; 4.9 and 5.0
+  read escapes in them whatever the quotes (`^C` is Ctrl+C, `$HOME` the folder, `${X}` nothing, a
+  last `\` drops the piece): they're escaped with `\`, never split from what they escape.
+- Neovim's `--remote-expr` exits 2 when its Lua errors: it's how a terminal not found is said.
+  `vim.base64` needs 0.10.
+- Unix sockets' paths must be under 104 bytes: tmux in the scratchpad said "File name too long".
+- Most agents won't show their prompt before a login, so typing into them can't be measured without
+  an account: they get the common plan (a bracketed paste, then Return). The deprecated `kimi-cli`
+  package ran its successor's installer (`curl … | bash`) as it started: start agents only with a
+  scratch `HOME`, and kill what they leave behind (Codex's and Cline's daemons, screen's `login`).
 - Wispr Flow's `flow.sqlite` schema changes between versions: discover columns, open it read-only
   (it writes in WAL mode).
 

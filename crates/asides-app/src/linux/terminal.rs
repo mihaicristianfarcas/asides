@@ -124,7 +124,8 @@ pub fn start_session(
     fs::create_dir_all(&scripts)?;
     let launch = format!("{}-{}", agent.program(), now_ms());
     let script = scripts.join(format!("{launch}.sh"));
-    fs::write(&script, deliver::launch_script(agent, dir, message, extra, &launch, readable))?;
+    let source = deliver::launch_script(agent, dir, message, extra, &launch, readable).map_err(anyhow::Error::msg)?;
+    fs::write(&script, source)?;
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
     let name = app(terminal);
     let Some(chosen) = deliver::linux_terminal(&name) else {
@@ -164,7 +165,8 @@ fn finished(child: Child, timeout: Duration) -> Result<Option<Output>> {
     }
 }
 
-/// The agents installed for the user: programs on their login shell's PATH.
+/// The agents installed for the user that new sessions start with: programs on their login
+/// shell's PATH.
 pub fn installed_agents() -> Vec<AgentKind> {
     let child = match login_shell("printf '%s' \"$PATH\"").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(child) => child,
@@ -174,7 +176,7 @@ pub fn installed_agents() -> Vec<AgentKind> {
     let path = String::from_utf8_lossy(&out.stdout);
     // Interactive shells may print a banner first: the PATH is the last line.
     let path = path.lines().last().unwrap_or_default();
-    AgentKind::ALL.into_iter().filter(|kind| on_path(path, kind.program())).collect()
+    AgentKind::ALL.into_iter().filter(|kind| kind.launches() && on_path(path, kind.program())).collect()
 }
 
 /// Whether `program` is an executable file in one of `path`'s directories.

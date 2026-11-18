@@ -328,14 +328,10 @@ fn color_hex(text: &str) -> Option<String> {
 
 /// The field for an agent's arguments.
 fn args_field(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::Claude => "args-claude",
-        AgentKind::Codex => "args-codex",
-        AgentKind::OpenCode => "args-opencode",
-        AgentKind::Gemini => "args-gemini",
-        AgentKind::Copilot => "args-copilot",
-        AgentKind::Qwen => "args-qwen",
-    }
+    static IDS: std::sync::LazyLock<Vec<String>> =
+        std::sync::LazyLock::new(|| AgentKind::ALL.iter().map(|k| format!("args-{}", k.program())).collect());
+    let at = AgentKind::ALL.iter().position(|k| *k == kind).unwrap_or(0);
+    &IDS[at]
 }
 
 /// What picking a choice does.
@@ -1578,7 +1574,7 @@ impl AsidesWindow {
                 if let Some(kind) = AgentKind::ALL.into_iter().find(|k| args_field(*k) == id) {
                     let args = split_args(&text);
                     if args != self.config.agents.args(kind) {
-                        self.change(|c| *c.agents.args_mut(kind) = args);
+                        self.change(|c| c.agents.set_args(kind, args));
                     }
                 }
             }
@@ -3350,8 +3346,9 @@ impl AsidesWindow {
                         Some(_) => "asides types there through its helper.",
                         None => "Types without asking for any permission.",
                     },
-                    "Diri" => "Types without asking for any permission.",
-                    "Ghostty" => "asides asks once to type there (Automation).",
+                    "Diri" | "WezTerm" => "Types without asking for any permission.",
+                    "kitty" => "Types there with its remote control on (kitty.conf).",
+                    "Ghostty" | "iTerm" => "asides asks once to type there (Automation).",
                     "Windows Terminal" => "A tab of its own, in a new window.",
                     "Console" => "A console window of its own.",
                     _ => "macOS's own. asides asks once to type there (Automation).",
@@ -3392,8 +3389,9 @@ impl AsidesWindow {
                 "Where asides goes",
                 Some(
                     format!(
-                        "Each aside is typed into the agent session you typed into last: Claude Code, Codex \
-                         or OpenCode, in {AGENT_TERMINALS}. Or it starts a new one."
+                        "Each aside is typed into the agent session you typed into last: {AGENTS}, in \
+                         {AGENT_TERMINALS}. Or it starts a new one.",
+                        AGENTS = agents_named()
                     )
                     .into(),
                 ),
@@ -3877,8 +3875,8 @@ impl AsidesWindow {
             running.push(setting(
                 "No agent sessions running",
                 Some(&format!(
-                    "Start Claude Code, Codex or OpenCode in {AGENT_TERMINALS}, or start one from the pill: New \
-                     session in…"
+                    "Start {AGENTS} in {AGENT_TERMINALS}, or start one from the pill: New session in…",
+                    AGENTS = agents_named()
                 )),
                 div(),
                 t,
@@ -3893,11 +3891,22 @@ impl AsidesWindow {
             let name = terminals[i];
             c.agents.terminal = if name == "Terminal" { String::new() } else { name.to_string() };
         });
-        let agents = &AgentKind::ALL[..3];
+        // The agents new sessions can start: those installed, or the three most used until asides
+        // knows which are.
+        let agents = match self.state.agents.as_slice() {
+            [] => vec![AgentKind::Claude, AgentKind::Codex, AgentKind::OpenCode],
+            installed => installed.to_vec(),
+        };
         let chosen_agent = agents.iter().position(|a| *a == self.config.agents.default_agent());
-        let pick_agent = self.setter(cx, |c, i: usize| c.agents.default = AgentKind::ALL[i].program().into());
-        // Each agent's arguments, for the sessions asides starts.
-        let arguments: Vec<AnyElement> = AgentKind::ALL
+        let agent_choices = agents.iter().map(|a| Choice::new(a.name())).collect();
+        let picked = agents.clone();
+        let pick_agent = self.setter(cx, move |c, i: usize| c.agents.default = picked[i].program().into());
+        // Each agent's arguments, for the sessions asides starts (and any set for another).
+        let shown: Vec<AgentKind> = AgentKind::ALL
+            .into_iter()
+            .filter(|kind| agents.contains(kind) || !self.config.agents.args(*kind).is_empty())
+            .collect();
+        let arguments: Vec<AnyElement> = shown
             .into_iter()
             .map(|kind| {
                 let value = join_args(self.config.agents.args(kind));
@@ -3933,7 +3942,7 @@ impl AsidesWindow {
                             setting(
                                 "Agent",
                                 Some("It starts with the aside as its first message."),
-                                segmented("agent", agents.iter().map(|a| a.name()), chosen_agent, t).on_select(pick_agent),
+                                select("agent", agent_choices, chosen_agent, t).width(150.).on_select(pick_agent),
                                 t,
                             ),
                         ],
@@ -4772,7 +4781,23 @@ const SYSTEM: &str = match () {
     _ => "macOS",
 };
 /// Where the agents asides types into run.
-const AGENT_TERMINALS: &str = if cfg!(target_os = "macos") { "Terminal, Ghostty or Diri" } else { "any terminal" };
+const AGENT_TERMINALS: &str = if cfg!(target_os = "macos") {
+    "Terminal, iTerm, Ghostty, WezTerm, Diri, or tmux in any terminal"
+} else {
+    "any terminal"
+};
+
+/// The agents asides types into, said shortly: "Claude Code, Codex, Cursor CLI and 19 more".
+fn agents_named() -> String {
+    let named = [AgentKind::Claude, AgentKind::Codex, AgentKind::Cursor];
+    format!(
+        "{}, {}, {} or one of {} more",
+        named[0].name(),
+        named[1].name(),
+        named[2].name(),
+        AgentKind::ALL.len() - named.len()
+    )
+}
 /// Where asides' mark is while it runs.
 const STATUS_PLACE: &str = match () {
     _ if cfg!(windows) => "the notification area",

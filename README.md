@@ -12,9 +12,10 @@ click     pin what's under the pointer; drag to pin an area; talk
 ⌃⌥Space   send it to the agent session you typed into last
 ```
 
-- **Into the session you're already in:** Claude Code, Codex, OpenCode, Gemini CLI, Copilot CLI or
-  Qwen Code, in Terminal, Ghostty or [Diri](https://diri.sh) (on Windows and Linux, any terminal).
-  Nothing to install in the agent.
+- **Into the session you're already in:** Claude Code, Codex, Cursor, Gemini CLI, Copilot CLI,
+  OpenCode and [16 more](guide/using.md#agents-and-terminals), in Terminal, iTerm, Ghostty, WezTerm,
+  [Diri](https://diri.sh), or tmux, Zellij or screen in any terminal (on Windows and Linux, any
+  terminal). Nothing to install in the agent.
 - **For anything on screen:** pins name the element (`button "Save"`, and in browsers the page and
   a CSS-like location). Measure like PixelSnap, draw arrows, take partial screenshots.
 - **Local and free:** [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on your Mac's GPU (on
@@ -73,8 +74,8 @@ On [Windows](CONTRIBUTING.md#windows), `scripts\package-windows.ps1`; on
 
 1. Open asides. Setup walks you through the permissions, the voice model (190 MB) and where new
    sessions open, or skip it. asides lives in the menu bar (or the notification area) as `[a]`.
-2. Start your agent (`claude`, `codex`…) in Terminal, Ghostty or Diri (on Windows and Linux, any
-   terminal), as usual.
+2. Start your agent (`claude`, `codex`…) in Terminal, iTerm, Ghostty, WezTerm or Diri, or in tmux
+   anywhere (on Windows and Linux, any terminal), as usual.
 3. In the app you're testing, press `⌃⌥Space`, click, talk, and press `⌃⌥Space` again.
 
 Pins, measuring and screenshots work without a voice model; skipped, it's downloaded the first time
