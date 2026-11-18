@@ -29,7 +29,7 @@ macro_rules! long_about {
             $keys,
             " opens asides over any app: click to pin an element, drag an area, talk, and press ",
             $keys,
-            " again. The aside is typed into the agent session you last typed into (Claude Code, Codex, OpenCode… in ",
+            " again. The aside is typed into the agent session you last typed into (Claude Code, Codex, Cursor… in ",
             $terminals,
             "), as your own message, and kept in ",
             $history,
@@ -43,7 +43,7 @@ macro_rules! long_about {
 #[command(name = "asides", version)]
 #[cfg_attr(
     target_os = "macos",
-    command(long_about = long_about!("`⌃⌥Space`", "Terminal, Ghostty or Diri", "~/.asides/history"))
+    command(long_about = long_about!("`⌃⌥Space`", "Terminal, iTerm, Ghostty, WezTerm or Diri, or tmux in any terminal", "~/.asides/history"))
 )]
 #[cfg_attr(windows, command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "%USERPROFILE%\\.asides\\history")))]
 #[cfg_attr(target_os = "linux", command(long_about = long_about!("Ctrl+Alt+Space", "any terminal", "~/.asides/history")))]
