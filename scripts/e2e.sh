@@ -5,8 +5,9 @@
 # windows), a database of our own for Wispr Flow's history, and a stand-in agent (e2e-agent.c, run
 # as `claude` in Diri or Terminal, then in tmux, screen, Zellij and Neovim where they're installed;
 # ZELLIJ names a zellij elsewhere; E2E_APPS a folder with WezTerm.app or kitty.app, on screen) for an
-# agent session asides types into. The history goes to a folder of the test's own (`ASIDES_HOME`),
-# and nothing is sent to the user's own sessions.
+# agent session asides types into; E2E_AGENTS, real Claude Code and Codex too (see below). The
+# history goes to a folder of the test's own (`ASIDES_HOME`), and nothing is sent to the user's own
+# sessions.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,6 +26,17 @@ cp "$CONFIG" "$WORK/config.toml.saved" 2>/dev/null || true
 cp "$STATE" "$WORK/state.json.saved" 2>/dev/null || true
 AGENT_TTY=""
 DIRI_SESSION=""
+# E2E_AGENTS: real Claude Code and Codex, where installed, with settings of their own here (the user's
+# are never read) and nothing leaving the machine: their API at a closed port, and in tmux and screen
+# a sandbox that refuses them any connection. The app gets the same, for the sessions it starts.
+E2E_AGENTS=${E2E_AGENTS:-}
+AGENT_ENV=()
+if [ -n "$E2E_AGENTS" ]; then
+    AGENT_KEY="sk-ant-api03-e2e-$(openssl rand -hex 24)"
+    AGENT_ENV=(CLAUDE_CONFIG_DIR="$WORK/claude" CODEX_HOME="$WORK/codex" ANTHROPIC_API_KEY="$AGENT_KEY"
+        ANTHROPIC_BASE_URL=http://127.0.0.1:9 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
+        DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 DISABLE_BUG_COMMAND=1)
+fi
 # What the terminal apps tried write in the home, which wasn't there before.
 NEW_IN_HOME=()
 cleanup() {
@@ -34,6 +46,8 @@ cleanup() {
     pkill -f "$WORK/bin/claude" 2>/dev/null || true
     # What ran the stand-in agent without a window, if a check stopped the run first.
     command -v tmux >/dev/null && tmux -S "$WORK/tmux" kill-server >/dev/null 2>&1 || true
+    # Codex's daemon, which outlives it (and ignores SIGTERM).
+    pkill -9 -f "$WORK/codex/packages" 2>/dev/null || true
     /usr/bin/screen -S "asides-e2e-$$" -X quit >/dev/null 2>&1 || true
     [ -n "${ZELLIJ_BIN:-}" ] && ZELLIJ_CONFIG_DIR="$WORK/zellij" "$ZELLIJ_BIN" kill-session "asides-e2e-$$" >/dev/null 2>&1 || true
     if [ -n "${ZELLIJ_CACHE:-}" ]; then
@@ -112,7 +126,7 @@ pkill -x asides-app 2>/dev/null || true
 sleep 1
 # The app, started by Launch Services, keeps its history where the test says.
 launchctl setenv ASIDES_HOME "$ASIDES_HOME"
-open -g -a "$ASIDES_APP"
+env ${AGENT_ENV[@]+"${AGENT_ENV[@]}"} open -g -a "$ASIDES_APP"
 for _ in $(seq 1 40); do "$CLI" status 2>/dev/null | grep -q "is running" && break; sleep 0.5; done
 
 REPO="$WORK/shop"
@@ -412,10 +426,15 @@ fi
 
 # On screen, where E2E_APPS names a folder holding WezTerm.app or kitty.app: a small window of each
 # runs the stand-in (kitty with its remote control on, from its command line), quit after. Neither
-# needs a permission. What they write in the home is taken back if it wasn't there.
+# needs a permission. What they write in the home is taken back if it wasn't there. The app opens
+# them for new sessions by their bundle IDs, which Launch Services gives only for apps outside
+# temporary folders.
 E2E_APPS=${E2E_APPS:-}
 if [ -n "$E2E_APPS" ]; then
     echo "Sending in other terminal apps, on screen ($E2E_APPS)"
+    for app in "$E2E_APPS/WezTerm.app" "$E2E_APPS/kitty.app"; do
+        [ -d "$app" ] && /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
+    done
     for made in "$HOME/.local/share/wezterm" "$HOME/.config/kitty" "$HOME/Library/Caches/kitty"; do
         [ -e "$made" ] || NEW_IN_HOME+=("$made")
     done
@@ -430,6 +449,136 @@ if [ -d "$E2E_APPS/kitty.app" ]; then
         -o remember_window_size=no -o initial_window_width=480 -o initial_window_height=140 --directory "$REPO" \
         "${STANDIN[@]}"
     pkill -f "$E2E_APPS/kitty.app/Contents/MacOS/kitty" || true
+fi
+
+CLAUDE_BIN=$(command -v claude || true)
+CODEX_BIN=$(command -v codex || true)
+if [ -n "$E2E_AGENTS" ]; then
+    echo "Real agents: what Claude Code and Codex recorded (E2E_AGENTS)"
+    LOCAL_REPO=$(cd "$REPO" && pwd -P)
+    mkdir -p "$WORK/claude" "$WORK/codex"
+    # Set up, its key approved and the repo trusted: no question waits at its start.
+    /usr/bin/python3 -I -c 'import json, sys
+config, repo, key = sys.argv[1:]
+json.dump({"hasCompletedOnboarding": True, "theme": "dark", "numStartups": 3,
+           "customApiKeyResponses": {"approved": [key[-20:]], "rejected": []},
+           "projects": {repo: {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}}},
+          open(config + "/.claude.json", "w"))
+# Its other traffic off from its settings too: the app drops CLAUDE_CODE_* when it was started from
+# Claude Code.
+json.dump({"env": {"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_TELEMETRY": "1"}},
+          open(config + "/settings.json", "w"))' "$WORK/claude" "$LOCAL_REPO" "$AGENT_KEY"
+    printf 'model = "gpt-5"\nmodel_provider = "e2e"\n[model_providers.e2e]\nname = "e2e"\nbase_url = "http://127.0.0.1:9/v1"\nwire_api = "responses"\n[projects."%s"]\ntrust_level = "trusted"\n' \
+        "$LOCAL_REPO" > "$WORK/codex/config.toml"
+fi
+# No connection but local sockets.
+NO_NETWORK='(version 1)(allow default)(deny network-outbound (remote ip "*:*"))'
+# What the user said, as each agent recorded it: a line per message, [image/png] for a picture.
+claude_said() { /usr/bin/python3 -I -c 'import glob, json, sys
+for path in glob.glob(sys.argv[1] + "/projects/*/*.jsonl"):
+    for line in open(path):
+        entry = json.loads(line)
+        content = entry.get("message", {}).get("content") if entry.get("type") == "user" else None
+        if isinstance(content, list):
+            content = " ".join(p.get("text", "") if p.get("type") == "text" else "[%s]" % p.get("source", {}).get("media_type") for p in content)
+        if content: print(content.replace("\n", " "))' "$WORK/claude"; }
+codex_said() { /usr/bin/python3 -I -c 'import glob, json, sys
+for path in glob.glob(sys.argv[1] + "/sessions/**/*.jsonl", recursive=True):
+    for line in open(path):
+        p = json.loads(line).get("payload", {})
+        if p.get("type") == "message" and p.get("role") == "user":
+            print(" ".join(c.get("text", "[image]") for c in p["content"]).replace("\n", " "))' "$WORK/codex"; }
+# Waits until COMMAND's output matches PATTERN.
+says() { # pattern, command...
+    local pattern=$1; shift
+    for _ in $(seq 1 60); do grep -qE -- "$pattern" <<<"$("$@")" && return 0; sleep 0.5; done
+    return 1
+}
+# The session of AGENT (as the CLI's JSON names it) in the repo, in APP.
+session_of() { # agent, app
+    "$CLI" sessions --json | /usr/bin/python3 -I -c 'import json, sys
+repo, agent, app = sys.argv[1:]
+print(next((str(s["pid"]) for s in json.load(sys.stdin) if s["dir"] == repo and s["agent"] == agent and s["host"]["app"] == app), ""))' \
+        "$LOCAL_REPO" "$1" "$2"
+}
+shown() { "$TMUX_BIN" -S "$WORK/tmux" capture-pane -p -t e2e; }
+# Starts the agent (its program, then what it shows once it takes input) in tmux, or in screen in a
+# pane of tmux (detached, macOS's screen 4.0 showed nothing, and Claude Code took no input), and
+# sends it the aside with a screenshot.
+real_agent() { # host, agent, ready text, then its command
+    local host=$1 agent=$2 ready=$3; shift 3
+    # Without the markers of the agent running this test (one reaches its socket).
+    local unset=() name
+    for name in $(compgen -e | grep -E '^(CLAUDE|AI_AGENT$|AGENT$|OPENCODE|CODEX)'); do unset+=(-u "$name"); done
+    local run=(/usr/bin/env ${unset[@]+"${unset[@]}"} "${AGENT_ENV[@]}" /usr/bin/sandbox-exec -p "$NO_NETWORK" "$@")
+    [ "$host" = screen ] && run=(/usr/bin/screen -S asides-e2e-$$ "${run[@]}")
+    "$TMUX_BIN" -S "$WORK/tmux" new-session -d -s e2e -x 120 -y 30 -c "$REPO" "${run[@]}"
+    says "$ready" shown || { shown; fail "$agent didn't start in $host"; }
+    local session=""
+    for _ in $(seq 1 40); do session=$(session_of "$agent" "$host"); [ -n "$session" ] && break; sleep 0.5; done
+    check "$agent in $host: asides finds it" test -n "$session"
+    "$CLI" send "$(aside_id padding)" --to "$session" > "$WORK/sent.txt" 2>&1 || cat "$WORK/sent.txt"
+}
+if [ -n "$E2E_AGENTS" ] && [ -n "$CLAUDE_BIN" ] && [ -n "$TMUX_BIN" ]; then
+    for host in tmux screen; do
+        [ "$host" = screen ] && [ ! -x /usr/bin/screen ] && continue
+        rm -rf "$WORK/claude/projects"
+        real_agent "$host" claude "for shortcuts|shift\+tab to cycle" "$CLAUDE_BIN"
+        check "Claude Code in $host: the text, in its transcript" says "padding on the summary card" claude_said
+        # Pasted on its own, the path becomes a picture in the message, beside the text.
+        check "Claude Code in $host: the screenshot attached to it, as a picture" \
+            grep -q '\[image/png\].*padding on the summary card\|padding on the summary card.*\[image/png\]' <<<"$(claude_said)"
+        /usr/bin/screen -S asides-e2e-$$ -X quit 2>/dev/null || true
+        "$TMUX_BIN" -S "$WORK/tmux" kill-server 2>/dev/null || true
+    done
+fi
+if [ -n "$E2E_AGENTS" ] && [ -n "$CODEX_BIN" ] && [ -n "$TMUX_BIN" ]; then
+    # Its background server isn't allowed in the sandbox.
+    real_agent tmux codex "for shortcuts" "$CODEX_BIN" --no-daemon
+    check "Codex in tmux: the text, in its rollout" says "padding on the summary card" codex_said
+    # In the same message, where it was taken (mid-sentence here).
+    check "Codex in tmux: with the screenshot's path, to read" \
+        grep -q "$ASIDES_HOME/history/[^ ]*/images/1.png" <<<"$(codex_said | grep "padding on the summary card")"
+    "$TMUX_BIN" -S "$WORK/tmux" kill-server 2>/dev/null || true
+    pkill -9 -f "$WORK/codex/packages" 2>/dev/null || true
+fi
+# New sessions, started by the app in WezTerm and kitty (E2E_APPS): Claude Code, from the app's
+# environment, which the test gave it (its own settings, the API at a closed port, no other traffic).
+if [ -n "$E2E_AGENTS" ] && [ -n "$CLAUDE_BIN" ] && [ -n "$E2E_APPS" ]; then
+    check "the app has the agents' settings, not the user's" \
+        grep -Eq "CLAUDE_CONFIG_DIR=$WORK/claude( |$)" <<<"$(ps eww -p "$(pgrep -x asides-app | head -1)")"
+fi
+# Sets a setting in the [agents] table.
+set_agents() { # key, value
+    /usr/bin/python3 -I -c 'import re, sys; path, key, value = sys.argv[1:]
+text = open(path).read()
+head = re.search(r"(?m)^\[agents\]\n", text)
+if not head:
+    text += "\n[agents]\n"
+    head = re.search(r"(?m)^\[agents\]\n", text)
+end = re.search(r"(?m)^\[", text[head.end():])
+end = head.end() + end.start() if end else len(text)
+table = re.sub(rf"(?m)^{key} = .*\n", "", text[head.end():end])
+open(path, "w").write(text[:head.end()] + f"{key} = {value}\n" + table + text[end:])' "$CONFIG" "$1" "$2"
+}
+new_session() { # terminal, its program (stopped after)
+    set_agents terminal "\"$1\""
+    sleep 3
+    rm -rf "$WORK/claude/projects"
+    local id dir
+    id=$(aside_id padding)
+    dir=$(/usr/bin/python3 -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$REPO")
+    open -g -a "$ASIDES_APP" "asides://new-session?id=$id&agent=claude&dir=$dir"
+    check "$1: a new session of Claude Code, the aside its first message" says "padding on the summary card" claude_said
+    # (kitty's listed, but takes no text without its remote control on in the user's kitty.conf.)
+    check "$1: asides finds the session it started" grep -q "Claude Code (shop.* in $1" <<<"$("$CLI" sessions)"
+    pkill -f "$2" || true
+}
+if [ -n "$E2E_AGENTS" ] && [ -n "$CLAUDE_BIN" ] && [ -d "$E2E_APPS/WezTerm.app" ]; then
+    new_session WezTerm "$E2E_APPS/WezTerm.app/Contents/MacOS/wezterm-gui"
+fi
+if [ -n "$E2E_AGENTS" ] && [ -n "$CLAUDE_BIN" ] && [ -d "$E2E_APPS/kitty.app" ]; then
+    new_session kitty "$E2E_APPS/kitty.app/Contents/MacOS/kitty"
 fi
 
 echo "Copying an aside"
