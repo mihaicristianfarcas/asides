@@ -331,12 +331,13 @@ installed by hand.
 (`python3 -m http.server -d docs` to preview). Pushes to `main` that change `docs/` deploy it;
 `make publish-site` deploys by hand. Its opening is the page itself with asides open over it: the
 script at its end plays each step at its word, and without motion or JavaScript shows the last frame.
-Its figures (a frozen screen, pins and a card, the message an agent gets, a follow-up) are HTML in
-the overlay's shapes and colors (`faces.rs`), on no picture, as Help's demonstrations are: when the
-overlay's look changes, change them too. Text sizes come from the `--text-*` values on `:root`: don't
-add another. The share image, also the README's picture, is the opening's last frame,
-the hero alone (`make-og.py`'s `STYLE`): after changing the opening, run `python3 scripts/make-og.py`
-(needs Firefox) and bump `og.png?v=` in `og:image`, which link previews cache.
+Its figures (a frozen screen with a pill to try, pins and a card, the message an agent gets) are
+HTML in the overlay's shapes and colors (`faces.rs`), as Help's demonstrations are, on a painting
+(`rose-cloud.webp`, Henri-Edmond Cross, public domain): when the overlay's look changes, change them
+too. Text sizes come from the `--text-*` values on `:root`: don't add another. The share image, also
+the README's picture, is the opening's last frame, the hero alone (`make-og.py`'s `STYLE`): after
+changing the opening, run `python3 scripts/make-og.py` (needs Firefox). There's one `og.png`, the
+latest.
 
 The page repeats the main shortcut, requirements and install steps from the README: update both.
 
