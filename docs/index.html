@@ -13,7 +13,7 @@
 <meta property="og:url" content="https://asides.mihaicristian.dev/">
 <meta property="og:title" content="asides">
 <meta property="og:description" content="Report bugs out loud while you test. Click what's wrong, say why, and it's in your coding agent's chat. Transcribed on your computer.">
-<meta property="og:image" content="https://asides.mihaicristian.dev/og.png?v=2">
+<meta property="og:image" content="https://asides.mihaicristian.dev/og.png">
 <meta property="og:image:width" content="2400">
 <meta property="og:image:height" content="1260">
 <meta property="og:image:alt" content="Report bugs out loud while you test: the asides pill over the heading, a pin on its words, a measurement under it, the download button circled and a card reading Make it a bit bigger.">
@@ -161,6 +161,20 @@ kbd {
 .ap-face { display: flex; flex: none; align-items: center; gap: 6px; padding: 0 11px 0 8px; font-weight: 500; color: #fff; }
 .ap-face.measure { position: absolute; inset: 0 auto 0 0; opacity: 0; }
 .asides-pill .ap-face svg { width: 16px; height: 16px; }
+/* The pill to try, on the first step's screen: its buttons do what the overlay's do, nothing sent. */
+:where(.tried button) { padding: 0; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.tried .ap-to { height: 32px; border-radius: 9px; }
+.ap-slash { display: none; }
+.tried.muted .ap-lit { opacity: 0; }
+.tried.muted .ap-slash { display: inline; }
+.ap-clip .ap-lit, .ap-stop, .tried.clipping .ap-cam { display: none; }
+.tried.clipping .ap-clip .ap-lit { display: block; }
+.tried.clipping .ap-stop { display: inline; }
+.tried, .pill-note { transition: opacity 180ms ease; }
+.tried.away { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s 180ms; }
+.pill-note { margin-top: 8px; padding: 5px 10px; font-size: var(--text-small); line-height: 1.35; color: rgba(255, 255, 255, 0.9); white-space: nowrap; background: rgba(30, 29, 28, 0.88); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; opacity: 0; }
+.pill-note.shown { opacity: 1; }
+.tried.away + .pill-note { margin-top: -37px; }
 
 /* What's marked. Pins take their number from CSS, so it isn't part of the heading's or the button's text. */
 .spot { position: absolute; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; font: 600 var(--text-small)/1 var(--sans); letter-spacing: 0; color: #fff; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(17, 17, 19, 0.25); user-select: none; -webkit-user-select: none; }
@@ -225,22 +239,26 @@ kbd {
 .step.shown { display: flex; flex-wrap: wrap; align-items: center; gap: 28px 48px; }
 .step-text { flex: 1 1 300px; min-width: 0; }
 .shot { flex: 2 1 520px; min-width: 0; margin: 0; }
-/* What a step looks like, drawn here as asides draws it (the overlay's faces.rs): a plain screen, an
-   app on it, the pill, pins in their colors (an element outlined in blue, an area dashed in green,
-   each number on its pin), a pin's card and what's said. No picture: nothing behind them. */
-.screen { position: relative; display: flex; justify-content: center; align-items: flex-start; gap: 16px; padding: 78px 20px 26px; overflow: hidden; background: #e6e6eb; border-radius: 16px; }
-.screen-top { position: absolute; top: 18px; right: 0; left: 0; display: flex; justify-content: center; padding: 0 12px; }
+/* What a step looks like, drawn here as asides draws it (the overlay's faces.rs): a screen, its
+   desktop a painting (Henri-Edmond Cross, The Rose Cloud), the app and the agent's chat filling it,
+   the pill, pins in their colors (an element outlined in blue, an area dashed in green, each number on
+   its pin), a pin's card and what's said. */
+.screen { position: relative; display: flex; gap: 14px; padding: 78px 18px 18px; overflow: hidden; background: #d8c4cf url(rose-cloud.webp) center 35% / cover; border-radius: 16px; }
+.screen-top { position: absolute; top: 18px; right: 0; left: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; padding: 0 12px; }
+.screen .app, .screen .app-wrap { flex: 1 1 0; width: auto; min-width: 0; }
+.screen .app-wrap { display: flex; }
 .app { position: relative; flex: none; width: 272px; padding: 16px 18px 18px; font: var(--text-small)/1.35 var(--sans); color: #1c1b19; text-align: left; text-indent: 0; white-space: normal; background: #fff; border-radius: 12px; box-shadow: 0 0 0 0.5px rgba(17, 17, 19, 0.08), 0 12px 28px -16px rgba(23, 22, 60, 0.35); }
 .app-title { display: block; font-weight: 600; }
 .items { position: relative; margin: 8px -6px 0; padding: 2px 6px; }
 .items p, .total { display: flex; align-items: center; gap: 10px; }
-.items p { padding: 4px 0; }
-.items i { flex: none; width: 26px; height: 26px; border-radius: 7px; }
+/* Cramped, as what's said says: the rows touch. */
+.items p { padding: 0; }
+.items i { flex: none; width: 24px; height: 24px; border-radius: 6px; }
 .items span:last-child, .total span:last-child { margin-left: auto; }
 .items span:last-child { color: var(--muted); }
 .total { margin-top: 8px; padding-top: 10px; font-weight: 600; border-top: 1px solid var(--line); }
 .pay { position: relative; display: block; width: 92px; margin-top: 14px; padding: 6px 8px; font-weight: 500; line-height: 1.3; color: #fff; text-align: center; background: #2b2a27; border-radius: 9px; }
-.term { flex: 1 1 0; align-self: stretch; min-width: 0; max-width: 280px; overflow: hidden; font: var(--text-small)/1.6 var(--mono); color: #e5e5e5; background: #1e1e1e; border-radius: 12px; }
+.term { flex: 0 1 40%; min-width: 0; overflow: hidden; font: var(--text-small)/1.6 var(--mono); color: #e5e5e5; background: #1e1e1e; border-radius: 12px; }
 .term-bar { padding: 5px 12px; overflow: hidden; font: 500 var(--text-small)/1.6 var(--sans); color: #a8a8ad; white-space: nowrap; text-overflow: ellipsis; background: #38383a; border-bottom: 1px solid #000; }
 .term p { padding: 8px 12px 0; }
 .term .dim { color: #a1a1a6; }
@@ -252,21 +270,25 @@ kbd {
 .app .spot.green { background: #22c55e; }
 .pay .spot { top: -11px; right: -11px; }
 .items .spot { top: -12px; left: -12px; }
-.screen.marked { padding: 30px 20px 118px; }
-.screen.again { padding: 30px 20px 72px; }
-.app .spot.hollow { background: rgba(0, 0, 0, 0.42); border: 2px dashed rgba(255, 255, 255, 0.85); box-shadow: none; }
-.on-earlier { background: rgba(0, 0, 0, 0.12); outline: 1.5px dashed rgba(255, 255, 255, 0.85); }
-.items.roomy p { padding: 7px 0; }
-.pay.one-line { width: max-content; white-space: nowrap; }
-.term b { font-weight: 600; color: #fff; }
-.again .term { max-width: 340px; }
-.screen.marked .app { margin-right: 56px; }
+.screen.marked { padding: 30px 18px 118px; }
+/* Just frozen: the shortcut pressed, along the bottom as what's said is, and the pointer where it
+   stopped. */
+.screen.just { padding-bottom: 76px; }
+.screen-pointer { position: absolute; top: 58%; left: 62%; z-index: 2; width: 24px; height: 24px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
+.say.pressed { padding: 0; background: none; }
+.say.pressed kbd { box-shadow: 0 1px 0 #cfcfd6, 0 6px 16px -6px rgba(17, 17, 19, 0.4); }
+.say.pressed .combo { margin: 0; vertical-align: 0; }
 .screen .note { position: absolute; top: calc(100% - 22px); left: 52px; z-index: 2; flex-wrap: nowrap; }
 .screen .dots i:first-child { margin: 0; outline: 0; }
 .screen .say { position: absolute; bottom: 18px; left: 50%; z-index: 2; width: max-content; max-width: calc(100% - 32px); margin: 0; font-size: var(--text-small); transform: translateX(-50%); }
 .screen .say i.green { background: #22c55e; }
 .screen .say i.blue { background: #3b82f6; }
 .step .combo { margin-bottom: 18px; }
+/* The keys on the frozen screen, over clicking and saying why. */
+.keys { display: flex; flex-wrap: wrap; gap: 10px 18px; max-width: 26em; margin-bottom: 22px; font-size: var(--text-small); color: #3d3d42; list-style: none; }
+.keys li { display: inline-flex; align-items: center; gap: 8px; }
+.keys.after { margin: 22px 0 0; }
+.step .keys li kbd { min-width: 26px; height: 26px; padding: 0 7px; }
 .step kbd { min-width: 30px; height: 30px; }
 .step kbd:last-child { padding: 0 14px; }
 .step-text p, .gets-head p { margin-top: 12px; color: #3d3d42; text-wrap: pretty; }
@@ -276,9 +298,15 @@ kbd {
 .gets { --voice: #ec6a5e; --marks: #92b6f0; --place: #a1a1a6; }
 .gets-body { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: 40px; }
 .gets-side { display: flex; flex-direction: column; gap: 36px; min-width: 0; }
-.sources { flex: 1; display: flex; flex-direction: column; justify-content: space-between; gap: 28px; }
-.source { position: relative; isolation: isolate; cursor: default; }
-.source::before { content: ""; position: absolute; z-index: -1; inset: -10px -12px; background: color-mix(in srgb, var(--tint) 55%, transparent); border-radius: 14px; opacity: 0; transition: opacity 150ms ease; }
+/* Each source's room reaches the next one's, so the pointer goes from one to the next with nothing
+   between them; its words keep the places space-between gave them (the first at the top, the last at
+   the bottom, equal gaps), its tint around them alone. */
+.sources { flex: 1; display: flex; flex-direction: column; }
+.source { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; padding-block: 14px; cursor: default; }
+.source:first-child { justify-content: flex-start; padding-top: 0; }
+.source:last-child { justify-content: flex-end; padding-bottom: 0; }
+.source-in { position: relative; isolation: isolate; }
+.source-in::before { content: ""; position: absolute; z-index: -1; inset: -10px -12px; background: color-mix(in srgb, var(--tint) 55%, transparent); border-radius: 14px; opacity: 0; transition: opacity 150ms ease; }
 .source h3 { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; }
 .source h3 i { display: grid; place-items: center; width: 30px; height: 30px; color: var(--on); background: var(--tint); border-radius: 50%; transition: color 150ms ease, background-color 150ms ease; }
 .source h3 svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
@@ -301,8 +329,9 @@ kbd {
 .line b { font-weight: 600; color: #fff; }
 .line u { font-weight: 600; color: #fff; text-decoration: none; background: rgba(255, 255, 255, 0.16); border-radius: 3px; padding: 0 3px; }
 /* The screenshot the agent gets: the app as it was marked, a little smaller. */
-.snap { display: block; width: fit-content; max-width: 100%; margin-top: 8px; padding: 14px 18px; text-indent: 0; white-space: normal; background: #e6e6eb; border-radius: 6px; }
-.snap .app { zoom: 0.64; }
+/* The screenshot: the second step's screen, smaller, as wide as the line (its label's room too). */
+.snap { display: block; margin: 8px -104px 0 0; padding: 14px 16px; text-indent: 0; white-space: normal; background: #d8c4cf url(rose-cloud.webp) center 35% / cover; border-radius: 6px; }
+.snap .app { zoom: 0.8; width: auto; }
 .chat-prompt { padding: 8px 14px 10px 30px; border-top: 1px solid #3a3a3c; }
 .chat-prompt i { display: inline-block; width: 1ch; height: 1.25em; margin-left: 1ch; vertical-align: -0.25em; background: #e5e5e5; }
 .works { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 32px; padding-top: 22px; font-size: var(--text-small); color: var(--muted); border-top: 1px solid #e1e1e6; }
@@ -495,12 +524,15 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .pill:hover { opacity: 0.85; }
   .pill.quiet:hover { opacity: 1; background: var(--code-bg); }
   .last .pill.quiet:hover { background: rgba(255, 255, 255, 0.6); }
-  .source:hover::before { opacity: 1; }
+  .source:hover .source-in::before { opacity: 1; }
   .source:hover h3 i { color: #fff; background: var(--on); }
   .gets-body:has(.source.voice:hover) .line:not(.voice),
   .gets-body:has(.source.marks:hover) .line:not(.marks),
   .gets-body:has(.source.place:hover) .line:not(.place) { opacity: 0.32; }
   .ways a:hover .go { color: var(--fg); }
+  .tried button:hover { background: rgba(255, 255, 255, 0.1); }
+  .tried .ap-send:hover { background: #cfe1fb; }
+  .tried:not(.muted) .ap-mic:hover, .tried.clipping .ap-clip:hover { background: none; }
 }
 
 /* A short window: the opening still fits, caption included. */
@@ -528,10 +560,9 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
   .step, .step.shown { border-radius: 22px; }
   .list li { grid-template-columns: minmax(0, 1fr); }
   .line { padding: 6px 12px 6px calc(24px + 2ch); }
-  .screen .term { display: none; }
+  .snap { margin-right: 0; }
   .screen-top .asides-pill { zoom: 0.76; }
-  .screen:not(.marked, .again) { padding-top: 64px; }
-  .screen.marked .app { margin-right: 0; }
+  .screen:not(.marked) { padding-top: 64px; }
   .screen .note { left: 8px; }
   .screen .dots { display: none; }
   .line::before { left: 10px; }
@@ -560,7 +591,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
 
 @media (prefers-reduced-motion: reduce) {
   .rec circle { animation: none; }
-  .line, .source::before, .source h3 i, .ways .go { transition: none; }
+  .line, .source-in::before, .source h3 i, .ways .go { transition: none; }
 }
 </style>
 </head>
@@ -595,6 +626,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
       <div class="asides-pill">
         <span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span>
         <span class="ap-mic"><i class="ap-lit"></i><i class="ap-level"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
+        <span class="ap-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6.5" width="12.5" height="11" rx="2"/><path d="M15.5 10.6 21 7.8v8.4l-5.5-2.8"/></svg></span>
         <span class="ap-to">Claude Code (asides)</span>
         <span class="ap-tool"><span class="ap-face measure"><svg viewBox="0 0 24 24"><path d="M3.5 16.5 16.5 3.5l4 4-13 13z"/><path d="M7.5 12.5l2 2M10.5 9.5l2 2M13.5 6.5l2 2"/></svg><span class="ap-name">Measure</span></span><span class="ap-face draw"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg><span class="ap-name">Draw</span></span></span>
         <span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span>
@@ -616,7 +648,7 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
     </div>
     <p class="also"><span data-also>Also for <a href="#install" data-pick="windows">Windows</a> and <a href="#install" data-pick="linux">Linux</a>.</span> <a href="https://github.com/mihaicristianfarcas/asides">View on GitHub</a></p>
     </div>
-    <p class="say" aria-hidden="true"><span>These</span> <span>words</span> <i class="blue" data-cue="pin1">1</i> <span>should</span> <span>stand</span> <span data-cue="out">out.</span> <span>The</span> <span data-cue="gap">gap</span> <span>under</span> <span>the</span> <span>title</span> <span>is</span> <span data-cue="size">32</span> <span data-cue="points">points,</span> <span data-cue="and">and</span> <span>this</span> <span>button</span> <i class="red" data-cue="pin2">2</i> <span>is</span> <span>the</span> <span>one</span> <span>thing</span> <span>to</span> <span data-cue="click">click.</span></p>
+    <p class="say" aria-hidden="true"><span>These</span> <span>words</span> <i class="blue" data-cue="pin1">1</i> <span>should</span> <span>stand</span> <span data-cue="out">out.</span> <span>The</span> <span data-cue="gap">gap</span> <span>under</span> <span>the</span> <span>title</span> <span>should</span> <span>be</span> <span data-cue="size">a</span> <span>bit</span> <span data-cue="points">bigger,</span> <span data-cue="and">and</span> <span>this</span> <span>button</span> <i class="red" data-cue="pin2">2</i> <span>is</span> <span>for</span> <span>you</span> <span>to</span> <span data-cue="click">click!</span></p>
     <div class="pointer" aria-hidden="true">
       <svg class="arrow" viewBox="0 0 24 24"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
       <svg class="cross" viewBox="0 0 22 22" fill="none" stroke-linecap="round"><path d="M11 1v20M1 11h20" stroke="#fff" stroke-width="3"/><path d="M11 1v20M1 11h20" stroke="#000" stroke-width="1.2"/></svg>
@@ -630,17 +662,28 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         <h2 id="frozen">Every screen freezes.</h2>
         <p>Opens in about 110 ms on a Mac, over anything on screen, under one small pill.</p>
       </div>
-      <figure class="shot screen" role="img" aria-label="A frozen screen: the asides pill at the top, sending to Claude Code (shop), over an order summary, and the agent's chat beside it.">
-        <div class="screen-top"><div class="asides-pill"><span class="ap-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></span><span class="ap-mic"><i class="ap-lit"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span><span class="ap-to">Claude Code (shop)</span><span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></span><span class="ap-send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="ap-icon"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></span></div></div>
-        <div class="app"><span class="app-title">Order summary</span><div class="items"><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay">Pay now · $72.00</div></div>
-        <div class="term"><div class="term-bar">shop — claude</div><p class="dim">&gt; Run the checkout tests</p><p>● All 14 tests pass.</p><p class="dim">&gt;<i></i></p></div>
+      <figure class="shot screen just" aria-label="Just after Control-Option-Space: the screen frozen under the asides pill, sending to Claude Code (shop), the pointer where it stopped over an order summary. Try the pill: nothing is sent.">
+        <div class="screen-top"><div class="asides-pill tried"><button type="button" class="ap-icon" data-does="keys" aria-label="Every key"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6"/><path d="M12 16.6v.4"/></svg></button><button type="button" class="ap-mic" data-does="mic" aria-label="Microphone" aria-pressed="true"><i class="ap-lit"></i><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/><path class="ap-slash" d="M4 4l16 16"/></svg></button><button type="button" class="ap-icon ap-clip" data-does="clip" aria-label="Record a clip" aria-pressed="false"><i class="ap-lit"></i><svg viewBox="0 0 24 24"><g class="ap-cam"><rect x="3" y="6.5" width="12.5" height="11" rx="2"/><path d="M15.5 10.6 21 7.8v8.4l-5.5-2.8"/></g><rect class="ap-stop" x="6" y="6" width="12" height="12" rx="2.4" fill="currentColor" stroke="none"/></svg></button><button type="button" class="ap-to" data-does="target">Claude Code (shop)</button><button type="button" class="ap-icon" data-does="restart" aria-label="Start over"><svg viewBox="0 0 24 24"><path d="M20.8 5.6v4.8H16"/><path d="M18.8 14.4a7.2 7.2 0 1 1-1.7-7.49l3.7 3.49"/></svg></button><button type="button" class="ap-send" data-does="send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button><button type="button" class="ap-icon" data-does="close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg></button></div><p class="pill-note" aria-live="polite"></p></div>
+        <div class="app" aria-hidden="true"><span class="app-title">Order summary</span><div class="items"><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay">Pay now · $72.00</div></div>
+        <svg class="screen-pointer" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3v16.2l4.3-4.1 2.8 6.5 3-1.3-2.8-6.4h6z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <p class="say pressed" aria-hidden="true"><span class="combo"><kbd>⌃</kbd><kbd>⌥</kbd><kbd>Space</kbd></span></p>
       </figure>
     </section>
 
     <section class="step shown" aria-labelledby="point">
       <div class="step-text">
+        <ul class="keys" aria-label="Tools on the frozen screen">
+          <li><kbd>M</kbd>Measure</li>
+          <li><kbd>D</kbd>Draw</li>
+          <li><kbd>S</kbd>Screenshot</li>
+        </ul>
         <h2 id="point">Click what's wrong. <br>Say why.</h2>
         <p>Each pin lands at the word you said as you placed it. Measure, draw, or drag a pin's number to show where it should go.</p>
+        <ul class="keys after" aria-label="More keys on the frozen screen">
+          <li><kbd>⌫</kbd>Undo</li>
+          <li><kbd>R</kbd>Follow up</li>
+          <li><kbd>Tab</kbd>Next session</li>
+        </ul>
       </div>
       <figure class="shot screen marked" role="img" aria-label="Pin 1 on the Pay now button, its card reading Keep the label on one line, and pin 2 around the order's items; below, what was said: This button 1 wraps, and these rows 2 are cramped.">
         <div class="app-wrap" style="position:relative"><div class="app"><span class="app-title">Order summary</span><div class="items on-area"><span class="spot green" data-n="2"></span><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay on-element"><span class="spot blue" data-n="1"></span>Pay now · $72.00</div></div><div class="note"><span class="note-field">Keep the label on one line<i class="caret"></i></span><span class="dots"><i style="background:#ef4444"></i><i style="background:#f59e0b"></i><i style="background:#8b5cf6"></i><i style="background:#14b8a6"></i></span><span class="note-mic"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span></div></div>
@@ -658,21 +701,27 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         </div>
         <div class="sources">
           <div class="source place">
-            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9.5h18"/></svg></i>From your screen</h3>
-            <ul><li><b>Where it was:</b> the app, the window and the page.</li></ul>
+            <div class="source-in">
+              <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9.5h18"/></svg></i>From your screen</h3>
+              <ul><li><b>Where it was:</b> the app, the window and the page.</li></ul>
+            </div>
           </div>
           <div class="source voice">
-            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></i>From your voice</h3>
-            <ul><li><b>What you said</b>, word for word, each pin's number where you said it.</li></ul>
+            <div class="source-in">
+              <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></i>From your voice</h3>
+              <ul><li><b>What you said</b>, word for word, each pin's number where you said it.</li></ul>
+            </div>
           </div>
           <div class="source marks">
-            <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg></i>From your annotations</h3>
-            <ul>
-              <li><b>The screenshot</b>, around what you marked, with its pins.</li>
-              <li><b>Each pin:</b> the element's role and label, and a CSS-like location.</li>
-              <li><b>What you typed</b> on a pin, under that pin.</li>
-              <li><b>What you measured</b>, in points, and on which screen.</li>
-            </ul>
+            <div class="source-in">
+              <h3><i><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s7-6.2 7-11.5a7 7 0 0 0-14 0C5 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg></i>From your annotations</h3>
+              <ul>
+                <li><b>The screenshot</b>, around what you marked, with its pins.</li>
+                <li><b>Each pin:</b> the element's role and label, and a CSS-like location.</li>
+                <li><b>What you typed</b> on a pin, under that pin.</li>
+                <li><b>What you measured</b>, in points, and on which screen.</li>
+              </ul>
+            </div>
           </div>
         </div>
         </div>
@@ -695,19 +744,6 @@ h2 { font-size: var(--text-title); font-weight: 650; line-height: 1.12; letter-s
         </figure>
       </div>
       <p class="works"><span>Works with</span> <b>Claude Code</b> <b>Codex</b> <b>OpenCode</b> <b>Gemini CLI</b> <b>Copilot CLI</b> <b>Qwen Code</b></p>
-    </section>
-
-    <section class="step shown" aria-labelledby="again">
-      <div class="step-text">
-        <span class="combo"><kbd>R</kbd></span>
-        <h2 id="again">Then check the fix.</h2>
-        <p>Freeze again and press R: the last aside's pins come back where they were. Click one to pin what's there now, and your agent gets both, to compare. Through <code>asides mcp</code>, it can look again itself.</p>
-      </div>
-      <figure class="shot screen again" role="img" aria-label="The fixed order summary: pin 2 of the last aside still hollow around the items, and a new pin 1 on the Pay now button, now on one line; below, what was said: One line now 1. The agent's chat gets it as a follow-up to pin 1.">
-        <div class="app"><span class="app-title">Order summary</span><div class="items roomy on-earlier"><span class="spot hollow" data-n="2"></span><p><i style="background:#e6dcc6"></i><span>Linen tote</span><span>$48.00</span></p><p><i style="background:#a9c2a2"></i><span>Notebook × 2</span><span>$24.00</span></p></div><div class="total"><span>Total</span><span>$72.00</span></div><div class="pay one-line on-element"><span class="spot blue" data-n="1"></span>Pay now · $72.00</div></div>
-        <div class="term"><div class="term-bar">shop — claude</div><p class="dim">&gt; One line now [1].</p><p><b>### 1. button "Pay now · $72.00"</b></p><p class="dim">**Follow-up to:** pin 1 of 2026-11-17-142310</p><p class="dim">&gt;<i></i></p></div>
-        <p class="say">One line now <i class="blue">1</i>.</p>
-      </figure>
     </section>
   </div>
 
@@ -928,7 +964,7 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
   </section>
 
   <footer class="foot">
-    <span>By <a href="https://mihaicristian.dev">Mihai-Cristian Farcaș</a></span>
+    <span>By <a href="https://mihaicristian.dev">Mihai-Cristian Farcaș</a>. Behind the screens: Henri-Edmond Cross, <a href="https://www.clevelandart.org/art/2020.106">The Rose Cloud</a>.</span>
     <nav aria-label="More"><a href="https://github.com/mihaicristianfarcas/asides/blob/main/guide/using.md">Guide</a><a href="https://github.com/mihaicristianfarcas/asides">Source on GitHub</a></nav>
   </footer>
 </main>
@@ -1441,6 +1477,75 @@ copilot mcp add asides -- asides mcp</code></pre><button class="copy" type="butt
     });
     moved.observe(hero);
     moved.observe(button);
+  }
+})();
+</script>
+<script>
+(() => {
+  // The first step's pill, to try: its buttons do what the overlay's do (nothing is sent), and the
+  // note under it names the one the pointer's on, as the overlay's does, or says what was just done.
+  const pill = document.querySelector('.tried');
+  if (!pill) return;
+  const note = pill.nextElementSibling;
+  const name = pill.querySelector('.ap-to');
+  const mic = pill.querySelector('.ap-mic');
+  const targets = ['Claude Code (shop)', 'Codex (api)', 'OpenCode (blog)', 'History only'];
+  const names = {
+    keys: () => 'Every key',
+    mic: () => (pill.classList.contains('muted') ? 'Muted (click to listen)' : 'Listening (click to mute)'),
+    clip: () => (pill.classList.contains('clipping') ? 'Recording a clip (click to stop)' : 'Record a clip of what happens next, live'),
+    target: () => 'Where it goes (click for the next)',
+    restart: () => 'Start over without sending',
+    send: () => 'Send',
+    close: () => 'Close without sending',
+  };
+  let target = 0, pointed = null, said = null, saying, back;
+  const show = () => {
+    const text = said ?? (pointed && !pill.classList.contains('away') ? names[pointed]() : null);
+    if (text) note.textContent = text;
+    note.classList.toggle('shown', Boolean(text));
+  };
+  const say = (text, ms) => {
+    said = text;
+    show();
+    clearTimeout(saying);
+    saying = setTimeout(() => { said = null; show(); }, ms);
+  };
+  for (const button of pill.querySelectorAll('button')) {
+    const does = button.dataset.does;
+    const point = (on) => () => { if (on) pointed = does; else if (pointed === does) pointed = null; show(); };
+    button.addEventListener('pointerenter', point(true));
+    button.addEventListener('pointerleave', point(false));
+    button.addEventListener('focus', point(true));
+    button.addEventListener('blur', point(false));
+    button.addEventListener('click', () => {
+      if (does === 'mic') {
+        mic.setAttribute('aria-pressed', !pill.classList.toggle('muted'));
+        show();
+      } else if (does === 'clip') {
+        const recording = pill.classList.toggle('clipping');
+        button.setAttribute('aria-pressed', recording);
+        if (recording) show();
+        else say('The clip is in the aside', 1600);
+      } else if (does === 'target') {
+        target = (target + 1) % targets.length;
+        name.textContent = targets[target];
+        say(`Sends to ${targets[target]}`, 1600);
+      } else if (does === 'keys') {
+        say('On the frozen screen, ? shows every key', 1600);
+      } else if (does === 'restart') {
+        say('Started over', 1600);
+      } else {
+        // Sent or closed: the pill away a moment, what happened in its place.
+        pill.classList.add('away');
+        pill.classList.remove('clipping');
+        pill.querySelector('.ap-clip').setAttribute('aria-pressed', false);
+        pointed = null;
+        say(does === 'send' ? `Sent to ${targets[target]}` : 'Closed without sending', 2200);
+        clearTimeout(back);
+        back = setTimeout(() => pill.classList.remove('away'), 2200);
+      }
+    });
   }
 })();
 </script>
