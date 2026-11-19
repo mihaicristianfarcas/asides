@@ -104,6 +104,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
+          env-vars: ImageVersion # a cache per runner image: the Windows job says why
       - name: Build
         run: |
           make bundle SIGN_ID=-
@@ -247,9 +248,12 @@ jobs:
           if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
           & 'C:\Program Files\LLVM\bin\clang-cl.exe' --version
           cmake --version
+      # A cache per runner image (its ImageVersion in the key): restored on a newer image, whisper.cpp's
+      # CMake cache still named the old one's MSVC compiler, which it no longer had (2.0.1's release).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release-${{ matrix.arch }}
+          env-vars: ImageVersion
       - name: Build
         shell: pwsh
         run: ./scripts/package-windows.ps1 -StageOnly -Arch ${{ matrix.arch }}
@@ -374,6 +378,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
+          env-vars: ImageVersion # a cache per runner image: the Windows job says why
       - name: Build and package
         run: scripts/package-linux.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
