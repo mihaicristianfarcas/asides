@@ -2934,7 +2934,7 @@ impl AsidesWindow {
     }
 
     /// How to use asides: the basics played, then the pill, where it goes, a pin's card, the
-    /// tools, live and frozen, every key, and what's left after.
+    /// tools, live and frozen, clips, every key, and what's left after.
     fn help(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let width = (self.width - self.sidebar_width() - 56.).clamp(320., Metrics::FORM + 60.);
@@ -2944,7 +2944,7 @@ impl AsidesWindow {
         let (measure, draw, shot, annotate) = (k("measure"), k("draw"), k("shot"), k("annotate"));
         let (next, keys, undo, redo, clear, talk, done, close) =
             (k("target"), k("help"), k("undo"), k("redo"), k("clear"), k("talk"), k("done"), k("close"));
-        let (mic, sessions, restart) = (k("mic"), k("sessions"), k("restart"));
+        let (mic, sessions, restart, clip) = (k("mic"), k("sessions"), k("restart"), k("clip"));
         let kept = match self.config.history_days {
             0 => "Every aside is kept in History, sent or not".to_string(),
             days => format!("Every aside is kept in History for {days} days, sent or not"),
@@ -2965,6 +2965,7 @@ impl AsidesWindow {
         let (target, _) = self.demo("target", width, window);
         let (card, _) = self.demo("card", width, window);
         let (tools, _) = self.demo("tools", width, window);
+        let (clips, _) = self.demo("clip", width, window);
         let sheet = help::still(width, &self.look());
         let part = |glyph: &str, label: &str, text: String| {
             div()
@@ -3057,7 +3058,7 @@ impl AsidesWindow {
                         "Click a pin's number, or press it, to open its card (with the microphone off, each new \
                          pin opens it); Tab goes on to the next pin's. Type there, or hold {talk} to talk about that \
                          pin alone. {c}1 to {c}4 say what it is: a fix, a change, a question, an approval. Its \
-                         pencil and ruler pick Draw and Measure.",
+                         pencil and ruler pick Draw and Measure; its camera records its part of the screen.",
                         c = keys::COMMAND,
                     ),
                     Some(card),
@@ -3080,6 +3081,18 @@ impl AsidesWindow {
                          same aside. With asides closed, {live} opens it live."
                     ),
                     None,
+                ))
+                .child(topic(
+                    "Record what happens",
+                    format!(
+                        "{clip}, or the pill's camera, records what happens next, live: use your app, then press \
+                         {clip} again or click the square (sending, closing or freezing stops it too; it lasts a \
+                         minute at most). The aside gets each moment the app changed, numbered and timed: every \
+                         screen it settled on, a frame of each movement, anything that flashed. A pin's camera, or \
+                         {c}K in its card, records only its part of the screen.",
+                        c = keys::COMMAND,
+                    ),
+                    Some(clips),
                 ))
                 .child(topic(
                     "Every key",
