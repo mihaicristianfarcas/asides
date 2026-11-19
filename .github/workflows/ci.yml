@@ -21,6 +21,8 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: ImageVersion # a cache per runner image: release.yml's Windows job says why
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -39,6 +41,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: ImageVersion # a cache per runner image: release.yml's Windows job says why
       - name: Build dependencies
         run: |
           sudo apt-get update
@@ -78,6 +82,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          env-vars: ImageVersion # a cache per runner image: release.yml's Windows job says why
       # whisper.cpp's bindings need libclang (LLVM is on the runner).
       - name: LLVM
         shell: pwsh
