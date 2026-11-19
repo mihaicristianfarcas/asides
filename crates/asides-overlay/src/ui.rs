@@ -31,10 +31,11 @@ use gpui::{
 use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::faces::{
-    Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face, card_cluster, card_tool,
-    choose_folder_content, clip_face, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
-    label_at, list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
-    new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box, tool_face, tool_icon,
+    Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face, card_camera, card_cluster,
+    card_tool, choose_folder_content, clip_face, folder_content, glass_panel, group, help_face, icon, intent_dot,
+    keys_sheet_face, label_at, list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows,
+    marker_face, mic_face, new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box,
+    tool_face, tool_icon,
 };
 use crate::input::{self, TextInput};
 use crate::{finish, glass, io, style};
@@ -60,7 +61,7 @@ pub(crate) const CARD_WIDTH: f64 = 440.0;
 /// The card's trash button and the gap before it.
 const TRASH_WIDTH: f64 = 34.0;
 /// How much wider a card is with its camera (a clip of its pin's area).
-const CAMERA_WIDTH: f64 = 29.0;
+pub(crate) const CAMERA_WIDTH: f64 = 29.0;
 /// The card opens above its annotation when there's less than this below it.
 const CARD_ROOM: f64 = 240.0;
 const MENU_WIDTH: f64 = 260.0;
@@ -3696,13 +3697,8 @@ impl ScreenView {
             let (press, tip) = (self.overlay.clone(), self.overlay.clone());
             let (screen, index) = (card.screen, card.index);
             let name: SharedString = format!("Record this area, live ({}K)", keys::COMMAND).into();
-            div()
+            card_camera(t)
                 .id("card-clip")
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(28.))
-                .rounded(px(7.))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_hover(move |hovered, _, cx| {
@@ -3720,7 +3716,6 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(icon("clip", t.primary))
         });
         let surface = frozen_glass(&self.overlay, t, card.screen, (ox, oy), 12.)
             .id("card")

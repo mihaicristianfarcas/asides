@@ -560,6 +560,11 @@ pub fn card_tool(tool: Tool, on: bool, t: Theme) -> Div {
         .child(icon(tool_icon(tool), t.primary))
 }
 
+/// The card's camera: a clip of its pin's part of the screen, live.
+pub fn card_camera(t: Theme) -> Div {
+    div().flex().items_center().justify_center().size(px(28.)).rounded(px(7.)).child(icon("clip", t.primary))
+}
+
 /// The card's microphone: red while it records.
 pub fn talk_face(recording: bool, t: Theme) -> Div {
     // White on the red while recording.

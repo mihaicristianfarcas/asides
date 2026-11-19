@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use asides_core::inspect::{Intent, PtRect};
 use asides_core::keys;
+use asides_core::measure::{Frame, Rect as Pixels};
+use asides_core::motion;
 use asides_core::overlay::{MARKER, Tool};
 use gpui::{
     AnyElement, Div, FontWeight, HighlightStyle, Hsla, StyledText, TextRun, Window, canvas, deferred, div, prelude::*,
@@ -18,13 +20,13 @@ use gpui::{
 
 use crate::controls::{self, Radius, Theme, ease, hex};
 use crate::faces::{
-    self, Prim, Still, ToolSlot, agent_segment, agents_track, card_cluster, card_field, card_surface, card_tool,
-    choose_folder_content, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline, list_heading,
-    list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass, still_pill, talk_face,
-    tool_slot_width,
+    self, Prim, Still, ToolSlot, agent_segment, agents_track, card_camera, card_cluster, card_field, card_surface,
+    card_tool, choose_folder_content, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline,
+    list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass,
+    still_pill, talk_face, tool_slot_width,
 };
 use crate::style;
-use crate::ui::{CARD_WIDTH, Keys, LIST_GAP};
+use crate::ui::{CAMERA_WIDTH, CARD_WIDTH, Keys, LIST_GAP};
 
 type Point = (f32, f32);
 /// A rectangle on the stage: x, y, width, height.
@@ -40,9 +42,27 @@ const FADE: Duration = Duration::from_millis(220);
 /// A key pressed shows until this long after its beat is in, and pops in and fades out in `POP`.
 const KEY_SHOWN: Duration = Duration::from_millis(1100);
 const POP: Duration = Duration::from_millis(150);
-/// Typed into a card, a character this often; said, a word.
+/// How long a flash on the app shows: a few frames, too fast to read.
+const FLASH: Duration = Duration::from_millis(100);
+/// Typed into a card, a character this often.
 const TYPE_EACH: Duration = Duration::from_millis(45);
-const WORD_EACH: Duration = Duration::from_millis(190);
+/// Said, a character's worth of time each (spaces too): every caption at the same pace, each word
+/// showing once those before it have had theirs. Then all of it stays this long, to be read.
+const SAID_EACH: Duration = Duration::from_millis(42);
+const SAID_READ: Duration = Duration::from_millis(1600);
+
+/// How many of `text`'s words are said `held` in: the first at once, each next when the time for
+/// the characters before it has gone by.
+fn words_said(text: &str, held: Duration) -> usize {
+    let chars = held.as_millis() / SAID_EACH.as_millis().max(1);
+    1 + text.chars().enumerate().filter(|&(i, c)| c == ' ' && (i as u128) < chars).count()
+}
+
+/// How long a beat saying `text` holds (ms): until its last word, then `SAID_READ`.
+fn saying(text: &str) -> u64 {
+    let last = text.chars().enumerate().filter(|&(_, c)| c == ' ').last().map_or(0, |(i, _)| i + 1);
+    (SAID_EACH * last as u32 + SAID_READ).as_millis() as u64
+}
 /// The pill's top on the stage.
 const PILL_TOP: f32 = 0.0;
 /// The pill's height, and how far left of its middle where the aside goes is (its buttons on either
@@ -51,12 +71,28 @@ const PILL_HEIGHT: f32 = 38.0;
 const NAME_LEFT_OF_MIDDLE: f32 = 20.0;
 
 /// A demonstration: its size (laid out that wide, in the middle of what it's given), where the app
-/// and the agent's chat are on its stage, and its beats.
+/// and the agent's chat are on its stage, its beats, and the clip the aside brings into the chat.
 pub struct Demo {
     pub size: (f32, f32),
     pub app: Option<Rect>,
     pub chat: Option<Rect>,
     pub beats: Vec<Beat>,
+    pub clip: Option<Clip>,
+}
+
+/// A clip, as the agent gets it: its frames, and what's said after them (`motion`'s own caption).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Clip {
+    pub frames: Vec<ClipFrame>,
+    pub caption: String,
+}
+
+/// A frame of a clip: what the app's button showed (`declined`: its error), and when, in seconds into
+/// the clip.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClipFrame {
+    pub declined: bool,
+    pub time: f32,
 }
 
 #[derive(Clone, Default)]
@@ -91,9 +127,15 @@ pub enum Drag {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scene {
-    /// The screen frozen under the pill, the microphone listening.
+    /// The screen frozen under the pill, the microphone listening, a clip recording.
     pub frozen: bool,
     pub listening: bool,
+    pub clip: bool,
+    /// A note under the pill (`ui::toast`'s).
+    pub note: Option<&'static str>,
+    /// The app's button says its payment was declined: for an instant (`FLASH`) as the beat comes in,
+    /// then no longer.
+    pub declined: bool,
     /// Where the aside goes, as the pill names it.
     pub target: &'static str,
     /// The pill's list open, and the session lit in it.
@@ -143,13 +185,15 @@ pub enum Measured {
     Area(Rect),
 }
 
-/// The demonstration called `name` (`basics`, `target`, `card` or `tools`), laid out `width` wide.
+/// The demonstration called `name` (`basics`, `target`, `card`, `tools` or `clip`), laid out `width`
+/// wide.
 pub fn demo(name: &str, width: f32) -> Option<Demo> {
     match name {
         "basics" => Some(basics(width)),
         "target" => Some(target()),
         "card" => Some(card(width)),
         "tools" => Some(tools(width)),
+        "clip" => Some(clip(width)),
         _ => None,
     }
 }
@@ -212,6 +256,10 @@ const SCREEN_TOP: f32 = PILL_TOP + PILL_HEIGHT + 12.0;
 const SCREEN_GAP: f32 = 12.0;
 const CAPTION_ROOM: f32 = 48.0;
 
+/// What's said in the basics, and about a clip.
+const BASICS_SAID: &str = "This button [1] wraps, and these rows [2] are cramped.";
+const CLIP_SAID: &str = "When I pay it flashes Declined, too fast to read.";
+
 /// Freeze, click what's wrong, say why, send: the app and the agent's chat beside it, as wide as
 /// they're given.
 fn basics(width: f32) -> Demo {
@@ -231,6 +279,7 @@ fn basics(width: f32) -> Demo {
         size: (width, SCREEN_TOP + app.3),
         app: Some(app),
         chat: Some(chat),
+        clip: None,
         beats: vec![
             Beat {
                 hold: 900,
@@ -255,9 +304,9 @@ fn basics(width: f32) -> Demo {
                 ..Beat::default()
             },
             Beat {
-                hold: 3400,
+                hold: saying(BASICS_SAID),
                 pointer: Some(rest),
-                say: Some("This button [1] wraps, and these rows [2] are cramped."),
+                say: Some(BASICS_SAID),
                 step: Some(2),
                 scene: both,
                 ..Beat::default()
@@ -287,7 +336,7 @@ fn target() -> Demo {
             Beat { hold: 700, pointer: Some(row(to)), click: true, scene: scene(session(to), None), ..Beat::default() },
         ]
     };
-    Demo { size: (420.0, 412.0), app: None, chat: None, beats: [pick(0, 2), pick(2, 0)].concat() }
+    Demo { size: (420.0, 412.0), app: None, chat: None, beats: [pick(0, 2), pick(2, 0)].concat(), clip: None }
 }
 
 /// A pin's card: its number clicked, what's typed, what it is. The app as wide as it's given, with
@@ -308,6 +357,7 @@ fn card(width: f32) -> Demo {
         size: (width, app.3),
         app: Some(app),
         chat: None,
+        clip: None,
         beats: vec![
             Beat {
                 hold: 1000,
@@ -356,6 +406,7 @@ fn tools(width: f32) -> Demo {
         size: (width, app.1 + app.3),
         app: Some(app),
         chat: None,
+        clip: None,
         beats: vec![
             Beat { hold: 900, pointer: Some(rest), scene: scene(None, vec![], vec![]), ..Beat::default() },
             Beat {
@@ -395,6 +446,93 @@ fn tools(width: f32) -> Demo {
     }
 }
 
+/// How wide the pill names where the aside goes in the demonstrations ("Claude Code (shop)", 12.5
+/// points, medium), near enough on each system's font for the pointer to land on the camera, and how
+/// far left of that name the camera's middle is (5 + 28 + 28 + 9 before the name, 5 + 28 + 28 + 14 to
+/// it).
+const SESSION_NAME_WIDTH: f32 = 116.0;
+const CAMERA_LEFT_OF_NAME: f32 = 23.0;
+/// Under the chat's aside, room for the clip.
+const CLIP_ROOM: f32 = 70.0;
+
+/// A clip: K (the screen comes to life), the button to pay clicked, its error for an instant, the
+/// camera's square clicked, why said, sent: in the agent's chat, the clip's picture where it was
+/// recorded, what asides says of it, then what was said. The app and the chat beside it, as wide as
+/// they're given.
+fn clip(width: f32) -> Demo {
+    let chat_width = (width * 0.4).clamp(200.0, 280.0);
+    let app = (0.0, SCREEN_TOP, width - chat_width - SCREEN_GAP, APP_CONTENT + CAPTION_ROOM + CLIP_ROOM);
+    let chat = (app.2 + SCREEN_GAP, SCREEN_TOP, chat_width, app.3);
+    let button = app_button(app);
+    let pay = (button.0 + button.2 * 0.62, button.1 + button.3 * 0.6);
+    let rest = (app.0 + app.2 * 0.72, button.1 + 20.0);
+    let name_left = width / 2.0 - NAME_LEFT_OF_MIDDLE - SESSION_NAME_WIDTH / 2.0;
+    let camera = (name_left - CAMERA_LEFT_OF_NAME, PILL_TOP + PILL_HEIGHT / 2.0);
+    // Live, only the pill stays on the screen: on the stage, as frozen (nothing's pinned).
+    let pill = |clip, declined, note| Scene {
+        frozen: true,
+        listening: true,
+        target: session(0),
+        clip,
+        declined,
+        note,
+        ..Scene::default()
+    };
+    // Recording from beat `ON` (K), the error at `FLASH_AT` (the click), stopped at `OFF` (the square).
+    const ON: usize = 1;
+    const FLASH_AT: usize = 2;
+    const OFF: usize = 3;
+    let mut demo = Demo {
+        size: (width, SCREEN_TOP + app.3),
+        app: Some(app),
+        chat: Some(chat),
+        clip: None,
+        beats: vec![
+            Beat { hold: 1000, pointer: Some(rest), scene: pill(false, false, None), ..Beat::default() },
+            Beat { hold: 700, key: Some("clip".into()), scene: pill(true, false, None), ..Beat::default() },
+            // Its error, for an instant, then back as it was.
+            Beat { hold: 1000, pointer: Some(pay), click: true, scene: pill(true, true, None), ..Beat::default() },
+            Beat {
+                hold: 1500,
+                pointer: Some(camera),
+                click: true,
+                scene: pill(false, false, Some("The clip is in the aside")),
+                ..Beat::default()
+            },
+            Beat {
+                hold: saying(CLIP_SAID),
+                pointer: Some(rest),
+                say: Some(CLIP_SAID),
+                scene: pill(false, false, None),
+                ..Beat::default()
+            },
+            Beat {
+                hold: 3400,
+                key: Some("send".into()),
+                scene: Scene { target: session(0), sent: true, ..Scene::default() },
+                ..Beat::default()
+            },
+        ],
+    };
+    // What the recorder keeps of it, at the times it plays: the first frame, the error, the frame
+    // after it (back as it was, the last), and asides' caption for them.
+    let since = |i: usize| (demo.comes_in(i) - demo.comes_in(ON)).as_secs_f32();
+    let frames = vec![
+        ClipFrame { declined: false, time: 0.0 },
+        ClipFrame { declined: true, time: since(FLASH_AT) },
+        ClipFrame { declined: false, time: since(FLASH_AT) + FLASH.as_secs_f32() },
+    ];
+    let kept = motion::Clip {
+        frames: frames.iter().map(|f| (f.time, Frame::filled(1, 1, 0))).collect(),
+        rect: Pixels::new(0, 0, 1, 1),
+        seen: frames.len(),
+        seconds: since(OFF),
+        flashes: vec![1],
+    };
+    demo.clip = Some(Clip { frames, caption: kept.summary().caption("in Safari") });
+    demo
+}
+
 // --- Playing ---
 
 /// What a demonstration shows at a moment.
@@ -404,8 +542,9 @@ pub struct Shown<'a> {
     pub beat: usize,
     pub fade: f32,
     pub under: usize,
-    /// How long the beat in front has been in.
+    /// How long the beat in front has been in, and since it started coming in.
     pub held: Duration,
+    pub since_in: Duration,
     /// A beat's drag going on: which, and how far along.
     pub dragging: Option<(usize, f32)>,
     pub pointer: Option<Point>,
@@ -552,6 +691,12 @@ impl Demo {
         }
     }
 
+    /// When beat `i` starts coming in (its scene giving way to the next), from the start of a round.
+    fn comes_in(&self, i: usize) -> Duration {
+        let before: Duration = (0..i).map(|j| self.parts(j).total()).sum();
+        before + self.parts(i).before()
+    }
+
     /// When, after it started playing, it starts going into step `step`'s first beat (to watch
     /// that step).
     pub fn time_of_step(&self, step: usize) -> Option<Duration> {
@@ -624,11 +769,13 @@ impl Demo {
             let out = (ms(shown_until.saturating_sub(s)) / ms(POP)).min(1.0);
             (key, into.min(out))
         });
-        // Moving: a key popping in or fading out, the pointer, a click, the scenes giving way, the
-        // pointer going on after a drag, typing or talking.
+        // Moving: a key popping in or fading out, the pointer, a click, the scenes giving way, a flash,
+        // the pointer going on after a drag, typing or talking.
+        let flash = if b.scene.declined { FLASH } else { Duration::ZERO };
         let spans = [
             (Duration::ZERO, if b.key.is_some() { POP } else { Duration::ZERO }),
             (p.key, faded),
+            (clicked, clicked + flash),
             (faded, faded + p.after.max(p.lively)),
             (if b.key.is_some() { shown_until.saturating_sub(POP) } else { held }, shown_until),
         ];
@@ -639,6 +786,7 @@ impl Demo {
             fade: if s < clicked { 1.0 } else { fade },
             under: prev,
             held: if s < clicked { held_before(self, prev) } else { s.saturating_sub(faded) },
+            since_in: if s < clicked { FADE + held_before(self, prev) } else { s - clicked },
             dragging,
             pointer,
             pressed,
@@ -845,7 +993,9 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         }
     }
 
-    let app = demo.app.map(|r| app_view(r, t).absolute().left(px(r.0 + dx)).top(px(r.1)));
+    // A flash: there, then gone, at once.
+    let declined = to.declined && shown.since_in < FLASH;
+    let app = demo.app.map(|r| app_view(r, declined, t).absolute().left(px(r.0 + dx)).top(px(r.1)));
     let chat = demo.chat.map(|r| chat_view(r, dx, between(from.sent, to.sent, f), shown, demo, t));
     let painted = canvas(
         |_, _, _| {},
@@ -885,12 +1035,48 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         .into_any_element()
 }
 
+/// The app's surface.
+fn app_surface(t: Theme) -> Hsla {
+    if t.dark { hex(0x262523, 1.0) } else { hex(0xffffff, 1.0) }
+}
+
+/// The app's button to pay, `scale` times its size: its label wrapping, or (`declined`) its error.
+fn pay_button(declined: bool, scale: f32, t: Theme) -> Div {
+    let (_, _, w, h) = APP_BUTTON;
+    // Its ink inverted: dark on a light page, light on a dark one.
+    let (button, on_button) =
+        if t.dark { (hex(0xedebe7, 1.0), hex(0x1c1b19, 1.0)) } else { (hex(0x2b2a27, 1.0), hex(0xffffff, 1.0)) };
+    let error = if t.dark { hex(0xd8584e, 1.0) } else { hex(0xc9463d, 1.0) };
+    let face = |fill: Hsla, ink: Hsla| {
+        div()
+            .absolute()
+            .inset_0()
+            .rounded(px(8. * scale))
+            .bg(fill)
+            .text_color(ink)
+            .text_size(px(12. * scale))
+            .line_height(px(15. * scale))
+            .font_weight(FontWeight::MEDIUM)
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+    };
+    div()
+        .relative()
+        .flex_none()
+        .w(px(w * scale))
+        .h(px(h * scale))
+        .when(!declined, |d| d.child(face(button, on_button).child("Pay now ·").child("$72.00")))
+        .when(declined, |d| d.child(face(error, hex(0xffffff, 1.0)).child("Declined")))
+}
+
 /// The app on the stage, `(_, _, width, height)`: an order's summary (its rows cramped), its total, and
-/// the button to pay (its label wrapping).
-fn app_view((_, _, width, height): Rect, t: Theme) -> Div {
+/// the button to pay (its label wrapping; `declined`, its error).
+fn app_view((_, _, width, height): Rect, declined: bool, t: Theme) -> Div {
     let (sand, sage) =
         if t.dark { (hex(0x8c7d62, 1.0), hex(0x5f7a5a, 1.0)) } else { (hex(0xe6dcc6, 1.0), hex(0xa9c2a2, 1.0)) };
-    let surface = if t.dark { hex(0x262523, 1.0) } else { hex(0xffffff, 1.0) };
+    let surface = app_surface(t);
     let inside = width - 2.0 * APP_BORDER - 32.0;
     let row = |top: f32, swatch: Hsla, name: &'static str, price: &'static str| {
         div()
@@ -907,10 +1093,7 @@ fn app_view((_, _, width, height): Rect, t: Theme) -> Div {
             .child(div().flex_1().child(name))
             .child(div().text_color(t.secondary).child(price))
     };
-    let (bx, by, bw, bh) = APP_BUTTON;
-    // Its ink inverted: dark on a light page, light on a dark one.
-    let (button, on_button) =
-        if t.dark { (hex(0xedebe7, 1.0), hex(0x1c1b19, 1.0)) } else { (hex(0x2b2a27, 1.0), hex(0xffffff, 1.0)) };
+    let (bx, by, _, _) = APP_BUTTON;
     div()
         .w(px(width))
         .h(px(height))
@@ -945,44 +1128,42 @@ fn app_view((_, _, width, height): Rect, t: Theme) -> Div {
                 .child("Total")
                 .child("$72.00"),
         )
-        .child(
-            div()
-                .absolute()
-                .left(px(bx))
-                .top(px(by))
-                .w(px(bw))
-                .h(px(bh))
-                .rounded(px(8.))
-                .bg(button)
-                .text_color(on_button)
-                .text_size(px(12.))
-                .line_height(px(15.))
-                .font_weight(FontWeight::MEDIUM)
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .child("Pay now ·")
-                .child("$72.00"),
-        )
+        .child(pay_button(declined, 1.0, t).absolute().left(px(bx)).top(px(by)))
 }
 
+/// The chat's padding, its text's size, and how far a line under the prompt's `› ` starts.
+const CHAT_PADDING: f32 = 12.0;
+const CHAT_TEXT: f32 = 10.5;
+const CHAT_INDENT: f32 = 2.0 * 0.6 * CHAT_TEXT;
+
 /// The agent's chat beside the app: what was said before, and the aside, typed in once it's sent
-/// (`sent`, how much of it shows).
+/// (`sent`, how much of it shows): the screenshot, what was said, then its pins; or the clip's
+/// picture, what asides says of it, then what was said.
 fn chat_view((x, y, w, h): Rect, dx: f32, sent: f32, shown: &Shown, demo: &Demo, t: Theme) -> AnyElement {
     let surface = if t.dark { hex(0x1f1e1c, 1.0) } else { hex(0xffffff, 1.0) };
     let mono = |text: &'static str, color: Hsla| div().text_color(color).child(text);
     let blue = hex(style::ANNOTATION_BLUE, 1.0);
     let green = hex(style::ANNOTATION_GREEN, 1.0);
     let said = demo.beats.iter().find_map(|b| b.say).unwrap_or_default();
-    let aside = div()
-        .opacity(sent)
-        .flex()
-        .flex_col()
-        .gap(px(6.))
-        .child(div().child(said_text(&format!("› [Image #1] {said}"), usize::MAX, blue, green, t.primary)))
-        .child(mono("  ### 1. button \"Pay now · $72.00\"", t.secondary))
-        .child(mono("  ### 2. list \"Items\"", t.secondary));
+    let aside = div().opacity(sent).flex().flex_col().gap(px(6.));
+    let image =
+        |after: &str| div().child(said_text(&format!("› [Image #1]{after}"), usize::MAX, blue, green, t.primary));
+    // Under the prompt's `› `, as the agent shows the rest of a message.
+    let indented = |child: Div| div().pl(px(CHAT_INDENT)).child(child);
+    let aside = match &demo.clip {
+        None => aside
+            .child(image(&format!(" {said}")))
+            .child(mono("  ### 1. button \"Pay now · $72.00\"", t.secondary))
+            .child(mono("  ### 2. list \"Items\"", t.secondary)),
+        Some(clip) => {
+            let inside = w - 2.0 * APP_BORDER - 2.0 * CHAT_PADDING - CHAT_INDENT;
+            aside
+                .child(image(""))
+                .child(indented(clip_sheet(&clip.frames, inside, t)))
+                .child(indented(div().text_color(t.secondary).child(clip.caption.clone())))
+                .child(indented(div().text_color(t.primary).child(said)))
+        }
+    };
     let _ = shown;
     div()
         .absolute()
@@ -1014,12 +1195,12 @@ fn chat_view((x, y, w, h): Rect, dx: f32, sent: f32, shown: &Shown, demo: &Demo,
         .child(
             div()
                 .flex_1()
-                .p(px(12.))
+                .p(px(CHAT_PADDING))
                 .flex()
                 .flex_col()
                 .gap(px(8.))
                 .font_family(controls::mono_font())
-                .text_size(px(10.5))
+                .text_size(px(CHAT_TEXT))
                 .line_height(px(15.))
                 .child(mono("› Run the checkout tests", t.secondary))
                 .child(mono("● All 14 tests pass.", t.primary))
@@ -1043,6 +1224,61 @@ fn chat_view((x, y, w, h): Rect, dx: f32, sent: f32, shown: &Shown, demo: &Demo,
                 ),
         )
         .into_any_element()
+}
+
+/// What a clip's frames show around what changed (the button), on the stage, and the least a side
+/// of them is (`motion`'s 24 and 200 pixels, at 2×).
+const CLIP_AROUND: f32 = 12.0;
+const CLIP_SIDE: f32 = 100.0;
+
+/// A clip as the agent gets it (`motion::pictures`), `width` wide: its frames side by side on a dark
+/// picture, each under its number and its time, the part of the app that changed in each.
+fn clip_sheet(frames: &[ClipFrame], width: f32, t: Theme) -> Div {
+    let (gap, band, border) = (4.0, 12.0, 1.0);
+    let n = frames.len().max(1) as f32;
+    let tile = (width - 2.0 * border - gap * (n + 1.0)) / n;
+    let picture = hex(0x1c1c1e, 1.0);
+    let (_, _, w, h) = APP_BUTTON;
+    let crop = ((w + 2.0 * CLIP_AROUND).max(CLIP_SIDE), (h + 2.0 * CLIP_AROUND).max(CLIP_SIDE));
+    let scale = tile / crop.0;
+    let frame = |(i, f): (usize, &ClipFrame)| {
+        div()
+            .flex_none()
+            .w(px(tile))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(band))
+                    .flex()
+                    .items_center()
+                    .text_size(px(8.5))
+                    .text_color(hex(0xf2f2f7, 1.0))
+                    .whitespace_nowrap()
+                    .child(format!("{}  {:.2}s", i + 1, f.time)),
+            )
+            .child(
+                div()
+                    .h(px(crop.1 * scale))
+                    .bg(app_surface(t))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(pay_button(f.declined, scale, t)),
+            )
+    };
+    div()
+        .w(px(width))
+        .px(px(gap))
+        .pb(px(gap))
+        .flex()
+        .gap(px(gap))
+        .rounded(px(5.))
+        .bg(picture)
+        // On a dark chat, its edge.
+        .border_1()
+        .border_color(if t.dark { t.card_stroke } else { picture })
+        .children(frames.iter().enumerate().map(frame))
 }
 
 /// The pill at the top of the stage, as it comes in or goes, its list or the keys under it.
@@ -1119,7 +1355,8 @@ fn pill_view(
             help: false,
             listening: to.listening || from.listening,
             level,
-            recording_clip: false,
+            // As the overlay's: at once.
+            recording_clip: to.clip,
             target,
             list_open: to.list.is_some() && f > 0.5 || from.list.is_some() && f <= 0.5,
             tool,
@@ -1142,7 +1379,18 @@ fn pill_view(
             .opacity(shown)
             .child(list)
     });
-    let _ = demo;
+    // A note under it, in its middle.
+    let note = to.note.or(from.note).map(|text| {
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(PILL_HEIGHT + 8.0))
+            .flex()
+            .justify_center()
+            .opacity(between(from.note.is_some(), to.note.is_some(), f))
+            .child(note_view(text.into(), t))
+    });
     Some(
         div()
             .absolute()
@@ -1152,7 +1400,7 @@ fn pill_view(
             .flex()
             .justify_center()
             .opacity(shows)
-            .child(div().relative().child(pill).children(below))
+            .child(div().relative().child(pill).children(below).children(note))
             .into_any_element(),
     )
 }
@@ -1221,7 +1469,9 @@ fn card_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look: &Lo
         false => card.text.to_string(),
     };
     let dots = Intent::ALL.map(|intent| intent_dot(intent, card.intent == Some(intent), t).into_any_element());
-    let tools = [Tool::Draw, Tool::Measure].map(|tool| card_tool(tool, false, t).into_any_element());
+    // Its camera, as on a pin that's on more than a point.
+    let tools = [card_tool(Tool::Draw, false, t), card_tool(Tool::Measure, false, t), card_camera(t)]
+        .map(IntoElement::into_any_element);
     let row = vec![
         card_field(&typed, true, t),
         card_cluster(dots),
@@ -1230,7 +1480,7 @@ fn card_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look: &Lo
     ];
     let half = MARKER as f32 / 2.0;
     Some(
-        card_surface(plain_glass(t, 12.), CARD_WIDTH as f32, row, t)
+        card_surface(plain_glass(t, 12.), (CARD_WIDTH + CAMERA_WIDTH) as f32, row, t)
             .absolute()
             .left(px(pin.at.0 + dx + half + 6.0))
             .top(px(pin.at.1 + half + 6.0 - 4.0 * (1.0 - open)))
@@ -1304,7 +1554,7 @@ fn captions_view(shown: &Shown, scene: &Scene, width: f32, look: &Look) -> AnyEl
     // the app).
     let key_shows = shown.key.map_or(0.0, |(_, shows)| shows);
     let say = shown.say.filter(|_| key_shows < 1.0).map(|text| {
-        let words = (shown.held.as_millis() / WORD_EACH.as_millis().max(1)) as usize + 1;
+        let words = words_said(text, shown.held);
         controls::floating(t)
             .flex_row()
             .opacity(1.0 - key_shows)
@@ -1694,6 +1944,7 @@ mod tests {
             size: (100.0, 50.0),
             app: None,
             chat: None,
+            clip: None,
             beats: vec![
                 Beat { pointer: Some((10.0, 10.0)), ..beat(1000) },
                 Beat { key: Some("measure".into()), ..beat(1000) },
@@ -1774,6 +2025,7 @@ mod tests {
             size: (20.0, 20.0),
             app: None,
             chat: None,
+            clip: None,
             beats: vec![
                 Beat { pointer: Some((0.0, 0.0)), ..beat(500) },
                 Beat { path, drag: Some(Drag::Sketch), pointer: Some((20.0, 20.0)), ..beat(1000) },
@@ -1818,6 +2070,29 @@ mod tests {
     }
 
     #[test]
+    fn every_caption_goes_at_the_same_pace() {
+        // A word once the characters before it (spaces too) have had their time.
+        let text = "a [1] bc d";
+        assert_eq!(words_said(text, Duration::ZERO), 1);
+        assert_eq!(words_said(text, SAID_EACH * 2 - ms(1)), 1);
+        assert_eq!(words_said(text, SAID_EACH * 2), 2);
+        assert_eq!(words_said(text, SAID_EACH * 6), 3);
+        assert_eq!(words_said(text, SAID_EACH * 9), 4);
+        assert_eq!(words_said(text, Duration::from_secs(60)), 4);
+        assert_eq!(saying(text), (SAID_EACH * 9 + SAID_READ).as_millis() as u64);
+        // In every demonstration: each held until its last word, then as long to be read.
+        for name in ["basics", "target", "card", "tools", "clip"] {
+            for beat in super::demo(name, 600.0).unwrap().beats {
+                let Some(said) = beat.say else { continue };
+                assert_eq!(beat.hold, saying(said), "{name}");
+                let last = Duration::from_millis(beat.hold) - SAID_READ;
+                assert_eq!(words_said(said, last), said.split(' ').count(), "{name}");
+                assert!(words_said(said, last - ms(1)) < said.split(' ').count(), "{name}");
+            }
+        }
+    }
+
+    #[test]
     fn what_is_said_shows_a_word_at_a_time_without_moving() {
         let ink = gpui::black();
         let colors = |text: StyledText| text.into_any_element();
@@ -1831,7 +2106,7 @@ mod tests {
     #[test]
     fn every_demonstration_is_there_and_makes_sense() {
         for width in [536.0, 700.0] {
-            for name in ["basics", "target", "card", "tools"] {
+            for name in ["basics", "target", "card", "tools", "clip"] {
                 let demo = super::demo(name, width).unwrap_or_else(|| panic!("no demonstration {name}"));
                 assert!(demo.beats.len() > 1, "{name}");
                 assert!(demo.size.0 <= width, "{name} at {width}");
@@ -1852,6 +2127,45 @@ mod tests {
         // The same timing at any width (a step is watched from its start).
         let (narrow, wide) = (super::demo("basics", 536.0).unwrap(), super::demo("basics", 700.0).unwrap());
         assert_eq!(narrow.time_of_step(2), wide.time_of_step(2));
+    }
+
+    #[test]
+    fn a_clip_records_from_its_key_to_its_square_and_brings_its_flash() {
+        let width = 600.0;
+        let demo = super::demo("clip", width).unwrap();
+        let on = demo.beats.iter().position(|b| b.scene.clip).unwrap();
+        assert_eq!(demo.beats[on].key.as_deref(), Some("clip"));
+        let off = on + demo.beats[on..].iter().position(|b| !b.scene.clip).unwrap();
+        // Stopped by a click on the pill's camera, left of where it goes, which says it's kept.
+        let stop = &demo.beats[off];
+        assert!(stop.click && stop.scene.note.is_some());
+        let (x, y) = stop.pointer.unwrap();
+        assert!(y < PILL_TOP + PILL_HEIGHT && x < width / 2.0 - NAME_LEFT_OF_MIDDLE - SESSION_NAME_WIDTH / 2.0);
+        // The error shows while it records, as its click comes in, for an instant.
+        let flash = demo.beats.iter().position(|b| b.scene.declined).unwrap();
+        assert!(flash > on && flash < off && demo.beats[flash].click);
+        // Playing starts with beat 0 in.
+        let at = demo.comes_in(flash) - demo.comes_in(0) - FADE;
+        let declined = |t: Duration| {
+            let shown = demo.at(t);
+            demo.beats[shown.beat].scene.declined && shown.since_in < FLASH
+        };
+        assert!(!declined(at - ms(5)) && declined(at + ms(5)) && declined(at + FLASH - ms(5)));
+        assert!(!declined(at + FLASH + ms(5)));
+        assert!(demo.at(at + ms(50)).moving);
+        // Its frames at the times they play: the first, the error, back as it was; then asides' words.
+        let clip = demo.clip.as_ref().unwrap();
+        let since = |i: usize| (demo.comes_in(i) - demo.comes_in(on)).as_secs_f32();
+        let times: Vec<f32> = clip.frames.iter().map(|f| f.time).collect();
+        assert_eq!(times, [0.0, since(flash), since(flash) + FLASH.as_secs_f32()]);
+        assert_eq!(clip.frames.iter().map(|f| f.declined).collect::<Vec<_>>(), [false, true, false]);
+        let caption = &clip.caption;
+        assert!(caption.starts_with("**Clip:** 3 frames, what changed in Safari over "), "{caption}");
+        assert!(caption.contains(&format!("over {:.1} s", since(off))), "{caption}");
+        assert!(caption.ends_with("Frame 2 showed for only an instant."), "{caption}");
+        // Said after, then sent.
+        assert!(demo.beats[off..].iter().any(|b| b.say.is_some()));
+        assert!(demo.beats.last().is_some_and(|b| b.scene.sent));
     }
 
     #[test]
