@@ -294,7 +294,9 @@ use `asides mcp`'s `get_aside`.
   non-opaque (`WindowBackgroundAppearance::Transparent`).
 - One-frame flashes show in `screencapture -v` with per-frame diffs (ffmpeg, PIL).
 - An accessibility hit test on the system-wide element finds the overlay: hit-test the app owning
-  the window under the point (from the window list taken before opening).
+  the window under the point (from the window list taken before opening). On a page's background,
+  a browser's hit is the `AXWebArea` itself, with nothing between it and the page: slicing
+  `nodes[1..page]` panicked and quit the app (2.0.1, Safari and Helium).
 - Errors in the menu bar are hidden under the overlay: `App::fail` also sends a `notice`.
 - The notch is in the menu bar (safe area 38 pt, menu bar 39): keep drawing below it.
 - The pill's place is kept by its top middle: kept by its corner, recentered as its width eased, it
