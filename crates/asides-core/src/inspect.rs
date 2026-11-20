@@ -322,7 +322,8 @@ impl Element {
             parts.reverse();
             parts.join(" > ")
         });
-        let ancestors = &nodes[1..web_depth.unwrap_or(nodes.len())];
+        // Those up to the page, none when the hit is the page itself (its background, in a browser).
+        let ancestors = &nodes[1..web_depth.unwrap_or(nodes.len()).max(1)];
         let labelled: Vec<String> = ancestors
             .iter()
             .filter(|n| n.role != "AXWindow" && n.role != "AXApplication")
@@ -1035,6 +1036,13 @@ mod tests {
         assert_eq!(e.nearby.as_deref(), Some("form \"Settings\""));
         assert_eq!(e.identifier.as_deref(), Some("save"));
         assert_eq!(e.selected_text, None);
+        // A pin on the page's background: the hit is the web area itself (once a panic that quit the app).
+        let mut page = web_button().split_off(3);
+        page[0].role_description = Some("HTML content".into());
+        let e = Element::from_nodes(Some("Safari".into()), None, &page);
+        assert_eq!(e.name.as_deref(), Some("HTML content \"Settings — Shop\""));
+        assert_eq!(e.url.as_deref(), Some("http://localhost:3000/settings"));
+        assert_eq!((e.selector, e.path, e.nearby), (None, None, None));
         let mut typo = web_button();
         typo[1].selected_text = Some("Sve chnages".into());
         let e = Element::from_nodes(None, None, &typo);
