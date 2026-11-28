@@ -8,7 +8,9 @@
   agents looked at again) and deleted after `history_days`.
 - **The network** is used for two things: downloading the voice model from Hugging Face, when you
   ask, and looking for updates on GitHub every 6 hours (turn off **Update automatically** to look
-  only when you ask). Neither sends anything about you or your asides.
+  only when you ask). Neither sends anything about you or your asides. **Report a Problem…** opens
+  GitHub's bug form in your browser with asides' version and your system's in its link; what you
+  write there is sent only if you submit it.
 - **Your agent** gets each aside like anything you type, and may send it to its model provider.
 - **Wispr Flow**, when you turn the integration on: asides reads the history Wispr Flow keeps on your
   Mac. Wispr Flow itself transcribes under its own terms.

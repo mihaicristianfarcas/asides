@@ -85,5 +85,6 @@ with it). Everything else still works.
 "assistive technologies"), which Qt apps and browsers wait for, or start Chrome with
 `--force-renderer-accessibility`.
 
-Still stuck? [Open an issue](https://github.com/mihaicristianfarcas/asides/issues/new?template=bug_report.md)
-with your macOS, Windows or Linux version (and desktop) and the output of `asides status`.
+Still stuck? **Report a Problem…** in the menu bar menu opens
+[the bug form](https://github.com/mihaicristianfarcas/asides/issues/new?template=bug.yml) with your
+version and system filled in: add what happened and the output of `asides status` and `asides log`.
