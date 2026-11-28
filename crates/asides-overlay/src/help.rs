@@ -20,11 +20,11 @@ use gpui::{
 
 use crate::controls::{self, Radius, Theme, ease, hex};
 use crate::faces::{
-    self, CLIP_OUTLINE, CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, Prim, Still, ToolSlot, agent_segment, agents_track,
-    card_camera, card_cluster, card_field, card_surface, card_tool, choose_folder_content, clip_tip_face,
-    clip_tip_place, clip_tip_status, clip_tip_stop, field_face, folder_content, intent_dot, keys_sheet_face, label_at,
-    list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row,
-    plain_glass, still_pill, talk_face, tool_slot_width,
+    self, CLIP_OUTLINE, CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, ClipStop, Prim, Still, ToolSlot, agent_segment, agents_track,
+    card_button, card_camera, card_cluster, card_field, card_surface, card_tool, choose_folder_content, clip_tip_face,
+    clip_tip_place, clip_tip_status, field_face, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline,
+    list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass,
+    still_pill, talk_face, tool_slot_width,
 };
 use crate::style;
 use crate::ui::{CAMERA_WIDTH, CARD_WIDTH, Keys, LIST_GAP};
@@ -548,9 +548,9 @@ fn clip(width: f32) -> Demo {
     demo
 }
 
-/// Where the middle of the tooltip's last button, Stop and Freeze, is from its top right corner:
-/// inside its hairline and padding.
-const FREEZE_IN: Point = (1.0 + 6.0 + 14.0, 1.0 + 6.0 + faces::FIELD_HEIGHT / 2.0);
+/// Where the middle of the tooltip's Stop and Freeze is from its top right corner: inside its
+/// hairline and padding, Discard after it.
+const FREEZE_IN: Point = (1.0 + 6.0 + 28.0 + 1.0 + 14.0, 1.0 + 6.0 + faces::FIELD_HEIGHT / 2.0);
 /// What's typed about a clip of a pin's area.
 const CLIP_AREA_TYPED: &str = "Says Declined, then Pay again";
 
@@ -1646,7 +1646,7 @@ fn clip_tip_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look:
         .pointer
         .is_some_and(|(x, y)| (x - freeze.0).abs() <= 14.0 && (y - freeze.1).abs() <= faces::FIELD_HEIGHT / 2.0);
     let hint = on_freeze.then(|| format!("Stop and Freeze ({})", look.freeze).into());
-    let stops = vec![clip_tip_stop(false, t).into_any_element(), clip_tip_stop(true, t).into_any_element()];
+    let stops = ClipStop::ALL.into_iter().map(|s| card_button(s.icon(), t).into_any_element()).collect();
     let face = clip_tip_face(
         plain_glass(t, 12.),
         field_face(&typed, "What happens here?", clip.typing, t),

@@ -1824,6 +1824,12 @@ impl App {
                 overlay.frozen = false;
                 self.refresh();
             }
+            OverlayMessage::Event(OverlayEvent::Back) => {
+                // Frozen again on the screens it had: nothing to capture, and the clip goes.
+                overlay.frozen = true;
+                self.stop_clip(false);
+                self.refresh();
+            }
             OverlayMessage::Event(OverlayEvent::Target { target }) => self.target = Some(target),
             OverlayMessage::Event(OverlayEvent::Clipboard { text, png }) => {
                 if let Some(text) = text {

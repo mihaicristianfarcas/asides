@@ -269,8 +269,8 @@ the pill names the session typed into last from its first frame.
    A pin's card's camera records only the pin's part of the screen (`ClipArea::of`; on a Mac
    `Watched::Area`, at the screen's pixels, elsewhere `capture::watch_area`), outlined just outside
    while it records (`windows::sync_outline`), a tooltip beside it (`ui::ClipTipView`,
-   `windows::sync_clip_tip`: the pin's field and microphone as on its card, then Stop and Stop and
-   Freeze; its field takes
+   `windows::sync_clip_tip`: the pin's field and microphone as on its card, then Stop, Stop and
+   Freeze, and Discard (`Event::Back`: frozen again on that freeze, as it was); its field takes
    the keyboard only once clicked, a non-activating panel on a Mac); its pictures go right after the
    pin. That freeze is kept once the clip ends, with what the tooltip says in the pin (`keep_last`).
    Freezing, sending or closing ends it, and its pictures (`motion::pictures`) join the aside.

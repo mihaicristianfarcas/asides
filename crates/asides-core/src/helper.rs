@@ -256,6 +256,9 @@ pub enum Event {
     Freeze,
     /// Back to the live screen (give the keyboard back to the app that had it).
     Live,
+    /// Frozen again on the last freeze, as it was, without freezing anew: the clip of a pin's area
+    /// being recorded is thrown away (its tooltip's Discard).
+    Back,
     /// Record what the app in front shows from now on (a clip, `asides_core::motion`), or only
     /// what's in a pin's area, or stop: answered with `Command::Clip`.
     Clip {
@@ -408,6 +411,7 @@ mod tests {
             r#"{"type":"open","dir":"/tmp/asides-overlay-1-0"}"#
         );
         assert_eq!(line(&Event::Clip { on: true, area: None }), r#"{"type":"clip","on":true}"#);
+        assert_eq!(line(&Event::Back), r#"{"type":"back"}"#);
         let area = ClipArea { annotation: 2, display: 1, rect: PtRect::new(10.0, 20.0, 300.0, 40.0) };
         let event: Event = serde_json::from_str(&line(&Event::Clip { on: true, area: Some(area) })).unwrap();
         assert_eq!(event, Event::Clip { on: true, area: Some(area) });

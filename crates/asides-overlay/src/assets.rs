@@ -72,6 +72,13 @@ const ICONS: &[(&str, &str)] = &[
     ),
     ("clip-stop", icon(r##"<rect x="6" y="6" width="12" height="12" rx="2.4" fill="#000" stroke="none"/>"##)),
     ("pause", icon(r#"<path d="M9 6v12M15 6v12"/>"#)),
+    // A snowflake: freezing the screen again.
+    (
+        "freeze",
+        icon(
+            r#"<path d="M12 3v18M19.8 7.5 4.2 16.5M4.2 7.5l15.6 9"/><path d="M20.1 10.1 17.2 9l.5-3.1M14.4 4 12 6 9.6 4M6.3 5.9l.5 3.1-2.9 1.1M3.9 13.9 6.8 15l-.5 3.1M9.6 20l2.4-2 2.4 2M17.7 18.1l-.5-3.1 2.9-1.1"/>"#,
+        ),
+    ),
     (
         "mic-off",
         icon(
