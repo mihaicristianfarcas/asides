@@ -31,9 +31,9 @@ use gpui::{
 use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::faces::{
-    CLIP_TIP_WIDTH, Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face, card_camera,
-    card_cluster, card_tool, choose_folder_content, clip_face, clip_tip_button, clip_tip_face, clip_tip_hint,
-    clip_tip_place, clip_tip_status, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
+    CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face,
+    card_button, card_camera, card_cluster, card_tool, choose_folder_content, clip_face, clip_tip_face, clip_tip_place,
+    clip_tip_status, clip_tip_stop, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
     label_at, list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
     new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box, tool_face, tool_icon,
 };
@@ -62,9 +62,7 @@ pub(crate) const CARD_WIDTH: f64 = 440.0;
 const TRASH_WIDTH: f64 = 34.0;
 /// How much wider a card is with its camera (a clip of its pin's area).
 pub(crate) const CAMERA_WIDTH: f64 = 29.0;
-/// The tooltip of a clip of a pin's area: how tall it is until it's drawn, and the lines its field
-/// grows to.
-const CLIP_TIP_GUESS: f64 = 80.0;
+/// The tooltip of a clip of a pin's area: the lines its field grows to.
 const CLIP_TIP_LINES: usize = 3;
 /// The card opens above its annotation when there's less than this below it.
 const CARD_ROOM: f64 = 240.0;
@@ -185,12 +183,11 @@ struct Card {
     severity: Option<Severity>,
 }
 
-/// A clip of a pin's area, recording (or about to): the pin (its key and number), and what the user
+/// A clip of a pin's area, recording (or about to): the pin (its key), and what the user
 /// types about it in the tooltip beside the area (`ClipTipView`): the pin's feedback, as its card left
 /// it. Its freeze is kept once the clip ends, with what was typed (`keep_last`).
 struct ClipNote {
     key: u32,
-    number: u32,
     input: Entity<TextInput>,
 }
 
@@ -647,7 +644,7 @@ impl Overlay {
         self.clip_wanted = true;
         self.go_live(cx);
         // Beside the area, what happens there: the pin's feedback, as its card (put away now) left it.
-        let (comment, number) = self.pin(area.annotation).map(|a| (a.comment.clone(), a.number)).unwrap_or_default();
+        let comment = self.pin(area.annotation).map(|a| a.comment.clone()).unwrap_or_default();
         let theme = self.theme;
         let input = cx.new(|cx| {
             let mut input = TextInput::new(&comment, "What happens here?", cx);
@@ -656,7 +653,7 @@ impl Overlay {
             input
         });
         (self.clip_tip_size, self.clip_tip_hint, self.clip_tip_keys) = (None, None, None);
-        self.clip_note = Some(ClipNote { key: area.annotation, number, input });
+        self.clip_note = Some(ClipNote { key: area.annotation, input });
     }
 
     /// Pin `key`: on the frozen screen, or on the freeze still to be kept.
@@ -677,7 +674,9 @@ impl Overlay {
         let key = self.clip_note.as_ref()?.key;
         let area = self.clip_area.filter(|a| a.annotation == key)?;
         let s = self.spec.screens.iter().find(|s| s.display == area.display)?;
-        let size = self.clip_tip_size.unwrap_or((CLIP_TIP_WIDTH + 2.0 * TOOLBAR_MARGIN, CLIP_TIP_GUESS));
+        let size = self
+            .clip_tip_size
+            .unwrap_or((CLIP_TIP_WIDTH + 2.0 * TOOLBAR_MARGIN, CLIP_TIP_HEIGHT + 2.0 * TOOLBAR_MARGIN));
         let (x, y) = (area.rect.x - s.origin.0, area.rect.y - s.origin.1);
         let local = PtRect::new(x, y, area.rect.width, area.rect.height);
         let at = clip_tip_place(local, (s.frame.width, s.frame.height), s.menu_bar, size);
@@ -3696,8 +3695,8 @@ impl Render for NotesView {
 /// Beside a pin's area while a clip of it records, live, in a window of its own
 /// (`windows::sync_clip_tip`): what happens there (the pin's feedback, typed: a click on the field
 /// takes the keyboard from the user's app, Return or Esc gives it back), its microphone (what's said
-/// goes in the pin), the recording's time, and Stop, staying live, or Stop and Freeze. On glass like
-/// the pill's.
+/// goes in the pin), then Stop, staying live, and Stop and Freeze, laid out as the pin's card; the
+/// recording's time under them, and the name of what the pointer is on. On glass like the pill's.
 pub struct ClipTipView {
     overlay: Entity<Overlay>,
 }
@@ -3715,7 +3714,7 @@ impl Render for ClipTipView {
         let root = div().size_full().p(px(TOOLBAR_MARGIN as f32));
         let Some(note) = o.clip_note.as_ref().filter(|_| o.clip_tip_wanted().is_some()) else { return root };
         let t = o.theme;
-        let (key, number) = (note.key, note.number);
+        let key = note.key;
         let field = note.input.clone();
         let typing = self.overlay.clone();
         let field = div()
@@ -3789,9 +3788,9 @@ impl Render for ClipTipView {
                 .child(text)
                 .into_any_element()
         });
-        let stop = |id: &'static str, label: &'static str, icon: Option<&'static str>, name: String, freeze: bool| {
+        let stop = |id: &'static str, name: String, freeze: bool| {
             let press = self.overlay.clone();
-            named(name, clip_tip_button(label, icon, t).id(id))
+            named(name, clip_tip_stop(freeze, t).id(id))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
@@ -3804,27 +3803,18 @@ impl Render for ClipTipView {
                 .into_any_element()
         };
         let stops = vec![
-            stop("clip-tip-stop", "Stop", Some("clip-stop"), "Stop recording: the screen stays live".into(), false),
-            stop(
-                "clip-tip-freeze",
-                "Stop and Freeze",
-                None,
-                format!("Stop recording and freeze the screen again ({})", o.spec.freeze_shortcut),
-                true,
-            ),
+            stop("clip-tip-stop", "Stop and go Live".into(), false),
+            stop("clip-tip-freeze", format!("Stop and Freeze ({})", o.spec.freeze_shortcut), true),
         ];
-        let status = match &o.clip_tip_hint {
-            Some(hint) => clip_tip_hint(hint.clone(), t),
-            None => clip_tip_status(number, o.clip_seconds().unwrap_or_default(), t),
-        };
+        let status = clip_tip_status(o.clip_seconds().unwrap_or_default(), o.clip_tip_hint.clone(), t);
         let measure = self.overlay.clone();
         let tip = clip_tip_face(
             live_glass(t, 12.),
             field.into_any_element(),
             talk.into_any_element(),
+            stops,
             said,
             status,
-            stops,
             t,
         )
         .occlude()
@@ -3943,13 +3933,8 @@ impl ScreenView {
         let (unsay, tip) = (self.overlay.clone(), self.overlay.clone());
         let key = card.key;
         let trash = has_said.then(|| {
-            div()
+            card_button("trash", t)
                 .id("card-unsay")
-                .flex()
-                .items_center()
-                .justify_center()
-                .size(px(28.))
-                .rounded(px(7.))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_hover(move |hovered, _, cx| {
@@ -3966,7 +3951,6 @@ impl ScreenView {
                         cx.notify();
                     });
                 })
-                .child(icon("trash", t.primary))
         });
         let dots = Intent::ALL.into_iter().enumerate().map(|(i, intent)| {
             let (pick, tip) = (self.overlay.clone(), self.overlay.clone());
