@@ -169,7 +169,11 @@ Run what your change touches, and say in the pull request what you tried.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,
   naming the session; the mic red with a model, crossed out (click downloads) without.
 - [ ] **Pins**: click pins, drag pins an area, a pin's number opens its card, `⏎` closes it then
-  sends; in a card Space types, held it talks.
+  sends; in a card Space types, held it talks. In its field (and a clip's tooltip's), `⇧⏎` starts a
+  line (the card grows, then scrolls), `↑` `↓` go through its rows, `⌥←` `⌥→` a word (Ctrl on
+  Windows and Linux), Home and End (`⌘←` `⌘→`) the row's ends, with `⇧` they select; a double click
+  selects a word, three the line; on Linux with IBus (`XMODIFIERS=@im=ibus`), `⇧⏎` still breaks the
+  line.
 - [ ] **Pill**: `Tab` switches the session, the toast under the pill without a jump; pointing at the
   name opens its list (it closes as the pointer leaves), showing sessions (unreachable dimmed), New
   session in… (Choose Folder… above everything, frozen and live) and History only; dragging moves

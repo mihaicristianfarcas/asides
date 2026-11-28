@@ -662,7 +662,7 @@ impl Overlay {
         let comment = self.pin(area.annotation).map(|a| a.comment.clone()).unwrap_or_default();
         let theme = self.theme;
         let input = cx.new(|cx| {
-            let mut input = TextInput::new(&comment, "What happens here?", cx);
+            let mut input = TextInput::note(&comment, "What happens here?", cx);
             input.look = card_look(theme);
             input.max_lines = CLIP_TIP_LINES;
             input
@@ -1528,7 +1528,7 @@ impl Overlay {
         let (comment, number, key, intent, severity) = (a.comment.clone(), a.number, a.key, a.intent, a.severity);
         let theme = self.theme;
         let input = cx.new(|cx| {
-            let mut input = TextInput::new(&comment, "What should change?", cx);
+            let mut input = TextInput::note(&comment, "What should change?", cx);
             input.look = card_look(theme);
             input
         });
@@ -3856,8 +3856,9 @@ impl Render for ClipTipView {
         .child(measured(move |b, cx| measure.update(cx, |o, _| o.drawn_clip_tip(b))));
         let done = self.overlay.clone();
         root.child(tip).on_key_down(move |e: &KeyDownEvent, window, cx| {
-            // Return or Esc: done typing, the keyboard back to the user's app.
-            if matches!(e.keystroke.key.as_str(), "enter" | "escape") {
+            // Return or Esc: done typing, the keyboard back to the user's app (⇧Return breaks the line).
+            let shift = e.keystroke.modifiers.shift;
+            if matches!((e.keystroke.key.as_str(), shift), ("enter", false) | ("escape", _)) {
                 cx.stop_propagation();
                 window.blur();
                 done.update(cx, |o, _| o.clip_tip_keys = Some(false));

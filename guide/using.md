@@ -35,8 +35,10 @@ hold `Space` to talk, and each new pin opens its card, to type in.
 
 To talk about one pin, click its number (or press it, `1`–`9`) to open its card and hold `Space`
 there (or press its microphone): that goes into the pin. `Tab` goes on to the next pin's card,
-`⇧Tab` back. Its field edits as macOS fields do (`⌥⌫` deletes a word, `⌘⌫` everything before the
-caret). The card also takes typed feedback and a kind (fix, change,
+`⇧Tab` back. Its field edits as the system's fields do: `⇧⏎` starts a new line, the arrows go
+through its lines (`⌥` a word at a time, `⌘` to the ends; Ctrl and Home and End on Windows and
+Linux), with `⇧` they select, a double click selects a word and three the line, `⌥⌫` deletes a word
+and `⌘⌫` everything before the caret. The clip's tooltip edits the same way. The card also takes typed feedback and a kind (fix, change,
 question, approve: `⌘1`–`⌘4`; with no card open, they set the last pin's), shown in the pin's
 color. Its pencil and ruler pick Draw and Measure (their keys type there), and its camera records the
 pin's area (`⌘K`, above). `⏎` or `Esc` closes it.
