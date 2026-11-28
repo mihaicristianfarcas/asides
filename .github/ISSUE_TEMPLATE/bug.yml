@@ -15,22 +15,12 @@ body:
       placeholder: 1.1.0
     validations:
       required: true
-  - type: dropdown
+  - type: input
     id: system
     attributes:
       label: System
-      options:
-        - macOS
-        - Windows
-        - Linux
-    validations:
-      required: true
-  - type: input
-    id: system-version
-    attributes:
-      label: System version and processor
-      description: On Linux, the desktop too, and whether it's Wayland or X11.
-      placeholder: macOS 26.1, Apple M3
+      description: Its version and the processor. On Linux, the desktop too, and whether it's Wayland or X11.
+      placeholder: macOS 26.1 (25B78), Apple silicon
     validations:
       required: true
   - type: input
