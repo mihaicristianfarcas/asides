@@ -801,7 +801,8 @@ impl Inspection {
                 line.push_str(&format!(" (follow-up to pin {} of {})", earlier.number, earlier.aside));
             }
             if !comment.is_empty() {
-                line.push_str(&format!(": {comment}"));
+                // Its lines after the first in the list's item.
+                line.push_str(&format!(": {}", comment.replace('\n', "\n   ")));
             }
             return with_said(&line, &said, detail);
         }
@@ -1160,6 +1161,18 @@ mod tests {
              **Intent:** fix\n\
              **Severity:** important\n\
              **Feedback:** Line it up with the fields."
+        );
+        // A note of several lines (⇧Return in the card): each line its own, the list's item going on
+        // past the first.
+        let mut lines = a.clone();
+        lines.comment = "Line it up with the fields.\nAnd make it blue.".into();
+        assert_eq!(
+            i.annotation_markdown(&lines, Detail::Compact),
+            "1. **button \"Save changes\"**: Line it up with the fields.\n   And make it blue."
+        );
+        assert!(
+            i.annotation_markdown(&lines, Detail::Standard)
+                .ends_with("**Feedback:** Line it up with the fields.\nAnd make it blue.")
         );
         // Annotations in different apps each say where they are.
         let mut finder = a.clone();

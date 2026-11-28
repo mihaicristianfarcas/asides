@@ -1,12 +1,15 @@
-//! A text field for an annotation's typed feedback, after GPUI's input example: typing (with the
-//! input methods macOS offers), selection, copy and paste, and deleting as macOS fields do (⌥⌫ a
-//! word, ⌘⌫ to the start of the line; with fn, forward). Long text wraps, and the field grows a
-//! line at a time to show it, up to `MAX_LINES`; past that it scrolls, keeping the caret in view.
-//! One paragraph: Return saves the card (or, in the asides window, the setting). Its colors are a
-//! [`Look`].
+//! A text field, after GPUI's input example: typing (with the input methods the system offers),
+//! selection (with the mouse, a word with a double click, a line with three; with Shift and the
+//! keys that move the caret), copy and paste, and moving and deleting as each system's fields do:
+//! on a Mac ⌥ a word and ⌘ to the ends (⌥⌫, ⌘⌫; with fn, forward), elsewhere Ctrl a word, and Home
+//! and End. Long text wraps, and the field grows a line at a time to show it, up to `MAX_LINES`;
+//! past that it scrolls, keeping the caret in view. One paragraph: Return saves the setting, or the
+//! card. Its colors are a [`Look`].
 //!
-//! An area ([`TextInput::area`]) takes lines (an aside's Markdown, in History): Return breaks the
-//! line, the arrows go up and down, Home and End to the line's ends, and ⌘Z undoes.
+//! A note ([`TextInput::note`], a pin's card's and a clip's tooltip's) takes lines too: ⇧Return
+//! breaks the line (Return still closes the card), the arrows go up and down its rows, and Home
+//! and End to the row's ends. An area ([`TextInput::area`]) is all lines (an aside's Markdown, in
+//! History): Return breaks the line, and ⌘Z undoes.
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
@@ -47,11 +50,21 @@ actions!(
         Top,
         Bottom,
         Undo,
-        Redo
+        Redo,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
+        SelectHome,
+        SelectEnd,
+        SelectTop,
+        SelectBottom
     ]
 );
 
 pub const CONTEXT: &str = "FeedbackInput";
+/// A note's: its lines' keys too.
+pub const NOTE_CONTEXT: &str = "NoteInput";
 /// An area's: its keys go further.
 pub const AREA_CONTEXT: &str = "TextArea";
 /// The field grows to this many lines, then scrolls.
@@ -60,43 +73,93 @@ const MAX_LINES: usize = 8;
 const UNDO_GROUP: Duration = Duration::from_millis(600);
 
 pub fn bind_keys(cx: &mut App) {
-    for context in [CONTEXT, AREA_CONTEXT] {
-        let context = Some(context);
-        cx.bind_keys([
-            KeyBinding::new("backspace", Backspace, context),
-            KeyBinding::new("delete", Delete, context),
-            KeyBinding::new("alt-backspace", DeleteWordLeft, context),
-            KeyBinding::new("alt-delete", DeleteWordRight, context),
-            KeyBinding::new("secondary-backspace", DeleteToStart, context),
-            KeyBinding::new("secondary-delete", DeleteToEnd, context),
-            KeyBinding::new("left", Left, context),
-            KeyBinding::new("right", Right, context),
-            KeyBinding::new("shift-left", SelectLeft, context),
-            KeyBinding::new("shift-right", SelectRight, context),
-            KeyBinding::new("secondary-a", SelectAll, context),
-            KeyBinding::new("secondary-v", Paste, context),
-            KeyBinding::new("secondary-c", Copy, context),
-            KeyBinding::new("secondary-x", Cut, context),
-            KeyBinding::new("home", Home, context),
-            KeyBinding::new("secondary-left", Home, context),
-            KeyBinding::new("end", End, context),
-            KeyBinding::new("secondary-right", End, context),
-        ]);
+    for (keystroke, action, fields) in keys(cfg!(target_os = "macos")) {
+        let contexts: &[&str] = match fields {
+            Fields::All => &[CONTEXT, NOTE_CONTEXT, AREA_CONTEXT],
+            Fields::Lines => &[NOTE_CONTEXT, AREA_CONTEXT],
+            Fields::Area => &[AREA_CONTEXT],
+        };
+        for &context in contexts {
+            let when = gpui::KeyBindingContextPredicate::parse(context).ok().map(Into::into);
+            let binding =
+                KeyBinding::load(keystroke, action.boxed_clone(), when, false, None, &gpui::DummyKeyboardMapper);
+            cx.bind_keys(binding.ok());
+        }
     }
-    // ⌘Z stays the overlay's (it removes the last pin) in a card's field.
-    let context = Some(AREA_CONTEXT);
-    cx.bind_keys([
-        KeyBinding::new("enter", Newline, context),
-        KeyBinding::new("shift-enter", Newline, context),
-        KeyBinding::new("up", Up, context),
-        KeyBinding::new("down", Down, context),
-        KeyBinding::new("shift-up", SelectUp, context),
-        KeyBinding::new("shift-down", SelectDown, context),
-        KeyBinding::new("secondary-up", Top, context),
-        KeyBinding::new("secondary-down", Bottom, context),
-        KeyBinding::new("secondary-z", Undo, context),
-        KeyBinding::new("secondary-shift-z", Redo, context),
-    ]);
+}
+
+/// The fields a key is for: every one, those that take lines (notes and areas), or areas alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fields {
+    All,
+    Lines,
+    Area,
+}
+
+/// The fields' keys, as each system's fields take them (`mac`): on a Mac ⌥ goes a word and ⌘ to the
+/// ends, elsewhere Ctrl goes a word and Home and End to the ends (with Ctrl, the text's). ⌘Z stays
+/// the overlay's in a card's note (it takes back the last pin).
+fn keys(mac: bool) -> Vec<(&'static str, Box<dyn gpui::Action>, Fields)> {
+    use Fields::{All, Area, Lines};
+    let mut keys: Vec<(&'static str, Box<dyn gpui::Action>, Fields)> = vec![
+        ("backspace", Box::new(Backspace), All),
+        ("delete", Box::new(Delete), All),
+        ("left", Box::new(Left), All),
+        ("right", Box::new(Right), All),
+        ("shift-left", Box::new(SelectLeft), All),
+        ("shift-right", Box::new(SelectRight), All),
+        ("home", Box::new(Home), All),
+        ("end", Box::new(End), All),
+        ("shift-home", Box::new(SelectHome), All),
+        ("shift-end", Box::new(SelectEnd), All),
+        ("secondary-a", Box::new(SelectAll), All),
+        ("secondary-v", Box::new(Paste), All),
+        ("secondary-c", Box::new(Copy), All),
+        ("secondary-x", Box::new(Cut), All),
+        ("alt-backspace", Box::new(DeleteWordLeft), All),
+        ("up", Box::new(Up), Lines),
+        ("down", Box::new(Down), Lines),
+        ("shift-up", Box::new(SelectUp), Lines),
+        ("shift-down", Box::new(SelectDown), Lines),
+        ("shift-enter", Box::new(Newline), Lines),
+        ("enter", Box::new(Newline), Area),
+        ("secondary-z", Box::new(Undo), Area),
+        ("secondary-shift-z", Box::new(Redo), Area),
+    ];
+    let system: Vec<(&'static str, Box<dyn gpui::Action>, Fields)> = match mac {
+        true => vec![
+            ("alt-left", Box::new(WordLeft), All),
+            ("alt-right", Box::new(WordRight), All),
+            ("alt-shift-left", Box::new(SelectWordLeft), All),
+            ("alt-shift-right", Box::new(SelectWordRight), All),
+            ("cmd-left", Box::new(Home), All),
+            ("cmd-right", Box::new(End), All),
+            ("cmd-shift-left", Box::new(SelectHome), All),
+            ("cmd-shift-right", Box::new(SelectEnd), All),
+            ("alt-delete", Box::new(DeleteWordRight), All),
+            ("cmd-backspace", Box::new(DeleteToStart), All),
+            ("cmd-delete", Box::new(DeleteToEnd), All),
+            ("cmd-up", Box::new(Top), Lines),
+            ("cmd-down", Box::new(Bottom), Lines),
+            ("cmd-shift-up", Box::new(SelectTop), Lines),
+            ("cmd-shift-down", Box::new(SelectBottom), Lines),
+        ],
+        false => vec![
+            ("ctrl-left", Box::new(WordLeft), All),
+            ("ctrl-right", Box::new(WordRight), All),
+            ("ctrl-shift-left", Box::new(SelectWordLeft), All),
+            ("ctrl-shift-right", Box::new(SelectWordRight), All),
+            ("ctrl-backspace", Box::new(DeleteWordLeft), All),
+            ("ctrl-delete", Box::new(DeleteWordRight), All),
+            ("ctrl-home", Box::new(Top), Lines),
+            ("ctrl-end", Box::new(Bottom), Lines),
+            ("ctrl-shift-home", Box::new(SelectTop), Lines),
+            ("ctrl-shift-end", Box::new(SelectBottom), Lines),
+            ("ctrl-y", Box::new(Redo), Area),
+        ],
+    };
+    keys.extend(system);
+    keys
 }
 
 /// A field's colors.
@@ -143,6 +206,8 @@ pub struct TextInput {
     /// An area: lines (Return breaks them), its own font, as tall as it's given (it scrolls past
     /// that).
     multiline: bool,
+    /// A note: one paragraph that ⇧Return breaks into lines, the arrows going through its rows.
+    lines: bool,
     pub max_lines: usize,
     /// Drawn without its own box (padding, border, background): what holds it draws one.
     pub bare: bool,
@@ -217,6 +282,7 @@ impl TextInput {
             followed: None,
             is_selecting: false,
             multiline: false,
+            lines: false,
             max_lines: MAX_LINES,
             bare: false,
             font: None,
@@ -224,6 +290,11 @@ impl TextInput {
             redo: Vec::new(),
             changed_at: None,
         }
+    }
+
+    /// A pin's note (its card's, a clip's tooltip's): it wraps, and ⇧Return breaks its lines.
+    pub fn note(content: &str, placeholder: &str, cx: &mut Context<Self>) -> TextInput {
+        TextInput { lines: true, ..TextInput::new(content, placeholder, cx) }
     }
 
     /// An area of lines in `font`, the caret at the start, as tall as its place (`flex_1` in a
@@ -298,7 +369,11 @@ impl TextInput {
     }
 
     fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
-        self.replace_text_in_range(None, "\n", window, cx);
+        match self.multiline {
+            true => self.replace_text_in_range(None, "\n", window, cx),
+            // What's typed into a note never breaks its lines: only ⇧Return does.
+            false => self.insert("\n", cx),
+        }
     }
 
     /// The caret a row up or down (`rows`), where it is across.
@@ -345,6 +420,59 @@ impl TextInput {
         self.move_to(self.content.len(), cx);
     }
 
+    fn select_top(&mut self, _: &SelectTop, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(0, cx);
+    }
+
+    fn select_bottom(&mut self, _: &SelectBottom, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.content.len(), cx);
+    }
+
+    /// A word back: from the selection's start, as a Mac's fields go.
+    fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        let from = if self.selected_range.is_empty() { self.cursor_offset() } else { self.selected_range.start };
+        self.move_to(word_start(&self.content, from), cx);
+    }
+
+    fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
+        let from = if self.selected_range.is_empty() { self.cursor_offset() } else { self.selected_range.end };
+        self.move_to(word_end(&self.content, from), cx);
+    }
+
+    fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(word_start(&self.content, self.cursor_offset()), cx);
+    }
+
+    fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(word_end(&self.content, self.cursor_offset()), cx);
+    }
+
+    fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.row_ends(self.cursor_offset()).0, cx);
+    }
+
+    fn select_end(&mut self, _: &SelectEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_to(self.row_ends(self.cursor_offset()).1, cx);
+    }
+
+    /// The ends of the row `offset` is drawn on (each of a wrapped line's rows has its own), where
+    /// Home and End go; the line's, before it's drawn.
+    fn row_ends(&self, offset: usize) -> (usize, usize) {
+        let (start, end) = (line_start(&self.content, offset), line_end(&self.content, offset));
+        let Some((layout, at)) = self.last_layout.as_ref().and_then(|l| Some((l, l.position(offset)?))) else {
+            return (start, end);
+        };
+        let y = at.y + layout.line_height / 2.;
+        let first = layout.closest(point(px(0.), y)).clamp(start, end);
+        let mut last = layout.closest(point(px(1e6), y)).clamp(first, end);
+        // A wrapped row ends where the next starts: before the space it broke at, the caret stays on
+        // this row.
+        if last < end && layout.position(last).is_some_and(|p| p.y > at.y) {
+            last = self.previous_boundary(last).max(first);
+        }
+        (first, last)
+    }
+
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
@@ -374,13 +502,13 @@ impl TextInput {
         self.select_to(self.content.len(), cx)
     }
 
-    /// To the start of the line (in an area, the one the caret is on).
+    /// To the start of the row the caret is on.
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(line_start(&self.content, self.cursor_offset()), cx);
+        self.move_to(self.row_ends(self.cursor_offset()).0, cx);
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
-        self.move_to(line_end(&self.content, self.cursor_offset()), cx);
+        self.move_to(self.row_ends(self.cursor_offset()).1, cx);
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -423,11 +551,11 @@ impl TextInput {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            let text = match self.multiline {
-                true => text.replace("\r\n", "\n"),
-                false => text.replace('\n', " "),
-            };
-            self.replace_text_in_range(None, &text, window, cx);
+            match (self.multiline, self.lines) {
+                (true, _) => self.replace_text_in_range(None, &text.replace("\r\n", "\n"), window, cx),
+                (false, true) => self.insert(&text.replace("\r\n", "\n").replace('\r', "\n"), cx),
+                (false, false) => self.replace_text_in_range(None, &text.replace(['\r', '\n'], " "), window, cx),
+            }
         }
     }
 
@@ -444,13 +572,19 @@ impl TextInput {
         }
     }
 
+    /// A click puts the caret there (with Shift, the selection reaches it), a double click selects
+    /// the word, three the line.
     fn on_mouse_down(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = true;
-        if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
-        } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
-        }
+        let at = self.index_for_mouse_position(event.position);
+        let whole = match event.click_count {
+            _ if event.modifiers.shift => return self.select_to(at, cx),
+            2 => word_around(&self.content, at),
+            3.. => line_start(&self.content, at)..line_end(&self.content, at),
+            _ => return self.move_to(at, cx),
+        };
+        self.move_to(whole.start, cx);
+        self.select_to(whole.end, cx);
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
@@ -908,7 +1042,11 @@ impl Render for TextInput {
         let area = self.multiline;
         div()
             .flex()
-            .key_context(if area { AREA_CONTEXT } else { CONTEXT })
+            .key_context(match (area, self.lines) {
+                (true, _) => AREA_CONTEXT,
+                (false, true) => NOTE_CONTEXT,
+                (false, false) => CONTEXT,
+            })
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
@@ -927,7 +1065,13 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
-            .when(area, |d| {
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::select_home))
+            .on_action(cx.listener(Self::select_end))
+            .when(area || self.lines, |d| {
                 d.on_action(cx.listener(Self::newline))
                     .on_action(cx.listener(Self::up))
                     .on_action(cx.listener(Self::down))
@@ -935,9 +1079,10 @@ impl Render for TextInput {
                     .on_action(cx.listener(Self::select_down))
                     .on_action(cx.listener(Self::top))
                     .on_action(cx.listener(Self::bottom))
-                    .on_action(cx.listener(Self::undo))
-                    .on_action(cx.listener(Self::redo))
+                    .on_action(cx.listener(Self::select_top))
+                    .on_action(cx.listener(Self::select_bottom))
             })
+            .when(area, |d| d.on_action(cx.listener(Self::undo)).on_action(cx.listener(Self::redo)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -985,6 +1130,20 @@ fn word_start(text: &str, at: usize) -> usize {
         .map_or(0, |(i, _)| i)
 }
 
+/// The word `at` is in (or the spaces, or the mark), for a double click: the one before it at the
+/// text's end.
+fn word_around(text: &str, at: usize) -> Range<usize> {
+    let mut last = 0..0;
+    for (i, w) in text.split_word_bound_indices() {
+        let range = i..i + w.len();
+        if range.contains(&at) {
+            return range;
+        }
+        last = range;
+    }
+    last
+}
+
 /// The end of the word after `at`, past the spaces and punctuation between.
 fn word_end(text: &str, at: usize) -> usize {
     text[at..]
@@ -995,6 +1154,8 @@ fn word_end(text: &str, at: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use gpui::Action;
+
     use super::*;
 
     #[test]
@@ -1012,5 +1173,44 @@ mod tests {
         assert_eq!((word_start(text, 0), word_end(text, text.len())), (0, text.len()));
         assert_eq!(word_start("să fie", 3), 0);
         assert_eq!(word_start("don't", 5), 0);
+    }
+
+    #[test]
+    fn a_double_click_selects_the_word_it_is_on() {
+        let text = "Says Declined, then";
+        let word = |at: usize| &text[word_around(text, at)];
+        assert_eq!(word(text.find("lined").unwrap()), "Declined");
+        assert_eq!(word(0), "Says");
+        assert_eq!(word(text.find(',').unwrap()), ",");
+        // At the end, the last word; nothing in an empty field.
+        assert_eq!(word(text.len()), "then");
+        assert_eq!(word_around("", 0), 0..0);
+    }
+
+    #[test]
+    fn each_system_has_its_fields_keys() {
+        for mac in [true, false] {
+            let keys = keys(mac);
+            let named =
+                |key: &str| keys.iter().filter(|(k, ..)| *k == key).map(|(_, a, f)| (a.name(), *f)).collect::<Vec<_>>();
+            // One action a key, wherever it goes.
+            for (key, ..) in &keys {
+                assert_eq!(named(key).len(), 1, "{key} is bound twice");
+            }
+            // ⇧Return breaks a note's lines; Return only an area's (it closes the card).
+            assert_eq!(named("shift-enter"), [(Newline.name(), Fields::Lines)]);
+            assert_eq!(named("enter"), [(Newline.name(), Fields::Area)]);
+            assert_eq!(named("up"), [(Up.name(), Fields::Lines)]);
+            // A word at a time, as the system's fields go: ⌥ on a Mac, Ctrl elsewhere (where Ctrl ←
+            // was Home).
+            let (word, line) = if mac { ("alt-left", "cmd-left") } else { ("ctrl-left", "home") };
+            assert_eq!(named(word), [(WordLeft.name(), Fields::All)]);
+            assert_eq!(named(line), [(Home.name(), Fields::All)]);
+            assert_eq!(named(&format!("{}-shift-right", if mac { "alt" } else { "ctrl" })).len(), 1);
+            // Every key parses.
+            for (key, ..) in &keys {
+                assert!(gpui::Keystroke::parse(key).is_ok(), "{key}");
+            }
+        }
     }
 }
