@@ -164,7 +164,8 @@ Run what your change touches, and say in the pull request what you tried.
   you come back; turned off there, the row offers **Open System Settings…**; after logging out and
   in, asides is in the menu bar.
 - [ ] **Menu bar**: the mark alone (dot recording, dots busy, `[n]` sent, `!` error); the menu has
-  the status, Open asides, Open Live, Copy the Last Aside, four switches, History…, Settings…, Quit.
+  the status, Open asides, Open Live, Copy the Last Aside, four switches, History…, Settings…,
+  Report a Problem… (GitHub's bug form in the browser, the version and system filled in), Quit.
 - [ ] **Opening**: `⌃⌥Space` freezes every screen at once, the pill below the menu bar and notch,
   naming the session; the mic red with a model, crossed out (click downloads) without.
 - [ ] **Pins**: click pins, drag pins an area, a pin's number opens its card, `⏎` closes it then
@@ -362,6 +363,8 @@ The page repeats the main shortcut, requirements and install steps from the READ
 [Open an issue](https://github.com/mihaicristianfarcas/asides/issues/new/choose) and choose a form:
 
 - **Bug report**: what happened, on which system, with what `asides status` and `asides log` print.
+  asides' **Report a Problem…** (in the menu bar menu, and at the bottom of Help) opens it with the
+  version and system filled in.
   asides can hold private things: share only what's relevant.
 - **Tester report**: you tried asides and want to say how it went. It takes under two minutes, and
   "it worked" is as useful as "it didn't".

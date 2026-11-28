@@ -140,8 +140,8 @@ widen it (double-click it for its first width); the window opens again where you
 - **Help** (`⌘?`): how to use asides, step by step, each part played out with the pill and its pieces.
 
 The menu bar menu opens asides (frozen or live), copies the last aside, turns listening, sounds,
-naming pins and copying each aside (once it's sent or saved) on or off, and opens History or
-Settings.
+naming pins and copying each aside (once it's sent or saved) on or off, opens History or
+Settings, and reports a problem.
 
 ## Updates
 
@@ -180,7 +180,12 @@ asides keeps a log in `~/Library/Logs/asides` (Console shows it under Log Report
 `%LOCALAPPDATA%\asides\Logs`, on Linux `~/.local/state/asides`). `asides status`
 says when something went wrong in the last day, and `asides log` shows what: errors, crashes, and
 moments asides was stuck. If the frozen screen stops responding for 10 seconds, asides closes it
-and gives your screens back; what you said is kept in History. Add `asides log` to a bug report.
+and gives your screens back; what you said is kept in History.
+
+asides sends nothing about how it's doing anywhere: a report is how a problem gets fixed. **Report a
+Problem…** in the menu bar menu (or **Report on GitHub…** at the bottom of Help) opens GitHub's
+form with asides' version and your system filled in. Say what happened, and paste what `asides log`
+prints (edit out what you like).
 
 ## For your agents (optional)
 

@@ -2934,7 +2934,8 @@ impl AsidesWindow {
     }
 
     /// How to use asides: the basics played, then the pill, where it goes, a pin's card, the
-    /// tools, live and frozen, clips, every key, and what's left after.
+    /// tools, live and frozen, clips (of a pin's area too), every key, and what's left after: History,
+    /// the guide, reporting a problem.
     fn help(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
         let width = (self.width - self.sidebar_width() - 56.).clamp(320., Metrics::FORM + 60.);
@@ -3016,6 +3017,18 @@ impl AsidesWindow {
                     "Something doesn't work",
                     Some("Troubleshooting, in asides' guide."),
                     button("help-troubleshooting", "Open the Guide", t).on_click(|_, _, _| open_url(TROUBLESHOOTING)),
+                    t,
+                ),
+                // asides has no telemetry: a report is how a problem is heard of.
+                setting(
+                    "Report a problem",
+                    Some(
+                        "On GitHub, with asides' version and your system filled in. Say what happened, and \
+                         paste what asides log prints (edit out what you like).",
+                    ),
+                    button("help-report", "Report on GitHub…", t).on_click(|_, _, _| {
+                        let _ = send_link(&Link::Report { request: None });
+                    }),
                     t,
                 ),
             ],

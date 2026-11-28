@@ -72,6 +72,10 @@ pub enum Link {
     Sessions {
         request: Option<String>,
     },
+    /// Opens GitHub's form for a problem, asides' version and the system filled in (Help's button).
+    Report {
+        request: Option<String>,
+    },
     /// Looks again at what pin `pin` of aside `id` was on (`look.rs`); the answer is the state's
     /// `looked`.
     Look {
@@ -107,7 +111,12 @@ impl Link {
         {
             let mut q = url.query_pairs_mut();
             match self {
-                Link::Open { .. } | Link::Live { .. } | Link::Window { .. } | Link::Sessions { .. } | Link::Quit => {}
+                Link::Open { .. }
+                | Link::Live { .. }
+                | Link::Window { .. }
+                | Link::Sessions { .. }
+                | Link::Report { .. }
+                | Link::Quit => {}
                 Link::Send { id, to, .. } => {
                     q.append_pair("id", id);
                     if let Some(to) = to {
@@ -195,6 +204,7 @@ impl Link {
             "setup" => Some(Link::Setup { step: nonempty("step")?, request }),
             "login" => Some(Link::Login { open: get("open")?.parse().ok()?, request }),
             "sessions" => Some(Link::Sessions { request }),
+            "report" => Some(Link::Report { request }),
             "look" => Some(Link::Look { id: nonempty("id")?, pin: get("pin")?.parse().ok()?, request }),
             "simulate" => Some(Link::Simulate {
                 wav: get("wav")?.into(),
@@ -229,6 +239,7 @@ impl Link {
             Link::Setup { .. } => "setup",
             Link::Login { .. } => "login",
             Link::Sessions { .. } => "sessions",
+            Link::Report { .. } => "report",
             Link::Look { .. } => "look",
             Link::Simulate { .. } => "simulate",
             Link::SimulateMeasure { .. } => "simulate-measure",
@@ -250,6 +261,7 @@ impl Link {
             | Link::Setup { request, .. }
             | Link::Login { request, .. }
             | Link::Sessions { request }
+            | Link::Report { request }
             | Link::Look { request, .. }
             | Link::Simulate { request, .. }
             | Link::SimulateMeasure { request, .. } => request.as_ref(),
@@ -293,6 +305,7 @@ mod tests {
         round_trip(Link::Login { open: true, request: None });
         round_trip(Link::Login { open: false, request: Some("r6".into()) });
         round_trip(Link::Sessions { request: Some("r5".into()) });
+        round_trip(Link::Report { request: None });
         round_trip(Link::Simulate {
             wav: "/tmp/a b.wav".into(),
             image: Some("/tmp/i.png".into()),

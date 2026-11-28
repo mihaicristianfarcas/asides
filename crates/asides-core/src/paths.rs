@@ -119,9 +119,56 @@ pub fn tilde(path: &Path) -> String {
     }
 }
 
+/// The repository's bug form (`.github/ISSUE_TEMPLATE/bug.yml`), with asides' version and the
+/// system filled in (`system`: its name and version, as the app's log names it). GitHub fills a
+/// form's fields from the link's query, by their ids. Only that goes in the link: the user writes
+/// the rest, and pastes what they choose of `asides log`.
+pub fn report_url(system: &str) -> String {
+    let family = match () {
+        _ if cfg!(windows) => "Windows",
+        _ if cfg!(target_os = "linux") => "Linux",
+        _ => "macOS",
+    };
+    let processor = match (std::env::consts::ARCH, family) {
+        ("aarch64", "macOS") => "Apple silicon",
+        ("x86_64", "macOS") => "Intel",
+        ("aarch64", _) => "Arm64",
+        ("x86_64", "Windows") => "x64",
+        (arch, _) => arch,
+    };
+    let fields = [
+        ("template", "bug.yml".to_string()),
+        ("version", env!("CARGO_PKG_VERSION").to_string()),
+        ("system", family.to_string()),
+        ("system-version", format!("{system}, {processor}")),
+    ];
+    url::Url::parse_with_params(&format!("{REPOSITORY}/issues/new"), &fields)
+        .map_or_else(|_| format!("{REPOSITORY}/issues/new"), |url| url.to_string())
+}
+
+/// asides' repository on GitHub.
+pub const REPOSITORY: &str = "https://github.com/mihaicristianfarcas/asides";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_report_fills_in_the_version_and_the_system() {
+        let link = url::Url::parse(&report_url("macOS 26.2 (25C56)")).unwrap();
+        assert_eq!(link.as_str().split('?').next(), Some("https://github.com/mihaicristianfarcas/asides/issues/new"));
+        let field = |name: &str| link.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
+        assert_eq!(field("template").as_deref(), Some("bug.yml"));
+        assert_eq!(field("version").as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert!(field("system-version").is_some_and(|s| s.starts_with("macOS 26.2 (25C56), ")));
+        // The form's own options: anything else it wouldn't take.
+        assert!(field("system").is_some_and(|s| ["macOS", "Windows", "Linux"].contains(&s.as_str())));
+        // The template's ids: a field renamed there no longer fills in.
+        let form = include_str!("../../../.github/ISSUE_TEMPLATE/bug.yml");
+        for id in ["version", "system", "system-version"] {
+            assert!(form.lines().any(|l| l.trim() == format!("id: {id}")), "bug.yml has no field {id}");
+        }
+    }
 
     #[test]
     fn shortens_home_paths() {

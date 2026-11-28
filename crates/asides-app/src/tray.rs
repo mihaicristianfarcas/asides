@@ -1,6 +1,7 @@
 //! The status item and its menu: the asides mark (what's happening) and a short menu: what's
 //! going on (and an update, when there's one), opening asides (frozen or live), copying the last
-//! aside, the settings wanted most often, History and Settings in the asides window, Quit.
+//! aside, the settings wanted most often, History and Settings in the asides window, reporting a
+//! problem, Quit.
 
 use std::str::FromStr;
 
@@ -29,6 +30,8 @@ pub enum MenuAction {
     /// The asides window, at History or the settings.
     History,
     Settings,
+    /// GitHub's form for a problem, in the browser.
+    Report,
     /// Downloads the update found and restarts into it.
     Update,
     Quit,
@@ -52,6 +55,7 @@ pub struct Tray {
     copy_each: CheckMenuItem,
     history: MenuItem,
     settings: MenuItem,
+    report: MenuItem,
     quit: MenuItem,
 }
 
@@ -86,6 +90,7 @@ impl Tray {
         let mac = |text: &str| Accelerator::from_str(text).ok().filter(|_| cfg!(target_os = "macos"));
         let history = MenuItem::new("History…", true, mac(HISTORY));
         let settings = MenuItem::new("Settings…", true, mac(SETTINGS));
+        let report = MenuItem::new("Report a Problem…", true, None);
         let quit = MenuItem::new("Quit asides", true, mac("cmd+KeyQ"));
         let menu = Menu::new();
         menu.append_items(&[
@@ -102,6 +107,7 @@ impl Tray {
             &PredefinedMenuItem::separator(),
             &history,
             &settings,
+            &report,
             &PredefinedMenuItem::separator(),
             &quit,
         ])?;
@@ -135,6 +141,7 @@ impl Tray {
             copy_each,
             history,
             settings,
+            report,
             quit,
         })
     }
@@ -150,6 +157,7 @@ impl Tray {
             (self.copy_each.id(), MenuAction::CopyEach),
             (self.history.id(), MenuAction::History),
             (self.settings.id(), MenuAction::Settings),
+            (self.report.id(), MenuAction::Report),
             (self.update.id(), MenuAction::Update),
             (self.quit.id(), MenuAction::Quit),
         ]

@@ -737,6 +737,7 @@ impl App {
             },
             Link::Login { open, .. } => self.set_open_at_login(open),
             Link::Sessions { .. } => self.ask_for_sessions(),
+            Link::Report { .. } => report_problem(),
             Link::Look { id, pin, request } => self.look_again(&id, pin, request.unwrap_or_default()),
             Link::Quit => self.request_quit(),
             Link::Simulate { wav, image, image_at, annotation, to, .. } => {
@@ -813,6 +814,7 @@ impl App {
             MenuAction::CopyEach => self.update_config(|c| c.copy_asides = !c.copy_asides),
             MenuAction::History => self.open_window_at(Some("history")),
             MenuAction::Settings => self.open_window_at(Some("general")),
+            MenuAction::Report => report_problem(),
             MenuAction::Update => self.update_step(Step::Install),
             MenuAction::Quit => self.request_quit(),
         }
@@ -2841,6 +2843,14 @@ fn asides_today(id: &str) -> u32 {
     let count = list.iter().filter(|a| a.created().date_naive() == today).count() as u32;
     let position = list.iter().position(|a| a.id == id).unwrap_or(0) as u32;
     count.saturating_sub(position).max(1)
+}
+
+/// GitHub's form for a problem, in the browser, asides' version and the system filled in
+/// (`paths::report_url`): without telemetry, it's how asides hears what went wrong.
+fn report_problem() {
+    let url = asides_core::paths::report_url(&system::system_version());
+    asides_core::log::write(format_args!("opening the form to report a problem"));
+    system::open(&url);
 }
 
 /// The time of day at `instant`.
