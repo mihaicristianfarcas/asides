@@ -17,8 +17,8 @@ use gpui::{
 
 use crate::native;
 use crate::ui::{
-    KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, NOTES_HEIGHT, NOTES_WIDTH, NotesView, Overlay, PILL_TOP,
-    ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView,
+    ClipTipView, KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, NOTES_HEIGHT, NOTES_WIDTH, NotesView, Overlay,
+    PILL_TOP, ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView,
 };
 
 /// Rounded rectangles in a window's points, their radii and how much of each shows: where the
@@ -414,19 +414,19 @@ fn open_missing(overlay: &Entity<Overlay>, cx: &mut App) {
 /// Puts the windows in line with the overlay: the screens' while frozen, the pill's always (where
 /// it goes, fitting the pill and its list). From the clock, outside updates.
 pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
-    let (live, shown, closing, handing, taking_over, toolbar, notes) = cx.update(|cx| {
+    let (live, shown, closing, handing, taking_over, toolbar, notes, tip) = cx.update(|cx| {
         let o = overlay.read(cx);
         if !o.closing {
             open_missing(overlay, cx);
         }
         let o = overlay.read(cx);
         let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
-        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar, o.notes_window)
+        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar, o.notes_window, o.clip_tip)
     })?;
     if closing {
         // The aside is on its way: the pill goes at once (what's by it too), the frozen screens once
         // the system is back.
-        for view in toolbar.into_iter().chain(notes) {
+        for view in toolbar.into_iter().chain(notes).chain(tip) {
             native::hide(view);
         }
         if shown == Some(false) && !handed_back(overlay, cx)? {
@@ -446,6 +446,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         pointer_moved(toolbar, cx);
     }
     sync_outline(overlay, cx)?;
+    sync_clip_tip(overlay, cx)?;
     sync_notes(overlay, cx)?;
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
@@ -461,7 +462,7 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
 }
 
 /// How thick the outline around a pin's area is while a clip of it records.
-const OUTLINE: f64 = 3.0;
+const OUTLINE: f64 = crate::faces::CLIP_OUTLINE;
 
 /// The outline's strips around `area` (AppKit's coordinates), just outside it (a clip of the area
 /// never shows them, wherever a capture can't leave asides' windows out): bottom, top, left, right.
@@ -544,6 +545,76 @@ fn outline_options(frame: PtRect) -> WindowOptions {
         is_minimizable: false,
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
+    }
+}
+
+/// The tooltip beside a pin's area while a clip of it records (`Overlay::clip_tip_wanted`), shown
+/// there, drawn first, fitting it as drawn; hidden otherwise, the keyboard back to the user's app if
+/// it had it (unless the screens are freezing: then it's the overlay's). Its window opens the first
+/// time, hidden. A click on its field takes the keyboard, Return or Esc gives it back
+/// (`Overlay::clip_tip_keys`): GPUI can't from inside the window's event.
+fn sync_clip_tip(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    let (wanted, at, open) = cx.update(|cx| {
+        let o = overlay.read(cx);
+        (o.clip_tip_wanted(), o.clip_tip_at, o.clip_tip)
+    })?;
+    if wanted.is_some() && open.is_none() {
+        cx.update(|cx| open_clip_tip(overlay, cx))?;
+    }
+    let Some(view) = cx.update(|cx| overlay.read(cx).clip_tip)? else { return Ok(()) };
+    let (keys, typing, front, freezing) = cx.update(|cx| {
+        overlay
+            .update(cx, |o, _| (o.clip_tip_keys.take(), o.clip_tip_typing, o.clip_tip_front, !o.live || o.freezing()))
+    })?;
+    let Some(frame) = wanted else {
+        if at.is_some() {
+            if typing && !freezing {
+                native::give_keyboard_back(view, front);
+            }
+            native::hide(view);
+            cx.update(|cx| overlay.update(cx, |o, _| (o.clip_tip_at, o.clip_tip_typing) = (None, false)))?;
+        }
+        return Ok(());
+    };
+    if wanted != at {
+        native::set_frame(view, frame);
+        let m = TOOLBAR_MARGIN;
+        native::set_glass(view, &[(PtRect::new(m, m, frame.width - 2.0 * m, frame.height - 2.0 * m), 12.0, 1.0)]);
+        draw_now(&[view], cx);
+        if at.is_none() {
+            native::show(view, false);
+        }
+        cx.update(|cx| overlay.update(cx, |o, _| o.clip_tip_at = wanted))?;
+    }
+    match keys {
+        // Clicked again after the user went back to their app (it took the keyboard itself): taken
+        // again, from the app it was first taken from.
+        Some(true) => {
+            let front = if typing { front } else { native::front_app() };
+            native::show(view, true);
+            cx.update(|cx| overlay.update(cx, |o, _| (o.clip_tip_typing, o.clip_tip_front) = (true, front)))?;
+        }
+        Some(false) if typing => {
+            native::give_keyboard_back(view, front);
+            cx.update(|cx| overlay.update(cx, |o, _| o.clip_tip_typing = false))?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Opens the tooltip's window, hidden (`native::make_clip_tip`).
+fn open_clip_tip(overlay: &Entity<Overlay>, cx: &mut App) {
+    let frame = PtRect::new(0.0, 0.0, crate::faces::CLIP_TIP_WIDTH + 2.0 * TOOLBAR_MARGIN, 80.0);
+    let o = overlay.clone();
+    let opened = cx.open_window(toolbar_options(None, frame), move |w, cx| {
+        let view = native::make_clip_tip(w, frame);
+        native::set_glass(view, &[]);
+        o.update(cx, |o, _| o.clip_tip = Some(view));
+        cx.new(|cx| ClipTipView::new(o.clone(), cx))
+    });
+    if let Err(err) = opened {
+        eprintln!("asides-overlay: no clip tooltip window: {err:#}");
     }
 }
 
@@ -855,12 +926,15 @@ fn show_live(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()>
         native::hide(view);
     }
     cx.update(|cx| {
-        overlay.update(cx, |o, _| {
+        overlay.update(cx, |o, cx| {
             o.shown = Some(true);
             o.handoff = None;
             o.pill_hidden = false;
-            // The live screen shows: what was done on the frozen one goes in the aside.
-            o.keep_last();
+            // The live screen shows: what was done on the frozen one goes in the aside (with a clip
+            // of one of its pins' areas to come, once it ends: what its tooltip says goes in the pin).
+            if !o.describing_clip() {
+                o.keep_last(cx);
+            }
             o.live_shown();
         })
     })
@@ -1136,6 +1210,26 @@ mod tests {
         let glass = glass_in(shapes, Some(drawn), (true, false), (482.0, 246.0));
         assert_eq!(glass[0].0, PtRect::new(107.0, 1.0, 374.0, 38.0));
         assert_eq!(glass[1].0, PtRect::new(21.0, 45.0, 460.0, 200.0));
+    }
+
+    #[test]
+    fn the_clip_tooltip_goes_beside_its_area_on_the_screen() {
+        use crate::faces::{CLIP_TIP_GAP, clip_tip_place};
+        let (screen, top, tip) = ((1512.0, 982.0), 38.0, (382.0, 80.0));
+        let gap = OUTLINE + CLIP_TIP_GAP;
+        // Under the outline, its left side with the outline's.
+        let area = PtRect::new(200.0, 300.0, 120.0, 60.0);
+        assert_eq!(clip_tip_place(area, screen, top, tip), PtRect::new(197.0, 360.0 + gap, 382.0, 80.0));
+        // Near the bottom: above it.
+        let low = PtRect::new(200.0, 860.0, 120.0, 60.0);
+        assert_eq!(clip_tip_place(low, screen, top, tip).y, 860.0 - gap - 80.0);
+        // Near the right edge: on the screen still.
+        let right = PtRect::new(1400.0, 300.0, 100.0, 40.0);
+        assert_eq!(clip_tip_place(right, screen, top, tip).x, 1512.0 - 382.0 - 8.0);
+        // As tall as the screen: inside it, at its bottom, below the menu bar.
+        let tall = PtRect::new(0.0, 38.0, 1512.0, 944.0);
+        let inside = clip_tip_place(tall, screen, top, tip);
+        assert_eq!((inside.x, inside.y), (8.0, 982.0 - 80.0 - 8.0));
     }
 
     #[test]

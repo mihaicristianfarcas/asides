@@ -20,10 +20,11 @@ use gpui::{
 
 use crate::controls::{self, Radius, Theme, ease, hex};
 use crate::faces::{
-    self, Prim, Still, ToolSlot, agent_segment, agents_track, card_camera, card_cluster, card_field, card_surface,
-    card_tool, choose_folder_content, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline,
-    list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass,
-    still_pill, talk_face, tool_slot_width,
+    self, CLIP_OUTLINE, CLIP_TIP_WIDTH, Prim, Still, ToolSlot, agent_segment, agents_track, card_camera, card_cluster,
+    card_field, card_surface, card_tool, choose_folder_content, clip_tip_button, clip_tip_face, clip_tip_place,
+    clip_tip_status, field_face, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline, list_heading,
+    list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass, still_pill, talk_face,
+    tool_slot_width,
 };
 use crate::style;
 use crate::ui::{CAMERA_WIDTH, CARD_WIDTH, Keys, LIST_GAP};
@@ -146,6 +147,8 @@ pub struct Scene {
     /// A pin's card open: its pin's number, what's typed (typing in, a character at a time, when
     /// `typing`), what it asks for.
     pub card: Option<Card>,
+    /// A clip of a pin's area recording, live: the outline around it, the tooltip beside it.
+    pub area_clip: Option<AreaClip>,
     pub measured: Vec<Measured>,
     /// The aside typed into the agent's chat.
     pub sent: bool,
@@ -174,6 +177,18 @@ pub struct Card {
     pub intent: Option<Intent>,
 }
 
+/// A clip of pin `number`'s area (`area`, the pin's element and `CLIP_ROOM` around it), as its
+/// tooltip shows it: what's typed there (typing in, a character at a time, when `typing`), and how
+/// long it had recorded as the beat came in (seconds).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AreaClip {
+    pub number: u32,
+    pub area: Rect,
+    pub text: &'static str,
+    pub typing: bool,
+    pub since: f32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Measured {
     /// From the pointer, across (from x to x, at its y) and down (from y to y, at its x).
@@ -185,8 +200,8 @@ pub enum Measured {
     Area(Rect),
 }
 
-/// The demonstration called `name` (`basics`, `target`, `card`, `tools` or `clip`), laid out `width`
-/// wide.
+/// The demonstration called `name` (`basics`, `target`, `card`, `tools`, `clip` or `clip_area`), laid
+/// out `width` wide.
 pub fn demo(name: &str, width: f32) -> Option<Demo> {
     match name {
         "basics" => Some(basics(width)),
@@ -194,6 +209,7 @@ pub fn demo(name: &str, width: f32) -> Option<Demo> {
         "card" => Some(card(width)),
         "tools" => Some(tools(width)),
         "clip" => Some(clip(width)),
+        "clip_area" => Some(clip_area(width)),
         _ => None,
     }
 }
@@ -533,6 +549,109 @@ fn clip(width: f32) -> Demo {
     demo
 }
 
+/// How tall the tooltip of a clip of a pin's area is (its field and its row of buttons), and how far
+/// from its right side the middle of Stop and Freeze is, near enough on each system's font for the
+/// pointer to land on it.
+const CLIP_TIP_HEIGHT: f32 = 78.0;
+const FREEZE_FROM_RIGHT: f32 = 63.0;
+/// What's typed about a clip of a pin's area.
+const CLIP_AREA_TYPED: &str = "Says Declined, then Pay again";
+
+/// A clip of a pin's area: its card opened, ⌘K (the screen comes to life, the area outlined, the
+/// tooltip beside it), what happens typed there, the button to pay clicked (its error, for an
+/// instant), then Stop and Freeze: frozen again, and the clip in the aside. The app as wide as it's
+/// given, with room under its button for the tooltip.
+fn clip_area(width: f32) -> Demo {
+    let app = (0.0, SCREEN_TOP, width, APP_CONTENT + 110.0);
+    let button = app_button(app);
+    let at = (button.0 + 8.0, button.1 + button.3 - 6.0);
+    let pin = Pin { number: 1, at, on: On::Element(button), intent: None };
+    // What a clip of it records: the button and some room around it (`ClipArea::of`).
+    let room = asides_core::helper::CLIP_ROOM as f32;
+    let area = (button.0 - room, button.1 - room, button.2 + 2.0 * room, button.3 + 2.0 * room);
+    let tip = clip_tip_place(rect(area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT as f64));
+    let (tip_x, tip_y) = (tip.x as f32, tip.y as f32);
+    let field = (tip_x + 120.0, tip_y + 1.0 + 6.0 + 16.0);
+    let freeze = (tip_x + CLIP_TIP_WIDTH as f32 - FREEZE_FROM_RIGHT, tip_y + 1.0 + 6.0 + 32.0 + 4.0 + 14.0);
+    let pay = (button.0 + button.2 * 0.62, button.1 + button.3 * 0.6);
+    let rest = (app.0 + app.2 * 0.72, button.1 + 20.0);
+    let frozen = |pins: Vec<Pin>, card, note| Scene {
+        frozen: true,
+        listening: true,
+        target: session(0),
+        pins,
+        card,
+        note,
+        ..Scene::default()
+    };
+    // Live, only the pill stays on the screen (as frozen on the stage), recording; the pin's freeze is
+    // kept, its pin no longer drawn.
+    let live = |text, typing, declined| Scene {
+        frozen: true,
+        listening: true,
+        clip: true,
+        target: session(0),
+        declined,
+        area_clip: Some(AreaClip { number: 1, area, text, typing, since: 0.0 }),
+        ..Scene::default()
+    };
+    let card = Card { pin: 1, text: "", typing: false, intent: None };
+    // Recording from beat `ON` (⌘K).
+    const ON: usize = 2;
+    let mut demo = Demo {
+        size: (width, app.1 + app.3),
+        app: Some(app),
+        chat: None,
+        clip: None,
+        beats: vec![
+            Beat { hold: 900, pointer: Some(rest), scene: frozen(vec![pin.clone()], None, None), ..Beat::default() },
+            Beat {
+                hold: 600,
+                pointer: Some(at),
+                click: true,
+                scene: frozen(vec![pin.clone()], Some(card), None),
+                ..Beat::default()
+            },
+            Beat {
+                hold: 900,
+                key: Some(format!("{}K", keys::COMMAND)),
+                scene: live("", false, false),
+                ..Beat::default()
+            },
+            Beat {
+                hold: 1900,
+                pointer: Some(field),
+                click: true,
+                scene: live(CLIP_AREA_TYPED, true, false),
+                ..Beat::default()
+            },
+            // Its error, for an instant, then back as it was.
+            Beat {
+                hold: 1100,
+                pointer: Some(pay),
+                click: true,
+                scene: live(CLIP_AREA_TYPED, false, true),
+                ..Beat::default()
+            },
+            Beat {
+                hold: 1800,
+                pointer: Some(freeze),
+                click: true,
+                scene: frozen(vec![], None, Some("The clip is in the aside")),
+                ..Beat::default()
+            },
+        ],
+    };
+    // How long it had recorded as each beat came in.
+    for i in ON..demo.beats.len() {
+        let since = (demo.comes_in(i) - demo.comes_in(ON)).as_secs_f32();
+        if let Some(clip) = &mut demo.beats[i].scene.area_clip {
+            clip.since = since;
+        }
+    }
+    demo
+}
+
 // --- Playing ---
 
 /// What a demonstration shows at a moment.
@@ -656,8 +775,9 @@ impl Beat {
 
     /// How long something keeps moving once it's in: a card's text typing, the words said.
     fn lively(&self) -> Duration {
-        let typing = match &self.scene.card {
-            Some(card) if card.typing => TYPE_EACH * card.text.chars().count() as u32,
+        let typing = match (&self.scene.card, &self.scene.area_clip) {
+            (Some(card), _) if card.typing => TYPE_EACH * card.text.chars().count() as u32,
+            (_, Some(clip)) if clip.typing => TYPE_EACH * clip.text.chars().count() as u32,
             _ => Duration::ZERO,
         };
         // Talking: the microphone's level moves the whole time.
@@ -964,6 +1084,17 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         );
     }
 
+    // A clip of a pin's area: the outline just outside it, while it records.
+    let clipping = between(from.area_clip.is_some(), to.area_clip.is_some(), f);
+    if let Some(clip) = to.area_clip.as_ref().or(from.area_clip.as_ref()).filter(|_| clipping > 0.0) {
+        let ((x, y, w, h), b) = (clip.area, CLIP_OUTLINE as f32);
+        for strip in
+            [(x - b, y - b, w + 2.0 * b, b), (x - b, y + h, w + 2.0 * b, b), (x - b, y, b, h), (x + w, y, b, h)]
+        {
+            prims.push(Prim::Fill(rect(strip, dx), hex(style::RECORDING_SOFT, clipping)));
+        }
+    }
+
     // A drag going on: what it draws, as far as it's gone.
     if let Some((i, done)) = shown.dragging {
         let beat = &demo.beats[i];
@@ -1019,6 +1150,7 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
     .absolute()
     .size_full();
     let card = card_view(from, to, f, shown, dx, look);
+    let clip_tip = clip_tip_view(from, to, f, shown, dx, look);
     let pill = pill_view(demo, from, to, f, shown, dx, look, window);
     let pointer = pointer_view(shown, to, dx);
     let captions = captions_view(shown, to, width, look);
@@ -1029,6 +1161,7 @@ pub fn view(demo: &Demo, shown: &Shown, width: f32, look: &Look, window: &Window
         .children(labels)
         .children(markers)
         .children(card)
+        .children(clip_tip)
         .children(pill)
         .children(pointer)
         .child(captions)
@@ -1485,6 +1618,50 @@ fn card_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look: &Lo
             .left(px(pin.at.0 + dx + half + 6.0))
             .top(px(pin.at.1 + half + 6.0 - 4.0 * (1.0 - open)))
             .opacity(open)
+            .into_any_element(),
+    )
+}
+
+/// The tooltip beside a pin's area while a clip of it records, as it comes or goes: what's typed,
+/// typing in, the time going on.
+fn clip_tip_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look: &Look) -> Option<AnyElement> {
+    let t = look.t;
+    let shows = between(from.area_clip.is_some(), to.area_clip.is_some(), f);
+    let (clip, here) = match (&to.area_clip, &from.area_clip) {
+        (Some(clip), _) => (clip, true),
+        (None, Some(clip)) => (clip, false),
+        _ => return None,
+    };
+    if shows <= 0.0 {
+        return None;
+    }
+    let typed: String = match clip.typing {
+        true => clip.text.chars().take((shown.held.as_millis() / TYPE_EACH.as_millis().max(1)) as usize).collect(),
+        false => clip.text.to_string(),
+    };
+    let seconds = clip.since + if here { shown.held.as_secs_f32() } else { 0.0 };
+    // The microphone red while the pill listens, as the overlay's.
+    let listening = to.listening && to.area_clip.is_some();
+    let stops = vec![
+        clip_tip_button("Stop", Some("clip-stop"), t).into_any_element(),
+        clip_tip_button("Stop and Freeze", None, t).into_any_element(),
+    ];
+    let face = clip_tip_face(
+        plain_glass(t, 12.),
+        field_face(&typed, "What happens here?", clip.typing, t),
+        talk_face(listening, t).into_any_element(),
+        None,
+        clip_tip_status(clip.number, seconds as u32, t),
+        stops,
+        t,
+    );
+    let place =
+        clip_tip_place(rect(clip.area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT as f64));
+    Some(
+        face.absolute()
+            .left(px(place.x as f32 + dx))
+            .top(px(place.y as f32 - 4.0 * (1.0 - shows)))
+            .opacity(shows)
             .into_any_element(),
     )
 }
@@ -2081,7 +2258,7 @@ mod tests {
         assert_eq!(words_said(text, Duration::from_secs(60)), 4);
         assert_eq!(saying(text), (SAID_EACH * 9 + SAID_READ).as_millis() as u64);
         // In every demonstration: each held until its last word, then as long to be read.
-        for name in ["basics", "target", "card", "tools", "clip"] {
+        for name in ["basics", "target", "card", "tools", "clip", "clip_area"] {
             for beat in super::demo(name, 600.0).unwrap().beats {
                 let Some(said) = beat.say else { continue };
                 assert_eq!(beat.hold, saying(said), "{name}");
@@ -2106,7 +2283,7 @@ mod tests {
     #[test]
     fn every_demonstration_is_there_and_makes_sense() {
         for width in [536.0, 700.0] {
-            for name in ["basics", "target", "card", "tools", "clip"] {
+            for name in ["basics", "target", "card", "tools", "clip", "clip_area"] {
                 let demo = super::demo(name, width).unwrap_or_else(|| panic!("no demonstration {name}"));
                 assert!(demo.beats.len() > 1, "{name}");
                 assert!(demo.size.0 <= width, "{name} at {width}");
@@ -2127,6 +2304,36 @@ mod tests {
         // The same timing at any width (a step is watched from its start).
         let (narrow, wide) = (super::demo("basics", 536.0).unwrap(), super::demo("basics", 700.0).unwrap());
         assert_eq!(narrow.time_of_step(2), wide.time_of_step(2));
+    }
+
+    #[test]
+    fn a_clip_of_a_pins_area_has_its_tooltip_until_stop_and_freeze() {
+        let demo = super::demo("clip_area", 600.0).unwrap();
+        let on = demo.beats.iter().position(|b| b.scene.area_clip.is_some()).unwrap();
+        // From ⌘K in the pin's card.
+        assert!(demo.beats[on - 1].scene.card.is_some());
+        assert_eq!(demo.beats[on].key, Some(format!("{}K", keys::COMMAND)));
+        let off = on + demo.beats[on..].iter().position(|b| b.scene.area_clip.is_none()).unwrap();
+        // Live meanwhile: the pin's freeze kept, only the pill (recording) and the tooltip.
+        for beat in &demo.beats[on..off] {
+            assert!(beat.scene.clip && beat.scene.pins.is_empty() && beat.scene.card.is_none());
+        }
+        // Typed into after a click on its field; its time goes on from where it started.
+        let typed = demo.beats[on..off].iter().position(|b| b.scene.area_clip.as_ref().is_some_and(|c| c.typing));
+        assert!(typed.is_some_and(|i| demo.beats[on + i].click));
+        let since: Vec<f32> = demo.beats[on..off].iter().map(|b| b.scene.area_clip.as_ref().unwrap().since).collect();
+        assert!(since[0] == 0.0 && since.windows(2).all(|w| w[1] > w[0]));
+        // Stopped by a click on Stop and Freeze, under the area, on the right: frozen again, the clip
+        // in the aside.
+        let stop = &demo.beats[off];
+        assert!(stop.click && stop.scene.frozen && !stop.scene.clip && stop.scene.note.is_some());
+        let area = demo.beats[on].scene.area_clip.as_ref().unwrap().area;
+        let (x, y) = stop.pointer.unwrap();
+        assert!(y > area.1 + area.3 && x > area.0 + CLIP_TIP_WIDTH as f32 / 2.0);
+        // The button's error while it records.
+        assert!(demo.beats[on..off].iter().any(|b| b.scene.declined && b.click));
+        // Its outline and tooltip fit on the stage.
+        assert!(y + 30.0 < demo.size.1);
     }
 
     #[test]

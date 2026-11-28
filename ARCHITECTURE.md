@@ -145,8 +145,10 @@ crates/
     windows.rs        Windows: links to the app, type-into (a console's input), launch
   asides-overlay/  GPUI overlay (asides.app/Contents/MacOS/asides-overlay)
     main.rs           session, standby, window and script modes
-    ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet
-    faces.rs          how the pill, its list, the keys sheet, cards, pins and labels look (ui.rs and help.rs)
+    ui.rs             Overlay, ScreenView, the pill and its list, cards, menus, keys sheet, a pin's
+                      clip's tooltip
+    faces.rs          how the pill, its list, the keys sheet, cards, a clip's tooltip, pins and labels look
+                      (ui.rs and help.rs)
     window.rs         the asides window: History, Sessions, General, Keys, Voice, Pins, Help; setup
     help.rs           Help's demonstrations: the overlay's faces on a stage, scripted beats, drawn when due
     controls.rs       its look (after pingpong's): colors, type, and the controls its pages use
@@ -266,7 +268,10 @@ the pill names the session typed into last from its first frame.
    asides' windows (`Watched::Screen`; on Windows and Linux the monitor, the pill as it is there).
    A pin's card's camera records only the pin's part of the screen (`ClipArea::of`; on a Mac
    `Watched::Area`, at the screen's pixels, elsewhere `capture::watch_area`), outlined just outside
-   while it records (`windows::sync_outline`); its pictures go right after the pin.
+   while it records (`windows::sync_outline`), a tooltip beside it (`ui::ClipTipView`,
+   `windows::sync_clip_tip`: Stop, Stop and Freeze, the pin's field and microphone; its field takes
+   the keyboard only once clicked, a non-activating panel on a Mac); its pictures go right after the
+   pin. That freeze is kept once the clip ends, with what the tooltip says in the pin (`keep_last`).
    Freezing, sending or closing ends it, and its pictures (`motion::pictures`) join the aside.
 4. **Recording**: cpal while open; each stretch is a take (`App::takes`). One started from a pin's
    card is transcribed at once and goes in that pin (`Annotation::said`).

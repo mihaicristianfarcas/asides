@@ -604,6 +604,11 @@ pub fn card_cluster(items: impl IntoIterator<Item = AnyElement>) -> AnyElement {
 /// A text field on a card, as `input::TextInput` draws it with `ui::card_look`: what's typed, the
 /// caret at its end (or the placeholder).
 pub fn card_field(text: &str, caret: bool, t: Theme) -> AnyElement {
+    field_face(text, "What should change?", caret, t)
+}
+
+/// A field as `card_field` draws it, saying `placeholder` while it's empty.
+pub fn field_face(text: &str, placeholder: &str, caret: bool, t: Theme) -> AnyElement {
     let empty = text.is_empty();
     div()
         .flex_1()
@@ -621,11 +626,93 @@ pub fn card_field(text: &str, caret: bool, t: Theme) -> AnyElement {
                 .line_height(px(18.))
                 .text_color(if empty { t.tertiary } else { t.primary })
                 .when(empty && caret, |d| d.child(div().w(px(2.)).h(px(18.)).bg(t.accent)))
-                .child(if empty { "What should change?".to_string() } else { text.to_string() })
+                .child(if empty { placeholder.to_string() } else { text.to_string() })
                 .when(!empty && caret, |d| d.child(div().w(px(2.)).h(px(18.)).bg(t.accent))),
         )
         .into_any_element()
 }
+
+// --- A clip of a pin's area ---
+
+/// The tooltip beside a pin's area while a clip of it records (`ui::ClipTipView`): what happens there
+/// (`field`, the pin's own) and the microphone, what was said about it, then the recording (`status`)
+/// and the ways to stop it (`stops`: staying live, or freezing again).
+pub fn clip_tip_face(
+    glass: Div,
+    field: AnyElement,
+    talk: AnyElement,
+    said: Option<AnyElement>,
+    status: AnyElement,
+    stops: Vec<AnyElement>,
+    t: Theme,
+) -> Div {
+    glass
+        .w(px(CLIP_TIP_WIDTH as f32))
+        .p(px(6.))
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .text_color(t.primary)
+        .child(div().flex().items_start().gap(px(6.)).child(div().flex_1().min_w_0().child(field)).child(talk))
+        .children(said)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(PILL_GAP))
+                .child(div().flex_1().min_w_0().child(status))
+                .child(group(stops, t)),
+        )
+}
+
+/// The recording, in the tooltip: a red dot, the pin, how long so far.
+pub fn clip_tip_status(number: u32, seconds: u32, t: Theme) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .pl(px(4.))
+        .text_size(px(12.))
+        .text_color(t.secondary)
+        .child(div().flex_none().size(px(8.)).rounded_full().bg(hex(style::RECORDING, 1.0)))
+        .child(div().flex_none().child(format!("Recording pin {number}")))
+        .child(tabular(div().flex_none().text_color(t.tertiary).child(format!("{}:{:02}", seconds / 60, seconds % 60))))
+        .into_any_element()
+}
+
+/// What the pointer is on in the tooltip, where the recording shows.
+pub fn clip_tip_hint(text: SharedString, t: Theme) -> AnyElement {
+    div().pl(px(4.)).text_size(px(12.)).text_color(t.secondary).truncate().child(text).into_any_element()
+}
+
+/// A way to stop recording, in the tooltip: its icon and name.
+pub fn clip_tip_button(label: &'static str, icon_name: Option<&'static str>, t: Theme) -> Div {
+    let ink = Emphasis::Plain.ink(t);
+    button_face(Emphasis::Plain, false, t).children(icon_name.map(|name| icon(name, ink))).child(label)
+}
+
+/// Where the tooltip goes beside a pin's area (`area`, in its screen's points from the top left; the
+/// screen `screen` big, its menu bar `top` tall), `tip` big: under the outline around the area, else
+/// above it, else inside it at its bottom (a clip leaves asides' windows out where it can); its left
+/// side with the outline's, on the screen.
+pub fn clip_tip_place(area: PtRect, (width, height): (f64, f64), top: f64, (w, h): (f64, f64)) -> PtRect {
+    const EDGE: f64 = 8.0;
+    let room = CLIP_OUTLINE + CLIP_TIP_GAP;
+    let x = (area.x - CLIP_OUTLINE).clamp(EDGE, (width - w - EDGE).max(EDGE));
+    let (below, above) = (area.bottom() + room, area.y - room - h);
+    let y = match () {
+        _ if below + h <= height - EDGE => below,
+        _ if above >= top + EDGE => above,
+        _ => (area.bottom() - h - EDGE).clamp(top + EDGE, (height - h - EDGE).max(top + EDGE)),
+    };
+    PtRect::new(x.round(), y.round(), w, h)
+}
+
+/// How thick the outline around a pin's area is while a clip of it records (just outside it), the
+/// tooltip's width, and its gap from the outline.
+pub const CLIP_OUTLINE: f64 = 3.0;
+pub const CLIP_TIP_WIDTH: f64 = 380.0;
+pub const CLIP_TIP_GAP: f64 = 8.0;
 
 // --- On the frozen screen ---
 

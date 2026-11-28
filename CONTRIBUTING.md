@@ -223,7 +223,16 @@ Run what your change touches, and say in the pull request what you tried.
   and stays so as apps come to the front; the desktop coming to the front leaves an app's clip be.
 - [ ] **A pin's clip**: a pin's camera (or `⌘K` in its card) goes live with a thin red line just
   around its area (an element's or a drawing's with a little room); the aside's pictures show only
-  that area, sharp, right after the pin, never the line; freezing ends it, and the line goes.
+  that area, sharp, right after the pin, never the line or the tooltip; freezing ends it, and the
+  line goes.
+- [ ] **A pin's clip's tooltip**: under the line (above it near the bottom of the screen, inside a
+  full-screen area), with the time going on; clicks on Stop and the microphone leave the keyboard
+  with your app (its window stays active); a click on the field takes it (your app stays in front,
+  its menu bar too), `⏎` or `Esc` gives it back and you type in your app again; a click back in
+  your app does too. **Stop** stays live, the toast says the clip is in the aside; **Stop and
+  Freeze** freezes again. What's typed (and said with its microphone) is in the pin's block, the
+  clip right after; the pin's card's text shows in the field first. Sending, `⌃⌥P` and the minute
+  running out end it too, with what was typed.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.
 - [ ] **Frame by frame** (`screencapture -v`): no stale frame or flash opening, toggling, closing.
 - [ ] **Updates** (a release installed, a newer one published): the sidebar offers it; **Restart

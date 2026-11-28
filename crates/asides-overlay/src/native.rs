@@ -149,6 +149,36 @@ pub fn make_notes(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the tooltip beside a pin's area while a clip of it records (`ui::ClipTipView`), at
+/// `frame`: as the pill's, a panel above other apps' windows that a click doesn't make key, so its
+/// buttons leave the keyboard where it is. Its field takes it once clicked (`show` with the
+/// keyboard): a non-activating panel becomes the key window without making the overlay's app the
+/// active one, so the user's app stays in front (its menu bar too). Returns its view.
+pub fn make_clip_tip(window: &Window, frame: PtRect) -> usize {
+    let (_, pointer) = make_toolbar(window, frame);
+    // The style mask reset the first responder to the window (`make_overlay`): typed letters go only
+    // to the first responder, and would never reach GPUI.
+    if let (Some(ns), Some(gpui_view)) = (native_window(window), view(pointer)) {
+        ns.makeFirstResponder(Some(gpui_view));
+    }
+    pointer
+}
+
+/// The tooltip's window gives the keyboard back, if it has it, to the app in front (`front` is for
+/// the other systems): ordered out, a panel of an app that isn't the active one stops being the key
+/// window, and the active app's takes the keys again. Shown, it's ordered in again at once.
+pub fn give_keyboard_back(pointer: usize, _front: Option<i32>) {
+    let Some(window) = view(pointer).and_then(|v| v.window()) else { return };
+    if !window.isKeyWindow() {
+        return;
+    }
+    let shown = window.isVisible();
+    window.orderOut(None);
+    if shown {
+        window.orderFrontRegardless();
+    }
+}
+
 // The windows, by their views (`make_overlay`, `make_toolbar`), changed outside GPUI's updates:
 // AppKit tells GPUI about each change (a new size, the keyboard) as it happens, which GPUI can't
 // take while it's updating, and drops.
