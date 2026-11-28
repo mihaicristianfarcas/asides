@@ -227,11 +227,13 @@ Run what your change touches, and say in the pull request what you tried.
   that area, sharp, right after the pin, never the line or the tooltip; freezing ends it, and the
   line goes.
 - [ ] **A pin's clip's tooltip**: under the line (above it near the bottom of the screen, inside a
-  full-screen area), with the time going on; clicks on Stop and the microphone leave the keyboard
+  full-screen area), its field, microphone and buttons as tall as each other, the time going on and
+  each button's name beside it while the pointer is on it; clicks on Stop and the microphone leave the keyboard
   with your app (its window stays active); a click on the field takes it (your app stays in front,
   its menu bar too), `⏎` or `Esc` gives it back and you type in your app again; a click back in
-  your app does too. **Stop** stays live, the toast says the clip is in the aside; **Stop and
-  Freeze** freezes again. What's typed (and said with its microphone) is in the pin's block, the
+  your app does too. **Stop** (the square) stays live, the toast says the clip is in the aside;
+  **Stop and Freeze** (the pause) freezes again. On a pin's card, the field and its buttons are as
+  tall as each other too. What's typed (and said with its microphone) is in the pin's block, the
   clip right after; the pin's card's text shows in the field first. Sending, `⌃⌥P` and the minute
   running out end it too, with what was typed.
 - [ ] **Several displays**: each freezes; the pill opens on the one with the pointer.

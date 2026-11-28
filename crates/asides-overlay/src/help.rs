@@ -20,11 +20,11 @@ use gpui::{
 
 use crate::controls::{self, Radius, Theme, ease, hex};
 use crate::faces::{
-    self, CLIP_OUTLINE, CLIP_TIP_WIDTH, Prim, Still, ToolSlot, agent_segment, agents_track, card_camera, card_cluster,
-    card_field, card_surface, card_tool, choose_folder_content, clip_tip_button, clip_tip_face, clip_tip_place,
-    clip_tip_status, field_face, folder_content, intent_dot, keys_sheet_face, label_at, list_hairline, list_heading,
-    list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row, plain_glass, still_pill, talk_face,
-    tool_slot_width,
+    self, CLIP_OUTLINE, CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, Prim, Still, ToolSlot, agent_segment, agents_track,
+    card_camera, card_cluster, card_field, card_surface, card_tool, choose_folder_content, clip_tip_face,
+    clip_tip_place, clip_tip_status, clip_tip_stop, field_face, folder_content, intent_dot, keys_sheet_face, label_at,
+    list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, new_session_row,
+    plain_glass, still_pill, talk_face, tool_slot_width,
 };
 use crate::style;
 use crate::ui::{CAMERA_WIDTH, CARD_WIDTH, Keys, LIST_GAP};
@@ -177,12 +177,11 @@ pub struct Card {
     pub intent: Option<Intent>,
 }
 
-/// A clip of pin `number`'s area (`area`, the pin's element and `CLIP_ROOM` around it), as its
+/// A clip of a pin's area (`area`, the pin's element and `CLIP_ROOM` around it), as its
 /// tooltip shows it: what's typed there (typing in, a character at a time, when `typing`), and how
 /// long it had recorded as the beat came in (seconds).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AreaClip {
-    pub number: u32,
     pub area: Rect,
     pub text: &'static str,
     pub typing: bool,
@@ -549,11 +548,9 @@ fn clip(width: f32) -> Demo {
     demo
 }
 
-/// How tall the tooltip of a clip of a pin's area is (its field and its row of buttons), and how far
-/// from its right side the middle of Stop and Freeze is, near enough on each system's font for the
-/// pointer to land on it.
-const CLIP_TIP_HEIGHT: f32 = 78.0;
-const FREEZE_FROM_RIGHT: f32 = 63.0;
+/// Where the middle of the tooltip's last button, Stop and Freeze, is from its top right corner:
+/// inside its hairline and padding.
+const FREEZE_IN: Point = (1.0 + 6.0 + 14.0, 1.0 + 6.0 + faces::FIELD_HEIGHT / 2.0);
 /// What's typed about a clip of a pin's area.
 const CLIP_AREA_TYPED: &str = "Says Declined, then Pay again";
 
@@ -569,10 +566,10 @@ fn clip_area(width: f32) -> Demo {
     // What a clip of it records: the button and some room around it (`ClipArea::of`).
     let room = asides_core::helper::CLIP_ROOM as f32;
     let area = (button.0 - room, button.1 - room, button.2 + 2.0 * room, button.3 + 2.0 * room);
-    let tip = clip_tip_place(rect(area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT as f64));
+    let tip = clip_tip_place(rect(area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT));
     let (tip_x, tip_y) = (tip.x as f32, tip.y as f32);
-    let field = (tip_x + 120.0, tip_y + 1.0 + 6.0 + 16.0);
-    let freeze = (tip_x + CLIP_TIP_WIDTH as f32 - FREEZE_FROM_RIGHT, tip_y + 1.0 + 6.0 + 32.0 + 4.0 + 14.0);
+    let field = (tip_x + 120.0, tip_y + FREEZE_IN.1);
+    let freeze = (tip_x + CLIP_TIP_WIDTH as f32 - FREEZE_IN.0, tip_y + FREEZE_IN.1);
     let pay = (button.0 + button.2 * 0.62, button.1 + button.3 * 0.6);
     let rest = (app.0 + app.2 * 0.72, button.1 + 20.0);
     let frozen = |pins: Vec<Pin>, card, note| Scene {
@@ -592,7 +589,7 @@ fn clip_area(width: f32) -> Demo {
         clip: true,
         target: session(0),
         declined,
-        area_clip: Some(AreaClip { number: 1, area, text, typing, since: 0.0 }),
+        area_clip: Some(AreaClip { area, text, typing, since: 0.0 }),
         ..Scene::default()
     };
     let card = Card { pin: 1, text: "", typing: false, intent: None };
@@ -1642,21 +1639,23 @@ fn clip_tip_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look:
     let seconds = clip.since + if here { shown.held.as_secs_f32() } else { 0.0 };
     // The microphone red while the pill listens, as the overlay's.
     let listening = to.listening && to.area_clip.is_some();
-    let stops = vec![
-        clip_tip_button("Stop", Some("clip-stop"), t).into_any_element(),
-        clip_tip_button("Stop and Freeze", None, t).into_any_element(),
-    ];
+    let place = clip_tip_place(rect(clip.area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT));
+    // Stop and Freeze named while the pointer is on it, as in the overlay.
+    let freeze = (place.x as f32 + CLIP_TIP_WIDTH as f32 - FREEZE_IN.0, place.y as f32 + FREEZE_IN.1);
+    let on_freeze = shown
+        .pointer
+        .is_some_and(|(x, y)| (x - freeze.0).abs() <= 14.0 && (y - freeze.1).abs() <= faces::FIELD_HEIGHT / 2.0);
+    let hint = on_freeze.then(|| format!("Stop and Freeze ({})", look.freeze).into());
+    let stops = vec![clip_tip_stop(false, t).into_any_element(), clip_tip_stop(true, t).into_any_element()];
     let face = clip_tip_face(
         plain_glass(t, 12.),
         field_face(&typed, "What happens here?", clip.typing, t),
         talk_face(listening, t).into_any_element(),
-        None,
-        clip_tip_status(clip.number, seconds as u32, t),
         stops,
+        None,
+        clip_tip_status(seconds as u32, hint, t),
         t,
     );
-    let place =
-        clip_tip_place(rect(clip.area, 0.0), (1e4, 1e4), SCREEN_TOP as f64, (CLIP_TIP_WIDTH, CLIP_TIP_HEIGHT as f64));
     Some(
         face.absolute()
             .left(px(place.x as f32 + dx))
