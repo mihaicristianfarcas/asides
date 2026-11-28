@@ -305,7 +305,7 @@ const KEY_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("done_whole_screen", "Send, with the whole screen"),
             ("restart", "Start over"),
             ("live", "The live screen"),
-            ("clip", "Record a clip of what happens next"),
+            ("clip", "Record a clip of the whole screen"),
             ("help", "Show the keys"),
             ("close", "Close without sending"),
         ],
