@@ -549,8 +549,8 @@ fn clip(width: f32) -> Demo {
 }
 
 /// Where the middle of the tooltip's Stop and Freeze is from its top right corner: inside its
-/// hairline and padding, Discard after it.
-const FREEZE_IN: Point = (1.0 + 6.0 + 28.0 + 1.0 + 14.0, 1.0 + 6.0 + faces::FIELD_HEIGHT / 2.0);
+/// hairline and padding, Discard after it, touching.
+const FREEZE_IN: Point = (1.0 + 6.0 + 28.0 + 14.0, 1.0 + 6.0 + faces::FIELD_HEIGHT / 2.0);
 /// What's typed about a clip of a pin's area.
 const CLIP_AREA_TYPED: &str = "Says Declined, then Pay again";
 
@@ -1602,12 +1602,8 @@ fn card_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look: &Lo
     // Its camera, as on a pin that's on more than a point.
     let tools = [card_tool(Tool::Draw, false, t), card_tool(Tool::Measure, false, t), card_camera(t)]
         .map(IntoElement::into_any_element);
-    let row = vec![
-        card_field(&typed, true, t),
-        card_cluster(dots),
-        card_cluster(tools),
-        talk_face(false, t).into_any_element(),
-    ];
+    let buttons = dots.into_iter().chain(tools).chain([talk_face(false, t).into_any_element()]);
+    let row = vec![card_field(&typed, true, t), card_cluster(buttons)];
     let half = MARKER as f32 / 2.0;
     Some(
         card_surface(plain_glass(t, 12.), (CARD_WIDTH + CAMERA_WIDTH) as f32, row, t)
@@ -1645,22 +1641,36 @@ fn clip_tip_view(from: &Scene, to: &Scene, f: f32, shown: &Shown, dx: f32, look:
     let on_freeze = shown
         .pointer
         .is_some_and(|(x, y)| (x - freeze.0).abs() <= 14.0 && (y - freeze.1).abs() <= faces::FIELD_HEIGHT / 2.0);
-    let hint = on_freeze.then(|| format!("Stop and Freeze ({})", look.freeze).into());
-    let stops = ClipStop::ALL.into_iter().map(|s| card_button(s.icon(), t).into_any_element()).collect();
+    let buttons = std::iter::once(talk_face(listening, t).into_any_element())
+        .chain(ClipStop::ALL.into_iter().map(|s| card_button(s.icon(), t).into_any_element()))
+        .collect();
     let face = clip_tip_face(
         plain_glass(t, 12.),
+        clip_tip_status(seconds as u32, t),
         field_face(&typed, "What happens here?", clip.typing, t),
-        talk_face(listening, t).into_any_element(),
-        stops,
+        buttons,
         None,
-        clip_tip_status(seconds as u32, hint, t),
         t,
     );
+    // Its name in a note under the tooltip, in its middle, as the overlay's (`ui::NotesBy::ClipTip`).
+    let note = on_freeze.then(|| {
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(CLIP_TIP_HEIGHT as f32 + 8.0))
+            .flex()
+            .justify_center()
+            .child(note_view(format!("Stop and Freeze ({})", look.freeze), t))
+    });
     Some(
-        face.absolute()
+        div()
+            .absolute()
             .left(px(place.x as f32 + dx))
             .top(px(place.y as f32 - 4.0 * (1.0 - shows)))
             .opacity(shows)
+            .child(face)
+            .children(note)
             .into_any_element(),
     )
 }

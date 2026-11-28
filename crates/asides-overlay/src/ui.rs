@@ -58,10 +58,10 @@ const SPIN: u32 = 1000;
 /// Tab held moves to the next session this often, slower than keys repeat: each name can be read.
 const TARGET_REPEAT: Duration = Duration::from_millis(240);
 pub(crate) const CARD_WIDTH: f64 = 440.0;
-/// The card's trash button and the gap before it.
-const TRASH_WIDTH: f64 = 34.0;
-/// How much wider a card is with its camera (a clip of its pin's area).
-pub(crate) const CAMERA_WIDTH: f64 = 29.0;
+/// The card's trash button, touching the microphone.
+const TRASH_WIDTH: f64 = 28.0;
+/// How much wider a card is with its camera (a clip of its pin's area), touching its tools.
+pub(crate) const CAMERA_WIDTH: f64 = 28.0;
 /// The tooltip of a clip of a pin's area: the lines its field grows to.
 const CLIP_TIP_LINES: usize = 3;
 /// The card opens above its annotation when there's less than this below it.
@@ -318,7 +318,7 @@ pub struct Overlay {
     pub badge: Slot<Tool>,
     /// The toast and the name of the button under the pointer, by the pill (`ScreenView::notes`),
     /// as drawn: fading in and out, their widths easing as they say something else.
-    pub notes: [Option<Note<SharedString>>; 2],
+    pub notes: [Option<Note<SharedString>>; 4],
     /// The keys under the pill: shown (`?`, its button, the first freeze), or while the pointer is
     /// on its button; fading in and out.
     help: bool,
@@ -367,6 +367,8 @@ pub struct Overlay {
     pointing: Option<&'static str>,
     /// The pointer left the pill from a button: GPUI is to hear where it is (`windows::sync`).
     pub left_pill: bool,
+    /// The same for a clip's tooltip (`Overlay::left_pill`).
+    pub left_clip_tip: bool,
     /// The card's dot under the pointer, named above the card.
     card_tip: Option<SharedString>,
     /// Screenshots taken: when, and the file in the session directory.
@@ -407,6 +409,9 @@ pub struct Overlay {
     /// (`windows::sync_notes`).
     pub notes_window: Option<usize>,
     pub notes_at: Option<PtRect>,
+    /// The window of the note under a clip's tooltip, and where it is (`clip_notes`).
+    pub clip_notes_window: Option<usize>,
+    pub clip_notes_at: Option<PtRect>,
     /// The pill's window, frozen and live, and the screen it's on.
     pub toolbar_window: Option<ScreenWindow>,
     pub toolbar_screen: usize,
@@ -514,7 +519,7 @@ impl Overlay {
             following: false,
             label: Slot::new(spec.targets.label(spec.targets.chosen.as_ref()).into()),
             badge: Slot::empty(),
-            notes: [None, None],
+            notes: [None, None, None, None],
             help: spec.tips && !spec.live,
             help_hover: false,
             keys_sheet: Fade::default(),
@@ -542,6 +547,7 @@ impl Overlay {
             hint: None,
             pointing: None,
             left_pill: false,
+            left_clip_tip: false,
             card_tip: None,
             shots: Vec::new(),
             shot_count: 0,
@@ -565,6 +571,8 @@ impl Overlay {
             clip_tip_front: None,
             notes_window: None,
             notes_at: None,
+            clip_notes_window: None,
+            clip_notes_at: None,
             toolbar_window: None,
             toolbar_screen: 0,
             shown: None,
@@ -668,6 +676,7 @@ impl Overlay {
             input
         });
         (self.clip_tip_size, self.clip_tip_hint, self.clip_tip_keys) = (None, None, None);
+        self.notes[NOTE_CLIP] = None;
         self.clip_note = Some(ClipNote { key: area.annotation, input });
     }
 
@@ -696,6 +705,29 @@ impl Overlay {
         let local = PtRect::new(x, y, area.rect.width, area.rect.height);
         let at = clip_tip_place(local, (s.frame.width, s.frame.height), s.menu_bar, size);
         Some(PtRect::new(s.frame.x + at.x, s.frame.y + s.frame.height - at.y - at.height, at.width, at.height))
+    }
+
+    /// Over the live screen, where the window of the note under the tooltip of a clip of a pin's area
+    /// goes (AppKit's coordinates), as long as it shows or fades, and whether it's under the tooltip
+    /// (above it when the tooltip is above the area, away from it): as wide as notes may be, in the
+    /// tooltip's middle, on its screen.
+    pub fn clip_notes(&self) -> Option<(PtRect, bool)> {
+        let window = self.clip_tip_wanted()?;
+        if self.notes_wanted()[NOTE_CLIP].is_none() && self.notes[NOTE_CLIP].is_none() {
+            return None;
+        }
+        // The tooltip as drawn, inside its window's margin: the note as far from it as the card's.
+        let m = TOOLBAR_MARGIN;
+        let tip = PtRect::new(window.x + m, window.y + m, window.width - 2.0 * m, window.height - 2.0 * m);
+        let area = self.outline_wanted()?;
+        let below = tip.y < area.y;
+        let f = self.spec.screens.iter().find(|s| self.clip_area.is_some_and(|a| a.display == s.display))?.frame;
+        let x = (tip.x + tip.width / 2.0 - NOTES_WIDTH / 2.0).clamp(f.x, (f.x + f.width - NOTES_WIDTH).max(f.x));
+        let y = match below {
+            true => tip.y - NOTES_GAP - NOTES_HEIGHT,
+            false => tip.y + tip.height + NOTES_GAP,
+        };
+        Some((PtRect::new(x, y, NOTES_WIDTH, NOTES_HEIGHT), below))
     }
 
     /// The tooltip, just drawn (`bounds`, in its window): its window fits it, at once.
@@ -1173,13 +1205,26 @@ impl Overlay {
         self.session.cursor.map_or(0, |c| c.0)
     }
 
-    /// What the notes by the pill say: the toast, and the name of the button under the pointer
-    /// (unless the list or the keys are open where it would show).
-    fn notes_wanted(&self) -> [Option<SharedString>; 2] {
+    /// What the notes say (`NOTE_…`): by the pill, the toast and the name of the button under the
+    /// pointer (unless the list or the keys are open where it would show); by the card and by a
+    /// clip's tooltip, the name of their button under it.
+    fn notes_wanted(&self) -> [Option<SharedString>; 4] {
         let tip = (!self.keys_sheet.is_open() && !self.list.is_open())
             .then(|| self.hint.as_ref().map(|(_, name)| name.clone()))
             .flatten();
-        [self.toast_shown.clone(), tip]
+        let card = self.card.as_ref().and(self.card_tip.clone());
+        let clip = self.clip_tip_wanted().and(self.clip_tip_hint.clone());
+        [self.toast_shown.clone(), tip, card, clip]
+    }
+
+    /// The name of the card's button `name`, pointed at or left (`hovered`): leaving one clears only
+    /// its own name, so going straight to the next, the note names it without fading (as the pill's).
+    fn card_hint(&mut self, name: SharedString, hovered: bool) {
+        if hovered {
+            self.card_tip = Some(name);
+        } else if self.card_tip.as_ref() == Some(&name) {
+            self.card_tip = None;
+        }
     }
 
     /// The pill (its screen, and where it is on it), for the notes by it. None while it moves
@@ -1197,7 +1242,7 @@ impl Overlay {
         if !self.live || self.shown != Some(true) || self.closing {
             return None;
         }
-        if self.notes_wanted().iter().all(Option::is_none) && self.notes.iter().all(Option::is_none) {
+        if self.notes_wanted()[..2].iter().all(Option::is_none) && self.notes[..2].iter().all(Option::is_none) {
             return None;
         }
         let (index, pill) = self.pill_rect?;
@@ -1549,6 +1594,8 @@ impl Overlay {
     /// The card closed (see `close_card`); the screen it was on.
     fn put_card_away(&mut self, cx: &mut Context<Self>) -> Option<usize> {
         let card = self.card.take()?;
+        // Its note goes with it (the next card's comes in).
+        (self.card_tip, self.notes[NOTE_CARD]) = (None, None);
         let still_there =
             self.session.screens[card.screen].annotations.get(card.index).is_some_and(|a| a.number == card.number);
         if still_there {
@@ -2069,7 +2116,7 @@ impl Overlay {
         changed |= self.show_keys();
         // Nor when it leaves the tooltip's: the name of what it was on goes.
         if self.clip_tip_hint.is_some() && !self.pointer_on_clip_tip() {
-            self.clip_tip_hint = None;
+            (self.clip_tip_hint, self.left_clip_tip) = (None, true);
             changed = true;
         }
         crate::native::watch_pointer(
@@ -2146,6 +2193,10 @@ impl Overlay {
 
     /// The pointer is on the tooltip of a clip of a pin's area.
     fn pointer_on_clip_tip(&self) -> bool {
+        // Always in development windows, as the pill: it's someone else's pointer.
+        if self.spec.windowed.is_some() {
+            return true;
+        }
         let Some(r) = self.clip_tip_at else { return false };
         let (mx, my) = crate::native::mouse();
         mx >= r.x && mx <= r.x + r.width && my >= r.y && my <= r.y + r.height
@@ -3409,13 +3460,21 @@ fn reveal_lit(overlay: &Entity<Overlay>, o: &Overlay) -> impl IntoElement {
 
 /// The notes by the pill a step on (`Note::step`), to say what's `wanted` (the toast, the tip): drawn
 /// again while they change; faded out, they go, and come back at their own width.
-fn step_notes(overlay: &Entity<Overlay>, wanted: [Option<SharedString>; 2], scale: f32) -> impl IntoElement {
+fn step_notes(
+    overlay: &Entity<Overlay>,
+    wanted: [Option<SharedString>; 4],
+    which: Vec<usize>,
+    scale: f32,
+) -> impl IntoElement {
     let overlay = overlay.clone();
     canvas(
         move |_, window, cx| {
             let again = overlay.update(cx, |o, _| {
                 let mut again = false;
-                for (note, wanted) in o.notes.iter_mut().zip(&wanted) {
+                for (i, (note, wanted)) in o.notes.iter_mut().zip(&wanted).enumerate() {
+                    if !which.contains(&i) {
+                        continue;
+                    }
                     if note.is_none() {
                         *note = wanted.clone().map(Note::new);
                     }
@@ -3542,7 +3601,7 @@ fn talk_button(overlay: &Entity<Overlay>, o: &Overlay, id: &str, timer: bool) ->
         .on_hover(move |hovered, _, cx| {
             let name = name.clone();
             t3.update(cx, |o, cx| {
-                o.card_tip = hovered.then_some(name);
+                o.card_hint(name, *hovered);
                 cx.notify();
             });
         })
@@ -3590,6 +3649,12 @@ pub const NOTES_HEIGHT: f64 = 88.0;
 /// Between the notes, and their corners.
 const NOTE_GAP: f32 = 8.0;
 const NOTE_RADIUS: f32 = 7.0;
+/// The notes (`Overlay::notes`): the pill's toast, the name of its button under the pointer, and
+/// the card's and a clip's tooltip's.
+const NOTE_TOAST: usize = 0;
+const NOTE_PILL: usize = 1;
+const NOTE_CARD: usize = 2;
+const NOTE_CLIP: usize = 3;
 
 /// The notes go under the pill (`pill`, from the top of a screen `height` tall) in the upper half of
 /// its screen, above it in the lower half.
@@ -3597,11 +3662,19 @@ fn notes_below(pill: PtRect, height: f64) -> bool {
     pill.y + pill.height / 2.0 < height / 2.0
 }
 
-/// The notes by the pill (`Overlay::notes`), as wide as they may be: the toast, then the name of the
-/// button under the pointer, each in the middle on glass (`glass(i)`, for note `i`), the pill's side
-/// of them first (`below` it, or above). Drawn, they step on (`step_notes`): one view draws them at a
-/// time, a frozen screen's or, live, the notes' own (`NotesView`).
-fn notes_column(overlay: &Entity<Overlay>, o: &Overlay, below: bool, scale: f32, glass: impl Fn(usize) -> Div) -> Div {
+/// Notes (`Overlay::notes`, those in `which`), as wide as they may be: by the pill, the toast, then
+/// the name of the button under the pointer; by the card or a clip's tooltip, the name of theirs.
+/// Each in the middle on glass (`glass(i)`, for note `i`), the side of them by what they're by first
+/// (`below` it, or above). Drawn, they step on (`step_notes`): one view draws each at a time, a
+/// frozen screen's or, live, a notes window (`NotesView`).
+fn notes_column(
+    overlay: &Entity<Overlay>,
+    o: &Overlay,
+    which: &[usize],
+    below: bool,
+    scale: f32,
+    glass: impl Fn(usize) -> Div,
+) -> Div {
     let wanted = o.notes_wanted();
     // Its words as wide as they're drawn (cut off on both sides while they're narrower), noting
     // the width they take, over what it said, fading from one to the other. Both stay in its
@@ -3655,9 +3728,8 @@ fn notes_column(overlay: &Entity<Overlay>, o: &Overlay, below: bool, scale: f32,
         .flex()
         .flex_col()
         // The tip keeps its place (and doesn't fade again) as it names the next button.
-        .children(small(0))
-        .children(small(1))
-        .child(step_notes(overlay, wanted, scale))
+        .children(which.iter().filter_map(|&i| small(i)))
+        .child(step_notes(overlay, wanted, which.to_vec(), scale))
 }
 
 /// Over the live screen, the notes by the pill (`notes_column`), in a window of their own just under
@@ -3666,6 +3738,8 @@ fn notes_column(overlay: &Entity<Overlay>, o: &Overlay, below: bool, scale: f32,
 /// drawn (`native::set_glass`).
 pub struct NotesView {
     overlay: Entity<Overlay>,
+    /// Whose notes: the pill's, or a clip's tooltip's.
+    by: NotesBy,
     /// The window's view, for its glass.
     view: usize,
     /// Each note's glass as last drawn, and the shapes macOS was last told to blur behind.
@@ -3673,33 +3747,49 @@ pub struct NotesView {
     blurred: Rc<RefCell<Option<crate::windows::Shapes>>>,
 }
 
+/// Over the live screen, notes by the pill, or by the tooltip of a clip of a pin's area (the name of
+/// its button under the pointer), each in a window of its own.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum NotesBy {
+    Pill,
+    ClipTip,
+}
+
 /// Each note's glass, as drawn: where it is in the notes' window (points) and how much of it shows.
-type NotesGlass = [Option<(PtRect, f64)>; 2];
+type NotesGlass = [Option<(PtRect, f64)>; 4];
 
 impl NotesView {
-    pub fn new(overlay: Entity<Overlay>, view: usize, cx: &mut Context<Self>) -> NotesView {
+    pub fn new(overlay: Entity<Overlay>, by: NotesBy, view: usize, cx: &mut Context<Self>) -> NotesView {
         cx.observe(&overlay, |_, _, cx| cx.notify()).detach();
-        NotesView { overlay, view, drawn: Rc::default(), blurred: Rc::default() }
+        NotesView { overlay, by, view, drawn: Rc::default(), blurred: Rc::default() }
     }
 }
 
 impl Render for NotesView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let o = self.overlay.read(cx);
-        *self.drawn.borrow_mut() = [None, None];
-        // Only while it shows: the frozen screens draw them otherwise.
-        let column = o.live_notes().and(o.notes_by()).map(|(index, pill)| {
-            let below = notes_below(pill, o.spec.screens.get(index).map_or(0.0, |s| s.frame.height));
-            let (t, drawn) = (o.theme, self.drawn.clone());
-            let glass = move |i: usize| {
-                let (drawn, shown) = (drawn.clone(), o.notes[i].as_ref().map_or(0.0, |n| n.shown()) as f64);
-                live_glass(t, NOTE_RADIUS).child(measured(move |b, _| {
-                    let p = |v: Pixels| f64::from(f32::from(v));
-                    let rect = PtRect::new(p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
-                    drawn.borrow_mut()[i] = Some((rect, shown));
-                }))
-            };
-            let column = notes_column(&self.overlay, o, below, o.pill_scale(), glass).absolute().left_0();
+        *self.drawn.borrow_mut() = [None, None, None, None];
+        let (t, drawn) = (o.theme, self.drawn.clone());
+        let glass = move |i: usize| {
+            let (drawn, shown) = (drawn.clone(), o.notes[i].as_ref().map_or(0.0, |n| n.shown()) as f64);
+            live_glass(t, NOTE_RADIUS).child(measured(move |b, _| {
+                let p = |v: Pixels| f64::from(f32::from(v));
+                let rect = PtRect::new(p(b.origin.x), p(b.origin.y), p(b.size.width), p(b.size.height));
+                drawn.borrow_mut()[i] = Some((rect, shown));
+            }))
+        };
+        // Only while they show: the frozen screens draw the pill's otherwise.
+        let placed = match self.by {
+            NotesBy::Pill => o.live_notes().and(o.notes_by()).map(|(index, pill)| {
+                let below = notes_below(pill, o.spec.screens.get(index).map_or(0.0, |s| s.frame.height));
+                (notes_column(&self.overlay, o, &[NOTE_TOAST, NOTE_PILL], below, o.pill_scale(), glass), below)
+            }),
+            NotesBy::ClipTip => o
+                .clip_notes()
+                .map(|(_, below)| (notes_column(&self.overlay, o, &[NOTE_CLIP], below, o.pill_scale(), glass), below)),
+        };
+        let column = placed.map(|(column, below)| {
+            let column = column.absolute().left_0();
             if below { column.top_0() } else { column.bottom_0() }
         });
         let (drawn, blurred, view) = (self.drawn.clone(), self.blurred.clone(), self.view);
@@ -3754,7 +3844,7 @@ impl Render for ClipTipView {
                 wake_clock();
             })
             .child(note.input.clone());
-        // A name for what the pointer is on, where the recording shows.
+        // The name of the button under the pointer, in a note under the tooltip (`NotesBy::ClipTip`).
         let named = |name: String, d: Stateful<Div>| {
             let tip = self.overlay.clone();
             let name: SharedString = name.into();
@@ -3835,25 +3925,18 @@ impl Render for ClipTipView {
                 })
                 .into_any_element()
         };
-        let stops = vec![
+        let buttons = vec![
+            talk.into_any_element(),
             stop("clip-tip-stop", "Stop and go Live".into(), ClipStop::Live),
             stop("clip-tip-freeze", format!("Stop and Freeze ({})", o.spec.freeze_shortcut), ClipStop::Freeze),
             stop("clip-tip-discard", "Discard, back to the frozen screen".into(), ClipStop::Discard),
         ];
-        let status = clip_tip_status(o.clip_seconds().unwrap_or_default(), o.clip_tip_hint.clone(), t);
+        let status = clip_tip_status(o.clip_seconds().unwrap_or_default(), t);
         let measure = self.overlay.clone();
-        let tip = clip_tip_face(
-            live_glass(t, 12.),
-            field.into_any_element(),
-            talk.into_any_element(),
-            stops,
-            said,
-            status,
-            t,
-        )
-        .occlude()
-        .font_family(controls::font())
-        .child(measured(move |b, cx| measure.update(cx, |o, _| o.drawn_clip_tip(b))));
+        let tip = clip_tip_face(live_glass(t, 12.), status, field.into_any_element(), buttons, said, t)
+            .occlude()
+            .font_family(controls::font())
+            .child(measured(move |b, cx| measure.update(cx, |o, _| o.drawn_clip_tip(b))));
         let done = self.overlay.clone();
         root.child(tip).on_key_down(move |e: &KeyDownEvent, window, cx| {
             // Return or Esc: done typing, the keyboard back to the user's app (⇧Return breaks the line).
@@ -3911,7 +3994,7 @@ impl ScreenView {
         let (x, y) = (pill.x - ox, pill.y - oy);
         let below = notes_below(PtRect { y, ..pill }, wh);
         let glass = |_| frozen_glass(&self.overlay, o.theme, self.screen, (ox, oy), NOTE_RADIUS);
-        let notes = notes_column(&self.overlay, o, below, scale, glass)
+        let notes = notes_column(&self.overlay, o, &[NOTE_TOAST, NOTE_PILL], below, scale, glass)
             .absolute()
             .left(px((x + pill.width / 2.0 - NOTES_WIDTH / 2.0) as f32));
         let notes = match below {
@@ -3974,7 +4057,7 @@ impl ScreenView {
                 .hover(|s| s.bg(t.hover))
                 .on_hover(move |hovered, _, cx| {
                     tip.update(cx, |o, cx| {
-                        o.card_tip = hovered.then_some("Delete what you said, to say it again".into());
+                        o.card_hint("Delete what you said, to say it again".into(), *hovered);
                         cx.notify();
                     });
                 })
@@ -3997,7 +4080,7 @@ impl ScreenView {
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
-                        o.card_tip = hovered.then_some(name);
+                        o.card_hint(name, *hovered);
                         cx.notify();
                     });
                 })
@@ -4021,7 +4104,7 @@ impl ScreenView {
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
-                        o.card_tip = hovered.then_some(name);
+                        o.card_hint(name, *hovered);
                         cx.notify();
                     });
                 })
@@ -4047,7 +4130,7 @@ impl ScreenView {
                 .on_hover(move |hovered, _, cx| {
                     let name = name.clone();
                     tip.update(cx, |o, cx| {
-                        o.card_tip = hovered.then_some(name);
+                        o.card_hint(name, *hovered);
                         cx.notify();
                     });
                 })
@@ -4076,34 +4159,35 @@ impl ScreenView {
             .text_color(t.primary)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(6.))
-                    .child(div().flex_1().child(card.input.clone()))
-                    .child(card_cluster(dots.map(IntoElement::into_any_element)))
-                    .child(card_cluster(
-                        tools
-                            .into_iter()
-                            .map(IntoElement::into_any_element)
-                            .chain(camera.map(IntoElement::into_any_element)),
-                    ))
-                    .child(talk_button(&self.overlay, o, "card-talk", false))
-                    .children(trash),
+                div().flex().items_start().gap(px(6.)).child(div().flex_1().child(card.input.clone())).child(
+                    card_cluster(
+                        dots.map(IntoElement::into_any_element)
+                            .chain(tools.into_iter().map(IntoElement::into_any_element))
+                            .chain(camera.map(IntoElement::into_any_element))
+                            .chain([talk_button(&self.overlay, o, "card-talk", false)])
+                            .chain(trash.map(IntoElement::into_any_element)),
+                    ),
+                ),
             )
             .children(said_row)
-            .children(o.card_tip.clone().map(|tip| {
-                frozen_glass(&self.overlay, t, card.screen, (ox, oy), 6.)
-                    .absolute()
-                    .bottom(px(-26.))
-                    .right(px(30.))
-                    .px(px(7.))
-                    .py(px(2.))
-                    .text_size(px(11.))
-                    .child(tip)
-            }));
+            .child(self.card_note(o, card, (ox, oy), width, up));
         // Opening, it drops into place.
         fade_in(surface, SharedString::from(format!("card-{}", card.key)), -4.).into_any_element()
+    }
+
+    /// The name of the card's button under the pointer, in a note as the pill's (`notes_column`): under
+    /// the card, in its middle (above it when the card opens upward, away from its pin).
+    fn card_note(&self, o: &Overlay, card: &Card, offset: (f64, f64), width: f64, up: bool) -> AnyElement {
+        let scale = o.session.screens[card.screen].screen.scale as f32;
+        let (overlay, t, screen) = (self.overlay.clone(), o.theme, card.screen);
+        let glass = move |_| frozen_glass(&overlay, t, screen, offset, NOTE_RADIUS);
+        let notes = notes_column(&self.overlay, o, &[NOTE_CARD], !up, scale, glass);
+        let placed = div().absolute().left(px(((width - NOTES_WIDTH) / 2.0) as f32)).w(px(NOTES_WIDTH as f32));
+        let placed = match up {
+            false => placed.top(gpui::relative(1.)).pt(px(NOTES_GAP as f32)),
+            true => placed.bottom(gpui::relative(1.)).pb(px(NOTES_GAP as f32)),
+        };
+        placed.child(notes).into_any_element()
     }
 
     /// The right-click menu, at the pointer, on the window (`ww` × `wh`, below `top`).

@@ -231,8 +231,10 @@ Run what your change touches, and say in the pull request what you tried.
   that area, sharp, right after the pin, never the line or the tooltip; freezing ends it, and the
   line goes.
 - [ ] **A pin's clip's tooltip**: under the line (above it near the bottom of the screen, inside a
-  full-screen area), its field, microphone and buttons as tall as each other, the time going on and
-  each button's name beside it while the pointer is on it; clicks on Stop and the microphone leave the keyboard
+  full-screen area), on one line: the time going on, then its field, microphone and buttons as tall
+  as each other and touching, each button's name in a note under the tooltip (the pill's, the
+  card's too) while the pointer is on it, changing without a gap from one button to the next and
+  gone once the pointer leaves; clicks on Stop and the microphone leave the keyboard
   with your app (its window stays active); a click on the field takes it (your app stays in front,
   its menu bar too), `⏎` or `Esc` gives it back and you type in your app again; a click back in
   your app does too. **Stop** (the square) stays live, the toast says the clip is in the aside;

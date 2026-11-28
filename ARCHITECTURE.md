@@ -259,7 +259,7 @@ the pill names the session typed into last from its first frame.
    non-activating panel (the same one frozen, above the screens). The notes by it (a toast, a
    button's name) are drawn on the frozen screens; live, in a window of their own just under the
    pill's that the clicks go through (`ui::NotesView`, `windows::sync_notes`), the same column
-   (`notes_column`). Freezing again captures again, leaving out the overlay's windows
+   (`notes_column`). A card's buttons are named the same way, under it. Freezing again captures again, leaving out the overlay's windows
    (`Session::refrozen`). `R` shows the last aside's pins again (`Spec::earlier`, from the places
    kept with it); a click on one is a new pin that follows up on it (`Session::follow_up`).
    Live, the pill's camera records a clip (`clip.rs`): on a Mac ScreenCaptureKit hands over each
@@ -269,8 +269,9 @@ the pill names the session typed into last from its first frame.
    A pin's card's camera records only the pin's part of the screen (`ClipArea::of`; on a Mac
    `Watched::Area`, at the screen's pixels, elsewhere `capture::watch_area`), outlined just outside
    while it records (`windows::sync_outline`), a tooltip beside it (`ui::ClipTipView`,
-   `windows::sync_clip_tip`: the pin's field and microphone as on its card, then Stop, Stop and
-   Freeze, and Discard (`Event::Back`: frozen again on that freeze, as it was); its field takes
+   `windows::sync_clip_tip`: the time, the pin's field and microphone as on its card, then Stop,
+   Stop and Freeze, and Discard (`Event::Back`: frozen again on that freeze, as it was), each
+   button's name in a notes window of its own under it (`NotesBy::ClipTip`); its field takes
    the keyboard only once clicked, a non-activating panel on a Mac); its pictures go right after the
    pin. That freeze is kept once the clip ends, with what the tooltip says in the pin (`keep_last`).
    Freezing, sending or closing ends it, and its pictures (`motion::pictures`) join the aside.

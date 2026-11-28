@@ -3110,8 +3110,8 @@ impl AsidesWindow {
                     "Record one part of the screen",
                     format!(
                         "A pin's camera, or {c}K in its card, records only its part of the screen, outlined in \
-                         red. Beside it, say what happens: type (a click there takes the keyboard, {ret} gives it \
-                         back to your app) or talk, and it goes in that pin. After its microphone, the square stops \
+                         red. Beside it, after how long, say what happens: type (a click there takes the keyboard, \
+                         {ret} gives it back to your app) or talk, and it goes in that pin. After its microphone, the square stops \
                          and stays live, the snowflake stops and freezes again, and the trash throws the clip away, \
                          back on the frozen screen as it was. The clip follows its pin in the aside.",
                         c = keys::COMMAND,
