@@ -539,14 +539,17 @@ pub fn choose_folder_content(t: Theme) -> AnyElement {
 
 /// What a pin asks for, a dot (`on`: chosen, ringed).
 pub fn intent_dot(intent: Intent, on: bool, t: Theme) -> Div {
-    div()
+    let dot = div()
         .size(px(20.))
         .flex()
         .items_center()
         .justify_center()
         .rounded_full()
         .when(on, |d| d.border_2().border_color(t.primary))
-        .child(div().size(px(if on { 10. } else { 11. })).rounded_full().bg(hex(style::intent_color(intent), 1.0)))
+        .child(div().size(px(if on { 10. } else { 11. })).rounded_full().bg(hex(style::intent_color(intent), 1.0)));
+    // Its place as tall as the field and touching the next: the pointer goes from one button to
+    // another without leaving them, their names following it.
+    div().flex().items_center().justify_center().w(px(24.)).h(px(FIELD_HEIGHT)).child(dot)
 }
 
 /// A button on a card (or the tooltip of a clip of its pin's area): its icon, as tall as the field.
@@ -606,9 +609,10 @@ pub fn card_surface(glass: Div, width: f32, row: Vec<AnyElement>, t: Theme) -> D
         .child(div().flex().items_start().gap(px(6.)).children(row))
 }
 
-/// The card's dots, or its tools, side by side.
+/// A card's buttons (its dots, tools, microphone…) side by side, touching, as the pill's: the
+/// pointer goes from one to the next without leaving them, their names following it.
 pub fn card_cluster(items: impl IntoIterator<Item = AnyElement>) -> AnyElement {
-    div().flex().items_center().h(px(FIELD_HEIGHT)).gap(px(1.)).children(items).into_any_element()
+    div().flex().items_center().h(px(FIELD_HEIGHT)).children(items).into_any_element()
 }
 
 /// A text field on a card, as `input::TextInput` draws it with `ui::card_look`: what's typed, the
@@ -645,35 +649,33 @@ pub fn field_face(text: &str, placeholder: &str, caret: bool, t: Theme) -> AnyEl
 // --- A clip of a pin's area ---
 
 /// The tooltip beside a pin's area while a clip of it records (`ui::ClipTipView`), as the pin's card
-/// (`card_surface`): what happens there (`field`, the pin's own), the microphone, then the ways to
-/// stop (`stops`: staying live, or freezing again), what was said about it, then the recording
-/// (`status`).
+/// (`card_surface`), on one line: the recording (`status`), what happens there (`field`, the pin's
+/// own), then its buttons touching (`buttons`: the microphone, and the ways to stop), and under
+/// them what was said about it. The button under the pointer is named in a note, as the card's.
 pub fn clip_tip_face(
     glass: Div,
-    field: AnyElement,
-    talk: AnyElement,
-    stops: Vec<AnyElement>,
-    said: Option<AnyElement>,
     status: AnyElement,
+    field: AnyElement,
+    buttons: Vec<AnyElement>,
+    said: Option<AnyElement>,
     t: Theme,
 ) -> Div {
-    let row = vec![div().flex_1().min_w_0().child(field).into_any_element(), talk, card_cluster(stops)];
-    card_surface(glass, CLIP_TIP_WIDTH as f32, row, t).children(said).child(status)
+    let row = vec![status, div().flex_1().min_w_0().child(field).into_any_element(), card_cluster(buttons)];
+    card_surface(glass, CLIP_TIP_WIDTH as f32, row, t).children(said)
 }
 
-/// The recording, in the tooltip: a red dot and how long so far, then the name of what the pointer is
-/// on there (`hint`), with room for all of it.
-pub fn clip_tip_status(seconds: u32, hint: Option<SharedString>, t: Theme) -> AnyElement {
+/// The recording, at the start of the tooltip: a red dot and how long so far.
+pub fn clip_tip_status(seconds: u32, t: Theme) -> AnyElement {
     div()
+        .flex_none()
         .flex()
         .items_center()
         .gap(px(6.))
-        .h(px(CLIP_TIP_STATUS))
+        .h(px(FIELD_HEIGHT))
         .pl(px(4.))
         .text_size(px(12.))
         .child(div().flex_none().size(px(8.)).rounded_full().bg(hex(style::RECORDING, 1.0)))
         .child(tabular(div().flex_none().text_color(t.tertiary).child(format!("{}:{:02}", seconds / 60, seconds % 60))))
-        .children(hint.map(|hint| div().pl(px(4.)).min_w_0().truncate().text_color(t.secondary).child(hint)))
         .into_any_element()
 }
 
@@ -717,13 +719,11 @@ pub fn clip_tip_place(area: PtRect, (width, height): (f64, f64), top: f64, (w, h
 }
 
 /// How thick the outline around a pin's area is while a clip of it records (just outside it), the
-/// tooltip's width, its height with nothing said yet (its hairline, padding, buttons and recording),
-/// and its gap from the outline.
+/// tooltip's width, its height with nothing said yet (its hairline, padding and line), and its gap
+/// from the outline.
 pub const CLIP_OUTLINE: f64 = 3.0;
-pub const CLIP_TIP_WIDTH: f64 = 380.0;
-pub const CLIP_TIP_HEIGHT: f64 = 2.0 + 12.0 + FIELD_HEIGHT as f64 + 4.0 + CLIP_TIP_STATUS as f64;
-/// The tooltip's line with the recording on it: as tall as its text.
-const CLIP_TIP_STATUS: f32 = 18.0;
+pub const CLIP_TIP_WIDTH: f64 = 420.0;
+pub const CLIP_TIP_HEIGHT: f64 = 2.0 + 12.0 + FIELD_HEIGHT as f64;
 pub const CLIP_TIP_GAP: f64 = 8.0;
 
 // --- On the frozen screen ---

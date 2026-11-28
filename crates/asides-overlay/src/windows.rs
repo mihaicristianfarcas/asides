@@ -17,8 +17,8 @@ use gpui::{
 
 use crate::native;
 use crate::ui::{
-    ClipTipView, KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, NOTES_HEIGHT, NOTES_WIDTH, NotesView, Overlay,
-    PILL_TOP, ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView,
+    ClipTipView, KEYS_WIDTH, LIST_GAP, LIST_ROWS_HEIGHT, LIST_WIDTH, NOTES_HEIGHT, NOTES_WIDTH, NotesBy, NotesView,
+    Overlay, PILL_TOP, ScreenView, ScreenWindow, TOOLBAR_MARGIN, ToolbarView,
 };
 
 /// Rounded rectangles in a window's points, their radii and how much of each shows: where the
@@ -421,7 +421,8 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
         }
         let o = overlay.read(cx);
         let toolbar = o.toolbar_window.as_ref().map(|t| t.view);
-        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar, o.notes_window, o.clip_tip)
+        let notes = o.notes_window.into_iter().chain(o.clip_notes_window).collect::<Vec<_>>();
+        (o.live, o.shown, o.closing, o.handoff.is_some(), o.taking_over, toolbar, notes, o.clip_tip)
     })?;
     if closing {
         // The aside is on its way: the pill goes at once (what's by it too), the frozen screens once
@@ -445,9 +446,15 @@ pub fn sync(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> 
     if left && let Some(toolbar) = toolbar {
         pointer_moved(toolbar, cx);
     }
+    // And from a clip's tooltip.
+    let left = cx.update(|cx| overlay.update(cx, |o, _| std::mem::take(&mut o.left_clip_tip).then_some(o.clip_tip)))?;
+    if let Some(Some(tip)) = left {
+        pointer_moved(tip, cx);
+    }
     sync_outline(overlay, cx)?;
     sync_clip_tip(overlay, cx)?;
-    sync_notes(overlay, cx)?;
+    sync_notes(overlay, NotesBy::Pill, cx)?;
+    sync_notes(overlay, NotesBy::ClipTip, cx)?;
     match (shown == Some(live), live) {
         (true, true) => Ok(()),
         // Frozen again while still giving way: the system comes back to the overlay.
@@ -618,22 +625,30 @@ fn open_clip_tip(overlay: &Entity<Overlay>, cx: &mut App) {
     }
 }
 
-/// Over the live screen, the notes by the pill in their own window (`Overlay::live_notes`), shown
-/// where they go, drawn first; hidden once they've gone. It opens the first time, hidden.
-fn sync_notes(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+/// Over the live screen, the notes by the pill (`Overlay::live_notes`), or by a clip's tooltip
+/// (`Overlay::clip_notes`), in their own window, shown where they go, drawn first; hidden once
+/// they've gone. It opens the first time, hidden.
+fn sync_notes(overlay: &Entity<Overlay>, by: NotesBy, cx: &mut AsyncApp) -> anyhow::Result<()> {
     let (wanted, at, open) = cx.update(|cx| {
         let o = overlay.read(cx);
-        (o.live_notes(), o.notes_at, o.notes_window)
+        match by {
+            NotesBy::Pill => (o.live_notes(), o.notes_at, o.notes_window),
+            NotesBy::ClipTip => (o.clip_notes().map(|(frame, _)| frame), o.clip_notes_at, o.clip_notes_window),
+        }
     })?;
     if wanted == at {
         return Ok(());
     }
-    if wanted.is_some() && open.is_none() {
-        cx.update(|cx| open_notes(overlay, cx))?;
-    }
-    let Some(view) = cx.update(|cx| overlay.read(cx).notes_window)? else { return Ok(()) };
+    let view = match open {
+        Some(view) => view,
+        None if wanted.is_some() => match cx.update(|cx| open_notes(overlay, by, cx))? {
+            Some(view) => view,
+            None => return Ok(()),
+        },
+        None => return Ok(()),
+    };
     match (wanted, at) {
-        // It follows the pill, let go somewhere else.
+        // It follows the pill, let go somewhere else (or the tooltip, grown).
         (Some(frame), Some(_)) => native::move_to(view, (frame.x, frame.y)),
         (Some(frame), None) => {
             native::set_frame(view, frame);
@@ -642,21 +657,35 @@ fn sync_notes(overlay: &Entity<Overlay>, cx: &mut AsyncApp) -> anyhow::Result<()
         }
         (None, _) => native::hide(view),
     }
-    cx.update(|cx| overlay.update(cx, |o, _| o.notes_at = wanted))
+    cx.update(|cx| {
+        overlay.update(cx, |o, _| match by {
+            NotesBy::Pill => o.notes_at = wanted,
+            NotesBy::ClipTip => o.clip_notes_at = wanted,
+        })
+    })
 }
 
-/// Opens the notes' window, hidden (`native::make_notes`).
-fn open_notes(overlay: &Entity<Overlay>, cx: &mut App) {
+/// Opens a notes window, hidden (`native::make_notes`): the pill's, or a clip's tooltip's. Its view.
+fn open_notes(overlay: &Entity<Overlay>, by: NotesBy, cx: &mut App) -> Option<usize> {
     let frame = PtRect::new(0.0, 0.0, NOTES_WIDTH, NOTES_HEIGHT);
     let o = overlay.clone();
     let opened = cx.open_window(toolbar_options(None, frame), move |w, cx| {
         let view = native::make_notes(w, frame);
         native::set_glass(view, &[]);
-        o.update(cx, |o, _| o.notes_window = Some(view));
-        cx.new(|cx| NotesView::new(o.clone(), view, cx))
+        o.update(cx, |o, _| match by {
+            NotesBy::Pill => o.notes_window = Some(view),
+            NotesBy::ClipTip => o.clip_notes_window = Some(view),
+        });
+        cx.new(|cx| NotesView::new(o.clone(), by, view, cx))
     });
     if let Err(err) = opened {
         eprintln!("asides-overlay: no notes window: {err:#}");
+        return None;
+    }
+    let o = overlay.read(cx);
+    match by {
+        NotesBy::Pill => o.notes_window,
+        NotesBy::ClipTip => o.clip_notes_window,
     }
 }
 
