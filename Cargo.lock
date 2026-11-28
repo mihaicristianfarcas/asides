@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "asides-app"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "asides-cli"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "asides-core",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "asides-core"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "asides-keys",
  "base64 0.22.1",
@@ -389,14 +389,14 @@ dependencies = [
 
 [[package]]
 name = "asides-keys"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "asides-overlay"
-version = "2.0.2"
+version = "2.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
