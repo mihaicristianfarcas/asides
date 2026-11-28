@@ -19,7 +19,8 @@
 //! that it was, as the app would. `"toolbar": true` sends a step to the pill's window (in its points),
 //! `{"toggle": true}` is ⌃⌥P (live, or frozen again) and `{"frozen": true}` answers a freeze with
 //! the spec's screens, as the app would; `{"clip": 2}` says a clip is 2 s into being recorded, and
-//! `{"clip_over": true}` that it ended. `{"stall": 3000}` holds the main thread that long (the
+//! `{"clip_over": true}` that it ended; `"clip_tip": true` sends a step to the tooltip of a clip of a
+//! pin's area (in its points). `{"stall": 3000}` holds the main thread that long (the
 //! watchdog's to notice: `native::watch_main_thread`). A capture is
 //! of where a screen's window is, as it shows (the pill above it; live, what's on screen there), or
 //! of the pill's window alone (`"toolbar": true`, or opened live).
@@ -72,6 +73,8 @@ struct Step {
     said: Option<String>,
     /// To the pill's window.
     toolbar: bool,
+    /// To the tooltip of a clip of a pin's area.
+    clip_tip: bool,
     /// ⌃⌥P, as the app passes it on.
     toggle: bool,
     /// The app froze the screens (the spec's).
@@ -96,9 +99,10 @@ pub fn run(overlay: Entity<Overlay>, steps: serde_json::Value, cx: &mut App) {
             let wait = step.wait.unwrap_or(90);
             let Ok(Some((view, offset))) = cx.update(|cx| {
                 let o = overlay.read(cx);
-                match step.toolbar {
-                    true => o.toolbar_window.as_ref().map(|w| (w.view, (0.0, 0.0))),
-                    false => o.windows.get(step.screen).map(|w| (w.view, w.offset)).or(Some((0, (0.0, 0.0)))),
+                match (step.toolbar, step.clip_tip) {
+                    (true, _) => o.toolbar_window.as_ref().map(|w| (w.view, (0.0, 0.0))),
+                    (_, true) => o.clip_tip.map(|view| (view, (0.0, 0.0))),
+                    _ => o.windows.get(step.screen).map(|w| (w.view, w.offset)).or(Some((0, (0.0, 0.0)))),
                 }
             }) else {
                 return;

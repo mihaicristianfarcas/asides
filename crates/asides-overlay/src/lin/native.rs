@@ -200,6 +200,27 @@ pub fn make_outline(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the tooltip beside a pin's area while a clip of it records (`ui::ClipTipView`), at
+/// `frame`, above the frozen screens' place (Mutter stacks them as mapped). Its field takes the
+/// keyboard once clicked (`show` with the keyboard: override-redirect windows take none from a
+/// click), and gives it back (`give_keyboard_back`). Returns its id.
+pub fn make_clip_tip(window: &Window, frame: PtRect) -> usize {
+    let view = view_pointer(window);
+    if view != 0 {
+        adopt(view, frame);
+        if let Some(server) = server() {
+            pill_after(server, view as u32);
+            let _ = server.connection.flush();
+        }
+    }
+    view
+}
+
+/// The tooltip's window gives the keyboard back, if it has it, to what had it.
+pub fn give_keyboard_back(_pointer: usize, front: Option<i32>) {
+    give_focus(front);
+}
+
 /// Makes `window` the notes' over the live screen (`ui::NotesView`), at `frame`: under the pill, and
 /// the clicks go through it (no input region). Marked 2: the app's clips needn't keep its part of the
 /// screen as it first was (`capture::overlay_rects`), as they do the pill's; it's only a note or

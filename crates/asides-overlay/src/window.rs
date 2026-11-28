@@ -2966,6 +2966,7 @@ impl AsidesWindow {
         let (card, _) = self.demo("card", width, window);
         let (tools, _) = self.demo("tools", width, window);
         let (clips, _) = self.demo("clip", width, window);
+        let (area_clip, _) = self.demo("clip_area", width, window);
         let sheet = help::still(width, &self.look());
         let part = |glyph: &str, label: &str, text: String| {
             div()
@@ -3085,14 +3086,24 @@ impl AsidesWindow {
                 .child(topic(
                     "Record what happens",
                     format!(
-                        "{clip}, or the pill's camera, records what happens next, live: use your app, then press \
-                         {clip} again or click the square (sending, closing or freezing stops it too; it lasts a \
-                         minute at most). The aside gets each moment the app changed, numbered and timed: every \
-                         screen it settled on, a frame of each movement, anything that flashed. A pin's camera, or \
-                         {c}K in its card, records only its part of the screen.",
-                        c = keys::COMMAND,
+                        "{clip}, or the pill's camera, records what happens next, live: use your app, then click \
+                         the pill's square (sending, closing or {live} stops it too; it lasts a minute at most). \
+                         The aside gets each moment the app changed, numbered and timed: every screen it settled \
+                         on, a frame of each movement, anything that flashed."
                     ),
                     Some(clips),
+                ))
+                .child(topic(
+                    "Record one part of the screen",
+                    format!(
+                        "A pin's camera, or {c}K in its card, records only its part of the screen, outlined in \
+                         red. Beside it, say what happens: type (a click there takes the keyboard, {ret} gives it \
+                         back to your app) or talk, and it goes in that pin. Stop keeps the screen live, Stop and \
+                         Freeze freezes it again. The clip follows its pin in the aside.",
+                        c = keys::COMMAND,
+                        ret = keys::RETURN,
+                    ),
+                    Some(area_clip),
                 ))
                 .child(topic(
                     "Every key",

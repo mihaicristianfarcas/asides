@@ -227,6 +227,25 @@ pub fn make_outline(window: &Window, frame: PtRect) -> usize {
     view
 }
 
+/// Makes `window` the tooltip beside a pin's area while a clip of it records (`ui::ClipTipView`), at
+/// `frame`: topmost, left out of captures as the pill is, and not activated by a click, so its
+/// buttons leave the keyboard where it is. Its field takes it once clicked (`show` with the
+/// keyboard), and gives it back (`give_keyboard_back`). Returns its view.
+pub fn make_clip_tip(window: &Window, frame: PtRect) -> usize {
+    let view = view_pointer(window);
+    let Some(handle) = hwnd(view) else { return 0 };
+    style(handle, WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    // SAFETY: a plain call on a window of this process.
+    let _ = unsafe { SetWindowDisplayAffinity(handle, WDA_EXCLUDEFROMCAPTURE) };
+    place(handle, frame, SWP_NOOWNERZORDER);
+    view
+}
+
+/// The tooltip's window gives the keyboard back to the app it took it from (`front`), if it has it.
+pub fn give_keyboard_back(_pointer: usize, front: Option<i32>) {
+    give_focus(front);
+}
+
 /// Makes `window` the notes' over the live screen (`ui::NotesView`), at `frame`: above the others but
 /// the pill (`below_pill`), never activated, left out of captures as the pill is, and the clicks go
 /// through it (a layered window, see-through to the mouse, all of it shown). Returns its view.
