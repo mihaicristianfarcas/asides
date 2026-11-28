@@ -232,7 +232,9 @@ Run what your change touches, and say in the pull request what you tried.
   with your app (its window stays active); a click on the field takes it (your app stays in front,
   its menu bar too), `⏎` or `Esc` gives it back and you type in your app again; a click back in
   your app does too. **Stop** (the square) stays live, the toast says the clip is in the aside;
-  **Stop and Freeze** (the pause) freezes again. On a pin's card, the field and its buttons are as
+  **Stop and Freeze** (the snowflake) freezes again; **Discard** (the trash) is back on the same
+  frozen screen, its pins as they were (what was typed in the tooltip in its pin), and nothing of
+  the clip is in the aside. On a pin's card, the field and its buttons are as
   tall as each other too. What's typed (and said with its microphone) is in the pin's block, the
   clip right after; the pin's card's text shows in the field first. Sending, `⌃⌥P` and the minute
   running out end it too, with what was typed.

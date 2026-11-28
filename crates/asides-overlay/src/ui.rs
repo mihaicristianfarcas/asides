@@ -31,9 +31,9 @@ use gpui::{
 use crate::controls::{self, Fade, Glide, Note, Slot, Theme, fade_in};
 use crate::export::{self, Exporter};
 use crate::faces::{
-    CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims, button_face,
-    card_button, card_camera, card_cluster, card_tool, choose_folder_content, clip_face, clip_tip_face, clip_tip_place,
-    clip_tip_status, clip_tip_stop, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
+    CLIP_TIP_HEIGHT, CLIP_TIP_WIDTH, ClipStop, Emphasis, PILL_GAP, Prim, agent_segment, agents_track, arrow_prims,
+    button_face, card_button, card_camera, card_cluster, card_tool, choose_folder_content, clip_face, clip_tip_face,
+    clip_tip_place, clip_tip_status, folder_content, glass_panel, group, help_face, icon, intent_dot, keys_sheet_face,
     label_at, list_hairline, list_heading, list_lines, list_panel, list_row_face, list_rows, marker_face, mic_face,
     new_session_row, paint, pill_row, pill_tint, sep, talk_face, target_name, tool_box, tool_face, tool_icon,
 };
@@ -189,6 +189,21 @@ struct Card {
 struct ClipNote {
     key: u32,
     input: Entity<TextInput>,
+}
+
+impl ClipNote {
+    /// What's typed in the tooltip, as its pin's feedback in `session` (the freeze the pin is on).
+    fn put_in(&self, session: &mut Session, cx: &App) {
+        let text = self.input.read(cx).text();
+        let found = session.screens.iter().enumerate().find_map(|(screen, s)| {
+            let index = s.annotations.iter().position(|a| a.key == self.key)?;
+            let a = &s.annotations[index];
+            Some((screen, index, a.intent, a.severity))
+        });
+        if let Some((screen, index, intent, severity)) = found {
+            session.set_feedback(screen, index, &text, intent, severity);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -704,6 +719,28 @@ impl Overlay {
         }
     }
 
+    /// The tooltip's Discard: the clip is thrown away, and the screens are frozen again on the freeze
+    /// it was asked from, as they were (what was typed in the tooltip in its pin), without freezing
+    /// anew.
+    fn discard_clip(&mut self, cx: &App) {
+        if self.done || !self.live || self.clip_note.is_none() {
+            return;
+        }
+        let Some(mut k) = self.keeping.take() else { return };
+        if let Some(note) = self.clip_note.take() {
+            note.put_in(&mut k.session, cx);
+        }
+        io::emit(&Event::Back);
+        (self.clip_wanted, self.clip_area, self.clip_tip_hint) = (false, None, None);
+        self.session = k.session;
+        self.frames = k.frames;
+        self.exporter = k.exporter;
+        self.shots = k.shots;
+        (self.freezes, self.frozen_at) = (k.freeze, k.frozen_at);
+        self.live = false;
+        wake_clock();
+    }
+
     /// The tooltip's microphone: what's said is about the pin whose area is recorded.
     fn clip_tip_talk(&mut self, down: bool) {
         if down && !self.talking && self.needs_model() {
@@ -835,15 +872,7 @@ impl Overlay {
         if let Some(note) = self.clip_note.take()
             && let Some(k) = &mut self.keeping
         {
-            let text = note.input.read(cx).text();
-            let found = k.session.screens.iter().enumerate().find_map(|(screen, s)| {
-                let index = s.annotations.iter().position(|a| a.key == note.key)?;
-                let a = &s.annotations[index];
-                Some((screen, index, a.intent, a.severity))
-            });
-            if let Some((screen, index, intent, severity)) = found {
-                k.session.set_feedback(screen, index, &text, intent, severity);
-            }
+            note.put_in(&mut k.session, cx);
         }
         if let Some(keeping) = self.keeping.take()
             && let Err(err) = self.keep(keeping, false)
@@ -3788,23 +3817,28 @@ impl Render for ClipTipView {
                 .child(text)
                 .into_any_element()
         });
-        let stop = |id: &'static str, name: String, freeze: bool| {
+        let stop = |id: &'static str, name: String, stop: ClipStop| {
             let press = self.overlay.clone();
-            named(name, clip_tip_stop(freeze, t).id(id))
+            named(name, card_button(stop.icon(), t).id(id))
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                     cx.stop_propagation();
                     press.update(cx, |o, cx| {
-                        o.stop_clip_tip(freeze, cx);
+                        match stop {
+                            ClipStop::Live => o.stop_clip_tip(false, cx),
+                            ClipStop::Freeze => o.stop_clip_tip(true, cx),
+                            ClipStop::Discard => o.discard_clip(cx),
+                        }
                         cx.notify();
                     });
                 })
                 .into_any_element()
         };
         let stops = vec![
-            stop("clip-tip-stop", "Stop and go Live".into(), false),
-            stop("clip-tip-freeze", format!("Stop and Freeze ({})", o.spec.freeze_shortcut), true),
+            stop("clip-tip-stop", "Stop and go Live".into(), ClipStop::Live),
+            stop("clip-tip-freeze", format!("Stop and Freeze ({})", o.spec.freeze_shortcut), ClipStop::Freeze),
+            stop("clip-tip-discard", "Discard, back to the frozen screen".into(), ClipStop::Discard),
         ];
         let status = clip_tip_status(o.clip_seconds().unwrap_or_default(), o.clip_tip_hint.clone(), t);
         let measure = self.overlay.clone();

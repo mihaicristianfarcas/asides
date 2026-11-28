@@ -676,10 +676,26 @@ pub fn clip_tip_status(seconds: u32, hint: Option<SharedString>, t: Theme) -> An
         .into_any_element()
 }
 
-/// A way to stop recording, after the tooltip's microphone: staying live (the pill's stop square), or
-/// freezing again (`freeze`).
-pub fn clip_tip_stop(freeze: bool, t: Theme) -> Div {
-    card_button(if freeze { "pause" } else { "clip-stop" }, t)
+/// A way to end a clip of a pin's area, after its tooltip's microphone: stopping and staying live,
+/// stopping and freezing again, or throwing it away, back on the frozen screen it was asked from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClipStop {
+    Live,
+    Freeze,
+    Discard,
+}
+
+impl ClipStop {
+    pub const ALL: [ClipStop; 3] = [ClipStop::Live, ClipStop::Freeze, ClipStop::Discard];
+
+    /// Its button's icon: the pill's stop square, a snowflake, the card's trash.
+    pub fn icon(self) -> &'static str {
+        match self {
+            ClipStop::Live => "clip-stop",
+            ClipStop::Freeze => "freeze",
+            ClipStop::Discard => "trash",
+        }
+    }
 }
 
 /// Where the tooltip goes beside a pin's area (`area`, in its screen's points from the top left; the
